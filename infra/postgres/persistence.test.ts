@@ -341,6 +341,197 @@ describePostgres("PostgreSQL persistence foundation", () => {
     expect(result.rows[0]?.to_regclass).toBeNull();
     await applyAllMigrations();
   });
+
+  it("creates durable outbox records and claims due work once", async () => {
+    const dedupeKey = `dedupe-${randomUUID()}`;
+    await query(
+      `
+        INSERT INTO outbox_events(
+          event_type,
+          aggregate_type,
+          aggregate_id,
+          payload,
+          correlation_id,
+          event_deduplication_key,
+          next_attempt_at
+        )
+        VALUES ('synthetic.event', 'synthetic', gen_random_uuid(), '{"referenceId":"entity-1"}', 'corr-outbox', $1, now())
+      `,
+      [dedupeKey],
+    );
+
+    const firstClaim = await query<{ id: string }>(
+      `
+        WITH due AS (
+          SELECT id
+          FROM outbox_events
+          WHERE status IN ('PENDING', 'FAILED') AND next_attempt_at <= now()
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE outbox_events
+        SET status = 'CLAIMED'
+        WHERE id IN (SELECT id FROM due)
+        RETURNING id
+      `,
+    );
+    const secondClaim = await query<{ id: string }>(
+      `
+        WITH due AS (
+          SELECT id
+          FROM outbox_events
+          WHERE status IN ('PENDING', 'FAILED') AND next_attempt_at <= now()
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE outbox_events
+        SET status = 'CLAIMED'
+        WHERE id IN (SELECT id FROM due)
+        RETURNING id
+      `,
+    );
+
+    expect(firstClaim.rowCount).toBe(1);
+    expect(secondClaim.rowCount).toBe(0);
+  });
+
+  it("transitions outbox publication status and retry scheduling", async () => {
+    const created = await query<{ id: string }>(
+      `
+        INSERT INTO outbox_events(
+          event_type,
+          aggregate_type,
+          aggregate_id,
+          payload,
+          correlation_id,
+          event_deduplication_key,
+          status
+        )
+        VALUES ('synthetic.event', 'synthetic', gen_random_uuid(), '{"referenceId":"entity-2"}', 'corr-outbox-2', $1, 'CLAIMED')
+        RETURNING id
+      `,
+      [`dedupe-${randomUUID()}`],
+    );
+    const id = created.rows[0]?.id;
+    expect(id).toBeDefined();
+
+    await query(
+      "UPDATE outbox_events SET status = 'PUBLISHED', dispatched_at = now() WHERE id = $1",
+      [id],
+    );
+    const published = await query<{ status: string }>(
+      "SELECT status FROM outbox_events WHERE id = $1",
+      [id],
+    );
+    expect(published.rows[0]?.status).toBe("PUBLISHED");
+
+    const retry = await query<{ id: string }>(
+      `
+        INSERT INTO outbox_events(
+          event_type,
+          aggregate_type,
+          aggregate_id,
+          payload,
+          correlation_id,
+          event_deduplication_key,
+          status,
+          retry_count,
+          next_attempt_at,
+          last_error_classification
+        )
+        VALUES ('synthetic.event', 'synthetic', gen_random_uuid(), '{"referenceId":"entity-3"}', 'corr-outbox-3', $1, 'FAILED', 1, now() + interval '1 minute', 'RETRYABLE')
+        RETURNING id
+      `,
+      [`dedupe-${randomUUID()}`],
+    );
+    expect(retry.rows[0]?.id).toBeDefined();
+  });
+
+  it("keeps PostgreSQL outbox intent when Redis publication is unavailable", async () => {
+    const dedupeKey = `dedupe-${randomUUID()}`;
+    await query(
+      `
+        INSERT INTO outbox_events(
+          event_type,
+          aggregate_type,
+          aggregate_id,
+          payload,
+          correlation_id,
+          event_deduplication_key,
+          status,
+          last_error_classification
+        )
+        VALUES ('synthetic.event', 'synthetic', gen_random_uuid(), '{"referenceId":"entity-4"}', 'corr-redis-down', $1, 'FAILED', 'RETRYABLE_PUBLICATION_FAILURE')
+      `,
+      [dedupeKey],
+    );
+
+    const durableIntent = await query<{ status: string }>(
+      "SELECT status FROM outbox_events WHERE event_deduplication_key = $1",
+      [dedupeKey],
+    );
+
+    expect(durableIntent.rows[0]?.status).toBe("FAILED");
+  });
+
+  it("creates due reconciliation work and escalates manual review", async () => {
+    const fixture = await insertFixtureGraph();
+    const created = await query<{ id: string }>(
+      `
+        INSERT INTO reconciliation_records(
+          order_line_id,
+          reconciliation_type,
+          state,
+          correlation_id,
+          next_attempt_at
+        )
+        VALUES ($1, 'PAYMENT_AMBIGUITY', 'PENDING', 'corr-recon', now())
+        RETURNING id
+      `,
+      [fixture.orderLineId],
+    );
+
+    const claimed = await query<{ id: string }>(
+      `
+        WITH due AS (
+          SELECT id
+          FROM reconciliation_records
+          WHERE state IN ('PENDING', 'FAILED') AND next_attempt_at <= now()
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE reconciliation_records
+        SET state = 'CLAIMED'
+        WHERE id IN (SELECT id FROM due)
+        RETURNING id
+      `,
+    );
+
+    expect(claimed.rows[0]?.id).toBe(created.rows[0]?.id);
+
+    await query(
+      `
+        UPDATE reconciliation_records
+        SET state = 'MANUAL_REVIEW',
+            manual_review_required = true,
+            last_error_classification = 'EXHAUSTED'
+        WHERE id = $1
+      `,
+      [created.rows[0]?.id],
+    );
+    const escalated = await query<{
+      manual_review_required: boolean;
+      state: string;
+    }>(
+      "SELECT state, manual_review_required FROM reconciliation_records WHERE id = $1",
+      [created.rows[0]?.id],
+    );
+
+    expect(escalated.rows[0]).toEqual({
+      manual_review_required: true,
+      state: "MANUAL_REVIEW",
+    });
+  });
 });
 
 describe("PostgreSQL persistence static safety checks", () => {
