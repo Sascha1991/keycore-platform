@@ -7,13 +7,13 @@ import type { AuditEvent } from "../domain/audit.js";
 import type {
   CorrelationId,
   CustomerId,
-  JobId,
   KeyRecordId,
   OfferId,
   OrderId,
   OrderLineId,
   ProductId,
 } from "../domain/identifiers.js";
+import type { JobEnvelope, SafePayload } from "../queue/job.js";
 import type { Money } from "../domain/money.js";
 import type {
   GermanyCompatibilityDecision,
@@ -100,15 +100,10 @@ export interface AuditEventPort {
   append(event: AuditEvent): Promise<void>;
 }
 
-export interface QueueJob<TPayload extends object> {
-  readonly jobId: JobId;
-  readonly type: string;
-  readonly payload: TPayload;
-  readonly correlationId: CorrelationId;
-}
-
 export interface QueuePort {
-  enqueue<TPayload extends object>(job: QueueJob<TPayload>): Promise<void>;
+  enqueue<TPayload extends SafePayload>(
+    job: JobEnvelope<TPayload>,
+  ): Promise<void>;
 }
 
 export interface PersistencePort<TEntity, TId> {
