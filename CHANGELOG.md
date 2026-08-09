@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Implemented `KS-02-01` PostgreSQL persistence foundation:
+  - added reversible SQL migrations and a TypeScript migration runner using `pg@8.23.0`;
+  - added initial durable schema foundations for supplier, catalog, region, commerce, workflow, encrypted key metadata, audit, idempotency, outbox, and reconciliation records;
+  - added minimal PostgreSQL repository adapters and PostgreSQL integration tests for CI;
+  - documented migration workflow, schema ownership, local PostgreSQL development, integration tests, and backup assumptions.
 - Implemented `KS-01-02` core contract skeleton:
   - added supplier-neutral TypeScript domain/value types and port contracts;
   - added region, workflow state, audit, vault, supplier, storefront, queue, persistence, mail, invoice, monitoring, secret-management, and clock boundaries;

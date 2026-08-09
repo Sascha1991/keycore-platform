@@ -13,6 +13,22 @@ jobs:
   node:
     name: Node foundation checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.10-alpine
+        env:
+          POSTGRES_DB: keycore_test
+          POSTGRES_PASSWORD: keycore_test_password
+          POSTGRES_USER: keycore_test
+        options: >-
+          --health-cmd "pg_isready -U keycore_test -d keycore_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      KEYCORE_TEST_DATABASE_URL: postgres://keycore_test:keycore_test_password@localhost:5432/keycore_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

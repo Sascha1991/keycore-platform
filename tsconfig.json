@@ -20,5 +20,10 @@
     "target": "ES2024",
     "types": ["node", "vitest"]
   },
-  "include": ["packages/**/*.ts", "scripts/**/*.mjs", "vitest.config.ts"]
+  "include": [
+    "infra/**/*.ts",
+    "packages/**/*.ts",
+    "scripts/**/*.mjs",
+    "vitest.config.ts"
+  ]
 }

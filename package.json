@@ -9,11 +9,17 @@
     "npm": ">=11"
   },
   "packageManager": "npm@11.6.2",
+  "overrides": {
+    "esbuild": "0.28.1"
+  },
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run secrets:scan",
+    "db:migrate": "node --import tsx infra/postgres/migrate.ts up",
+    "db:rollback": "node --import tsx infra/postgres/migrate.ts down",
+    "db:status": "node --import tsx infra/postgres/migrate.ts status",
     "format:check": "prettier --check \"{apps,docs,decisions,infra,packages,scripts,tasks,.github}/**/*.{md,json,yml,yaml,ts,js,cjs,mjs}\" \"*.md\" \"*.json\"",
     "format": "prettier --write \"{apps,docs,decisions,infra,packages,scripts,tasks,.github}/**/*.{md,json,yml,yaml,ts,js,cjs,mjs}\" \"*.md\" \"*.json\"",
     "lint": "eslint .",
@@ -21,12 +27,17 @@
     "test": "vitest run",
     "secrets:scan": "node scripts/scan-secrets.mjs"
   },
+  "dependencies": {
+    "pg": "8.23.0"
+  },
   "devDependencies": {
     "@types/node": "26.2.0",
+    "@types/pg": "8.21.0",
     "@typescript-eslint/eslint-plugin": "8.66.0",
     "@typescript-eslint/parser": "8.66.0",
     "eslint": "10.8.1",
     "prettier": "3.9.6",
+    "tsx": "4.21.0",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }
