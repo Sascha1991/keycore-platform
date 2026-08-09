@@ -1,0 +1,381 @@
+{
+  "name": "KeyCore Platform",
+  "spec_version": "1.0.0",
+  "date": "2026-08-07",
+  "market": "DE",
+  "currency": "EUR",
+  "primary_supplier": "Kinguin",
+  "storefront": "WooCommerce",
+  "phases": [
+    {
+      "id": "phase-01-foundation",
+      "tasks": [
+        {
+          "id": "01-01",
+          "title": "Repository bootstrap"
+        },
+        {
+          "id": "01-02",
+          "title": "Docker development environment"
+        },
+        {
+          "id": "01-03",
+          "title": "Continuous integration"
+        },
+        {
+          "id": "01-04",
+          "title": "Configuration and secrets framework"
+        },
+        {
+          "id": "01-05",
+          "title": "Development documentation"
+        }
+      ]
+    },
+    {
+      "id": "phase-02-core",
+      "tasks": [
+        {
+          "id": "02-01",
+          "title": "Core domain model"
+        },
+        {
+          "id": "02-02",
+          "title": "Database schema and migrations"
+        },
+        {
+          "id": "02-03",
+          "title": "Queue and job framework"
+        },
+        {
+          "id": "02-04",
+          "title": "Encryption service"
+        },
+        {
+          "id": "02-05",
+          "title": "Audit event framework"
+        },
+        {
+          "id": "02-06",
+          "title": "Shared error and state model"
+        }
+      ]
+    },
+    {
+      "id": "phase-03-supplier-framework",
+      "tasks": [
+        {
+          "id": "03-01",
+          "title": "Supplier adapter interface"
+        },
+        {
+          "id": "03-02",
+          "title": "Supplier registry"
+        },
+        {
+          "id": "03-03",
+          "title": "Mock supplier catalog"
+        },
+        {
+          "id": "03-04",
+          "title": "Mock purchase workflows"
+        },
+        {
+          "id": "03-05",
+          "title": "Supplier contract test suite"
+        }
+      ]
+    },
+    {
+      "id": "phase-04-kinguin",
+      "tasks": [
+        {
+          "id": "04-01",
+          "title": "Kinguin documentation mapping"
+        },
+        {
+          "id": "04-02",
+          "title": "Kinguin authentication client"
+        },
+        {
+          "id": "04-03",
+          "title": "Kinguin catalog adapter"
+        },
+        {
+          "id": "04-04",
+          "title": "Kinguin incremental sync"
+        },
+        {
+          "id": "04-05",
+          "title": "Kinguin purchase adapter"
+        },
+        {
+          "id": "04-06",
+          "title": "Kinguin key retrieval"
+        },
+        {
+          "id": "04-07",
+          "title": "Kinguin refund and claim mapping"
+        },
+        {
+          "id": "04-08",
+          "title": "Kinguin adapter contract tests"
+        }
+      ]
+    },
+    {
+      "id": "phase-05-catalog",
+      "tasks": [
+        {
+          "id": "05-01",
+          "title": "Catalog ingestion pipeline"
+        },
+        {
+          "id": "05-02",
+          "title": "Germany region rule engine"
+        },
+        {
+          "id": "05-03",
+          "title": "VPN and activation restrictions"
+        },
+        {
+          "id": "05-04",
+          "title": "Product family grouping"
+        },
+        {
+          "id": "05-05",
+          "title": "Publication eligibility"
+        },
+        {
+          "id": "05-06",
+          "title": "WooCommerce product publisher"
+        },
+        {
+          "id": "05-07",
+          "title": "Search indexing"
+        },
+        {
+          "id": "05-08",
+          "title": "Full and incremental schedules"
+        }
+      ]
+    },
+    {
+      "id": "phase-06-pricing",
+      "tasks": [
+        {
+          "id": "06-01",
+          "title": "Fee and tax model"
+        },
+        {
+          "id": "06-02",
+          "title": "Margin engine"
+        },
+        {
+          "id": "06-03",
+          "title": "Retail rounding rules"
+        },
+        {
+          "id": "06-04",
+          "title": "Checkout price lock"
+        },
+        {
+          "id": "06-05",
+          "title": "Best-offer selection"
+        }
+      ]
+    },
+    {
+      "id": "phase-07-checkout-orders",
+      "tasks": [
+        {
+          "id": "07-01",
+          "title": "WooCommerce order bridge"
+        },
+        {
+          "id": "07-02",
+          "title": "Stripe test integration"
+        },
+        {
+          "id": "07-03",
+          "title": "Order state machine"
+        },
+        {
+          "id": "07-04",
+          "title": "Procurement orchestrator"
+        },
+        {
+          "id": "07-05",
+          "title": "Fulfillment workflow"
+        },
+        {
+          "id": "07-06",
+          "title": "Automatic procurement-failure refund"
+        },
+        {
+          "id": "07-07",
+          "title": "Invoice trigger integration"
+        },
+        {
+          "id": "07-08",
+          "title": "Transactional email events"
+        }
+      ]
+    },
+    {
+      "id": "phase-08-customer-account",
+      "tasks": [
+        {
+          "id": "08-01",
+          "title": "Account registration and identity mapping"
+        },
+        {
+          "id": "08-02",
+          "title": "My product keys page"
+        },
+        {
+          "id": "08-03",
+          "title": "Authorized key reveal endpoint"
+        },
+        {
+          "id": "08-04",
+          "title": "Invoice downloads"
+        },
+        {
+          "id": "08-05",
+          "title": "Activation instructions"
+        }
+      ]
+    },
+    {
+      "id": "phase-09-fraud-support",
+      "tasks": [
+        {
+          "id": "09-01",
+          "title": "Risk policy engine"
+        },
+        {
+          "id": "09-02",
+          "title": "Velocity and device limits"
+        },
+        {
+          "id": "09-03",
+          "title": "Manual review queue"
+        },
+        {
+          "id": "09-04",
+          "title": "Customer support case form"
+        },
+        {
+          "id": "09-05",
+          "title": "Supplier claim workflow"
+        },
+        {
+          "id": "09-06",
+          "title": "Dispute evidence package"
+        }
+      ]
+    },
+    {
+      "id": "phase-10-monitoring",
+      "tasks": [
+        {
+          "id": "10-01",
+          "title": "Metrics and dashboards"
+        },
+        {
+          "id": "10-02",
+          "title": "Structured logging and redaction"
+        },
+        {
+          "id": "10-03",
+          "title": "Alerting rules"
+        },
+        {
+          "id": "10-04",
+          "title": "Emergency controls"
+        },
+        {
+          "id": "10-05",
+          "title": "Backup and restore"
+        },
+        {
+          "id": "10-06",
+          "title": "Operational runbooks"
+        }
+      ]
+    },
+    {
+      "id": "phase-11-staging",
+      "tasks": [
+        {
+          "id": "11-01",
+          "title": "Staging deployment"
+        },
+        {
+          "id": "11-02",
+          "title": "End-to-end acceptance suite"
+        },
+        {
+          "id": "11-03",
+          "title": "Catalog scale test"
+        },
+        {
+          "id": "11-04",
+          "title": "Order concurrency test"
+        },
+        {
+          "id": "11-05",
+          "title": "Security assessment"
+        },
+        {
+          "id": "11-06",
+          "title": "Recovery exercise"
+        },
+        {
+          "id": "11-07",
+          "title": "User acceptance review"
+        }
+      ]
+    },
+    {
+      "id": "phase-12-production",
+      "tasks": [
+        {
+          "id": "12-01",
+          "title": "Legal and tax readiness gate"
+        },
+        {
+          "id": "12-02",
+          "title": "Production infrastructure"
+        },
+        {
+          "id": "12-03",
+          "title": "Production supplier and Stripe credentials"
+        },
+        {
+          "id": "12-04",
+          "title": "Controlled catalog activation"
+        },
+        {
+          "id": "12-05",
+          "title": "Controlled payment rollout"
+        },
+        {
+          "id": "12-06",
+          "title": "Go-live checklist"
+        },
+        {
+          "id": "12-07",
+          "title": "Post-launch review"
+        }
+      ]
+    }
+  ],
+  "project": "KeyCore Platform",
+  "public_brand": "KeyPlanet",
+  "initial_domain": "key-planet.de",
+  "repository": "keycore-platform",
+  "specification_version": "1.0.1",
+  "status": "sprint-1-ready"
+}
