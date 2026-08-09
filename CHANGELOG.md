@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Implemented `KS-01-02` core contract skeleton:
+  - added supplier-neutral TypeScript domain/value types and port contracts;
+  - added region, workflow state, audit, vault, supplier, storefront, queue, persistence, mail, invoice, monitoring, secret-management, and clock boundaries;
+  - added contract and dependency-boundary tests proving fail-closed region defaults and forbidden adapter imports;
+  - added `docs/core-contracts.md` and the KS-01-02 completion report.
 - Implemented `KS-01-01` foundation bootstrap:
   - added repository tooling for Node.js/TypeScript, PHP/Composer validation, formatting, linting, type checking, tests, and secret scanning;
   - added local Docker Compose foundation for WordPress, WooCommerce skeleton, PostgreSQL, Redis, MariaDB for local WordPress, and Mailpit;
