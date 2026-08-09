@@ -46,8 +46,10 @@ const insertFixtureGraph = async (): Promise<{
   readonly orderLineId: string;
   readonly offerId: string;
   readonly supplierId: string;
+  readonly supplierProductExternalId: string;
 }> => {
   const suffix = randomUUID();
+  const supplierProductExternalId = `sp-${suffix}`;
   const supplier = await query<{ id: string }>(
     "INSERT INTO suppliers(supplier_code, display_name) VALUES ($1, 'Mock Supplier') RETURNING id",
     [`mock-${suffix}`],
@@ -59,7 +61,7 @@ const insertFixtureGraph = async (): Promise<{
 
   const supplierProduct = await query<{ id: string }>(
     "INSERT INTO supplier_products(supplier_id, supplier_product_id, title) VALUES ($1, $2, 'Synthetic Product') RETURNING id",
-    [supplierId, `sp-${suffix}`],
+    [supplierId, supplierProductExternalId],
   );
   const supplierProductId = supplierProduct.rows[0]?.id;
   if (!supplierProductId) {
@@ -123,6 +125,7 @@ const insertFixtureGraph = async (): Promise<{
     offerId,
     orderLineId,
     supplierId,
+    supplierProductExternalId,
   };
 };
 
@@ -186,8 +189,8 @@ describePostgres("PostgreSQL persistence foundation", () => {
 
     await expect(
       query(
-        "INSERT INTO supplier_products(supplier_id, supplier_product_id, title) VALUES ($1, 'sp-1', 'Duplicate')",
-        [fixture.supplierId],
+        "INSERT INTO supplier_products(supplier_id, supplier_product_id, title) VALUES ($1, $2, 'Duplicate Title')",
+        [fixture.supplierId, fixture.supplierProductExternalId],
       ),
     ).rejects.toThrow();
 
