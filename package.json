@@ -1,0 +1,33 @@
+{
+  "name": "keycore-platform",
+  "version": "1.0.2",
+  "private": true,
+  "type": "module",
+  "description": "Foundation tooling for the KeyCore Platform specification.",
+  "engines": {
+    "node": "22.22.0",
+    "npm": ">=11"
+  },
+  "packageManager": "npm@11.6.2",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run secrets:scan",
+    "format:check": "prettier --check \"{apps,docs,decisions,infra,packages,scripts,tasks,.github}/**/*.{md,json,yml,yaml,ts,js,cjs,mjs}\" \"*.md\" \"*.json\"",
+    "format": "prettier --write \"{apps,docs,decisions,infra,packages,scripts,tasks,.github}/**/*.{md,json,yml,yaml,ts,js,cjs,mjs}\" \"*.md\" \"*.json\"",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "secrets:scan": "node scripts/scan-secrets.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "@typescript-eslint/eslint-plugin": "8.66.0",
+    "@typescript-eslint/parser": "8.66.0",
+    "eslint": "10.8.1",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

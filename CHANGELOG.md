@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Implemented `KS-01-01` foundation bootstrap:
+  - added repository tooling for Node.js/TypeScript, PHP/Composer validation, formatting, linting, type checking, tests, and secret scanning;
+  - added local Docker Compose foundation for WordPress, WooCommerce skeleton, PostgreSQL, Redis, MariaDB for local WordPress, and Mailpit;
+  - added environment example files, CI quality gates, local developer bootstrap documentation, and the KS-01-01 completion report.
+
 ## 1.0.2 - Specification hardening
 
 - Added `docs/00-project-overview.md` as the authoritative project overview.

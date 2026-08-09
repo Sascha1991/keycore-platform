@@ -113,20 +113,20 @@ Structured blocking evidence always wins over permissive evidence. Free-text pro
 
 Decision rules:
 
-| Evidence | Decision | Reason code |
-| --- | --- | --- |
-| Explicit DE allow with no blocking evidence | `ALLOWED` | `REGION_DE_ALLOWED` |
-| Explicit DE exclusion | `BLOCKED` | `REGION_DE_EXCLUDED` |
-| EU allow with no DE exclusion | `ALLOWED` | `REGION_EU_ALLOWED` |
-| Global allow with no blocking evidence | `ALLOWED` | `REGION_GLOBAL_ALLOWED` |
-| Region Free with no blocking evidence | `ALLOWED` | `REGION_FREE_ALLOWED` |
-| Incompatible region such as US, LATAM, CIS, or Asia only | `BLOCKED` | `REGION_INCOMPATIBLE` |
-| VPN activation required | `BLOCKED` | `VPN_ACTIVATION_BLOCKED` |
-| Foreign-account requirement | `BLOCKED` | `FOREIGN_ACCOUNT_REQUIRED` |
-| Missing structured evidence | `REVIEW_REQUIRED` | `REGION_EVIDENCE_MISSING` |
-| Contradictory structured evidence | `REVIEW_REQUIRED` | `REGION_EVIDENCE_CONTRADICTORY` |
-| Unknown structured region value | `REVIEW_REQUIRED` | `REGION_UNKNOWN_VALUE` |
-| Manually disabled offer or supplier | `DISABLED` | `MANUAL_OR_SUPPLIER_DISABLED` |
+| Evidence                                                 | Decision          | Reason code                     |
+| -------------------------------------------------------- | ----------------- | ------------------------------- |
+| Explicit DE allow with no blocking evidence              | `ALLOWED`         | `REGION_DE_ALLOWED`             |
+| Explicit DE exclusion                                    | `BLOCKED`         | `REGION_DE_EXCLUDED`            |
+| EU allow with no DE exclusion                            | `ALLOWED`         | `REGION_EU_ALLOWED`             |
+| Global allow with no blocking evidence                   | `ALLOWED`         | `REGION_GLOBAL_ALLOWED`         |
+| Region Free with no blocking evidence                    | `ALLOWED`         | `REGION_FREE_ALLOWED`           |
+| Incompatible region such as US, LATAM, CIS, or Asia only | `BLOCKED`         | `REGION_INCOMPATIBLE`           |
+| VPN activation required                                  | `BLOCKED`         | `VPN_ACTIVATION_BLOCKED`        |
+| Foreign-account requirement                              | `BLOCKED`         | `FOREIGN_ACCOUNT_REQUIRED`      |
+| Missing structured evidence                              | `REVIEW_REQUIRED` | `REGION_EVIDENCE_MISSING`       |
+| Contradictory structured evidence                        | `REVIEW_REQUIRED` | `REGION_EVIDENCE_CONTRADICTORY` |
+| Unknown structured region value                          | `REVIEW_REQUIRED` | `REGION_UNKNOWN_VALUE`          |
+| Manually disabled offer or supplier                      | `DISABLED`        | `MANUAL_OR_SUPPLIER_DISABLED`   |
 
 Revalidation triggers include supplier catalog updates, region metadata changes, title or activation-text changes, supplier adapter changes, policy changes, manual review actions, and periodic scheduled rechecks.
 

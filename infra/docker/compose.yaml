@@ -1,0 +1,72 @@
+name: keycore-platform
+
+services:
+  wordpress:
+    image: wordpress:7.0.3-php8.3-apache
+    depends_on:
+      wordpress-db:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_NAME: keycore_wp
+      WORDPRESS_DB_USER: keycore_wp
+      WORDPRESS_DB_PASSWORD: ${KEYCORE_LOCAL_WORDPRESS_DB_PASSWORD:-local-wordpress-password}
+      WORDPRESS_DEBUG: "1"
+    ports:
+      - "8080:80"
+    volumes:
+      - ../../apps/wordpress/keycore-platform:/var/www/html/wp-content/plugins/keycore-platform:ro
+
+  wordpress-db:
+    image: mariadb:11.8.8
+    environment:
+      MARIADB_DATABASE: keycore_wp
+      MARIADB_USER: keycore_wp
+      MARIADB_PASSWORD: ${KEYCORE_LOCAL_WORDPRESS_DB_PASSWORD:-local-wordpress-password}
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - wordpress-db-data:/var/lib/mysql
+
+  postgres:
+    image: postgres:16.10-alpine
+    environment:
+      POSTGRES_DB: keycore
+      POSTGRES_USER: keycore
+      POSTGRES_PASSWORD: ${KEYCORE_LOCAL_POSTGRES_PASSWORD:-local-postgres-password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycore -d keycore"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  mail:
+    image: axllent/mailpit:v1.21.8
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+volumes:
+  wordpress-db-data:
+  postgres-data:
+  redis-data:
