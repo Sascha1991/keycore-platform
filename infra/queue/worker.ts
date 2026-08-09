@@ -4,6 +4,7 @@ import type {
   QueueObservabilityPort,
 } from "../../packages/platform/src/contracts.js";
 import { classifyError } from "../../packages/platform/src/contracts.js";
+import type { ReservedJob } from "./redis-queue.js";
 
 export type WorkerHealthState =
   "STARTING" | "HEALTHY" | "STOPPING" | "STOPPED" | "DEGRADED";
@@ -21,11 +22,14 @@ export type JobHandler = (
 export interface WorkerQueue {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
-  take(): Promise<JobEnvelope | null>;
+  acknowledge(reservation: ReservedJob): Promise<void>;
+  fail(reservation: ReservedJob): Promise<void>;
+  reserve(): Promise<ReservedJob | null>;
 }
 
 export class WorkerLifecycle {
   private readonly handlers = new Map<string, JobHandler>();
+  private activeHandlers = 0;
   private running = false;
   private healthState: WorkerHealthState = "STOPPED";
 
@@ -52,6 +56,9 @@ export class WorkerLifecycle {
   public async stop(): Promise<void> {
     this.healthState = "STOPPING";
     this.running = false;
+    while (this.activeHandlers > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
     await this.queue.disconnect();
     this.healthState = "STOPPED";
   }
@@ -61,14 +68,16 @@ export class WorkerLifecycle {
       return false;
     }
 
-    const job = await this.queue.take();
-    if (!job) {
+    const reservation = await this.queue.reserve();
+    if (!reservation) {
       return false;
     }
+    const { job } = reservation;
 
     const handler = this.handlers.get(job.jobType);
     if (!handler) {
       this.healthState = "DEGRADED";
+      await this.queue.fail(reservation);
       await this.emit({
         correlationId: job.correlationId,
         occurredAt: new Date(),
@@ -78,10 +87,12 @@ export class WorkerLifecycle {
     }
 
     try {
+      this.activeHandlers += 1;
       await handler(job, {
         correlationId: job.correlationId,
         idempotencyKey: job.idempotencyKey,
       });
+      await this.queue.acknowledge(reservation);
       await this.emit({
         correlationId: job.correlationId,
         occurredAt: new Date(),
@@ -90,6 +101,7 @@ export class WorkerLifecycle {
       return true;
     } catch (error) {
       const classification = classifyError(error);
+      await this.queue.fail(reservation);
       await this.emit({
         correlationId: job.correlationId,
         occurredAt: new Date(),
@@ -97,6 +109,8 @@ export class WorkerLifecycle {
         type: "JOB_FAILED",
       });
       return false;
+    } finally {
+      this.activeHandlers -= 1;
     }
   }
 

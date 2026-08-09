@@ -16,7 +16,7 @@ import {
   type QueueObservabilityPort,
 } from "../../packages/platform/src/contracts.js";
 import { OutboxDispatcher } from "./outbox-dispatcher.js";
-import type { QueuePublisher } from "./redis-queue.js";
+import type { QueuePublisher, ReservedJob } from "./redis-queue.js";
 import { WorkerLifecycle } from "./worker.js";
 
 const syntheticJob = (): JobEnvelope => ({
@@ -238,12 +238,20 @@ describe("outbox dispatcher", () => {
 });
 
 describe("worker lifecycle", () => {
+  const reserveJob = (job = syntheticJob()): ReservedJob => ({
+    job,
+    reservationToken: `reservation-${randomUUID()}`,
+  });
+
   it("supports startup, handler registration, correlation propagation, and graceful shutdown", async () => {
-    const job = syntheticJob();
+    const reservation = reserveJob();
+    const { job } = reservation;
     const queue = {
+      acknowledge: vi.fn().mockResolvedValue(undefined),
       connect: vi.fn().mockResolvedValue(undefined),
       disconnect: vi.fn().mockResolvedValue(undefined),
-      take: vi.fn().mockResolvedValue(job),
+      fail: vi.fn().mockResolvedValue(undefined),
+      reserve: vi.fn().mockResolvedValue(reservation),
     };
     const observability: QueueObservabilityPort =
       new InMemoryQueueObservability();
@@ -262,6 +270,102 @@ describe("worker lifecycle", () => {
         idempotencyKey: job.idempotencyKey,
       }),
     );
+    expect(queue.acknowledge).toHaveBeenCalledWith(reservation);
+    expect(queue.fail).not.toHaveBeenCalled();
     expect(worker.health).toBe("STOPPED");
+  });
+
+  it("requeues reserved work when the handler fails", async () => {
+    const reservation = reserveJob();
+    const queue = {
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      fail: vi.fn().mockResolvedValue(undefined),
+      reserve: vi.fn().mockResolvedValue(reservation),
+    };
+    const worker = new WorkerLifecycle(queue, new InMemoryQueueObservability());
+    worker.register(
+      reservation.job.jobType,
+      vi.fn().mockRejectedValue(new Error("transient")),
+    );
+
+    await worker.start();
+    await expect(worker.processOne()).resolves.toBe(false);
+    await worker.stop();
+
+    expect(queue.acknowledge).not.toHaveBeenCalled();
+    expect(queue.fail).toHaveBeenCalledWith(reservation);
+  });
+
+  it("keeps idempotency context stable across redelivery", async () => {
+    const job = syntheticJob();
+    const firstReservation = reserveJob(job);
+    const secondReservation = reserveJob(job);
+    const queue = {
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      fail: vi.fn().mockResolvedValue(undefined),
+      reserve: vi
+        .fn()
+        .mockResolvedValueOnce(firstReservation)
+        .mockResolvedValueOnce(secondReservation),
+    };
+    const worker = new WorkerLifecycle(queue, new InMemoryQueueObservability());
+    const handler = vi.fn().mockResolvedValue(undefined);
+    worker.register(job.jobType, handler);
+
+    await worker.start();
+    await worker.processOne();
+    await worker.processOne();
+    await worker.stop();
+
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenNthCalledWith(
+      2,
+      secondReservation.job,
+      expect.objectContaining({
+        idempotencyKey: firstReservation.job.idempotencyKey,
+      }),
+    );
+  });
+
+  it("waits for in-flight work during graceful shutdown before acknowledging", async () => {
+    const reservation = reserveJob();
+    let releaseHandler: (() => void) | undefined;
+    let markHandlerStarted: (() => void) | undefined;
+    const handlerStarted = new Promise<void>((resolve) => {
+      markHandlerStarted = resolve;
+    });
+    const handlerCompleted = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+    const queue = {
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      fail: vi.fn().mockResolvedValue(undefined),
+      reserve: vi.fn().mockResolvedValue(reservation),
+    };
+    const worker = new WorkerLifecycle(queue, new InMemoryQueueObservability());
+    worker.register(reservation.job.jobType, async () => {
+      markHandlerStarted?.();
+      return handlerCompleted;
+    });
+
+    await worker.start();
+    const processing = worker.processOne();
+    await handlerStarted;
+    const stopping = worker.stop();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(queue.disconnect).not.toHaveBeenCalled();
+    releaseHandler?.();
+    await processing;
+    await stopping;
+
+    expect(queue.acknowledge).toHaveBeenCalledWith(reservation);
+    expect(queue.disconnect).toHaveBeenCalled();
   });
 });

@@ -36,6 +36,8 @@ This task establishes retry-safe infrastructure without implementing those later
 - Retry policy supports max attempts, exponential backoff, max delay, jitter, and retryable/non-retryable classification.
 - Reconciliation records can be created, claimed, completed, failed, retried, and escalated to `MANUAL_REVIEW`.
 - Redis queue adapter accepts only safe job envelopes.
+- Redis queue delivery uses explicit reservation, acknowledgment, failure requeue, and stale in-flight recovery.
+- Worker acknowledgment happens only after successful handler completion.
 - Redis unavailable behavior leaves PostgreSQL outbox intent retryable.
 - Worker lifecycle supports startup, graceful shutdown, health state, handler registration, error classification, structured safe logging hooks, and correlation propagation.
 - Payload validation rejects forbidden sensitive top-level and nested fields.
@@ -58,6 +60,12 @@ This task establishes retry-safe infrastructure without implementing those later
 - Redis queue adapter contract.
 - Redis unavailable behavior.
 - Redis data-loss assumption does not delete PostgreSQL intent.
+- Successful Redis reserve and acknowledgment.
+- Failed handler requeue.
+- Simulated worker crash recovery.
+- Stale in-flight job recovery.
+- Duplicate redelivery idempotency compatibility.
+- Graceful shutdown preserves in-flight work.
 - Worker graceful shutdown.
 - Correlation ID propagation.
 - Forbidden queue payload fields.

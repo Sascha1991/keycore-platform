@@ -21,6 +21,17 @@ The queue foundation assumes at-least-once delivery. A job may run more than onc
 
 Exactly-once message delivery is not claimed. Exactly-once business effects must be achieved by later handlers through durable idempotency records, order-line idempotency roots, and reconciliation.
 
+Redis delivery uses a reliable source-queue plus processing-set model:
+
+1. publishing writes a delivery record to the ready queue;
+2. reservation atomically moves one ready delivery into the processing set with a reservation timestamp;
+3. workers execute handlers only after reservation;
+4. successful handlers acknowledge the reservation, removing it from the processing set;
+5. failed handlers explicitly requeue the same delivery record;
+6. stale in-flight recovery moves old processing entries back to the ready queue for redelivery.
+
+Reservation removes a delivery from the ready queue, but not from Redis delivery tracking. A worker crash after reservation and before acknowledgment leaves the delivery in the processing set until recovery requeues it. Redis still remains a delivery aid only; PostgreSQL outbox and reconciliation records remain the durable business-state record.
+
 ## Transactional Outbox
 
 Future business mutations must create outbox records in the same PostgreSQL transaction as the state change they describe. The reusable transaction boundary in `infra/postgres/client.ts` supports that pattern.
@@ -60,12 +71,13 @@ The generic worker lifecycle supports:
 - graceful shutdown;
 - health state;
 - queue connection;
+- explicit reserve, acknowledge and failure requeue calls;
 - handler registration;
 - error classification;
 - correlation propagation;
 - safe observability events.
 
-Workers do not log full payloads by default.
+Workers acknowledge work only after a handler succeeds. Handler failure requeues the reserved delivery. Graceful shutdown stops new reservations and waits for in-flight handler completion before disconnecting, so shutdown does not discard reserved work. Workers do not log full payloads by default.
 
 ## Crash Recovery
 
@@ -74,6 +86,8 @@ If PostgreSQL is available and Redis is unavailable, durable intent remains in P
 If Redis is available and PostgreSQL is unavailable, new durable business intent must not be invented in Redis.
 
 If a worker crashes after processing but before acknowledgment, work may be redelivered. Later business handlers must use idempotency records and reconciliation to prevent duplicate irreversible effects.
+
+Stale recovery is an operational action over Redis processing entries whose reservation timestamp is older than the configured cutoff. Recovery is deliberately delivery-level only and does not mutate PostgreSQL business state.
 
 ## Security Boundaries
 

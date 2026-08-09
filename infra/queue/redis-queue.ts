@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { createClient, type RedisClientType } from "redis";
 
 import type {
@@ -12,17 +14,49 @@ export interface RedisQueueConfig {
   readonly queueName: string;
 }
 
+export interface ReservedJob {
+  readonly job: JobEnvelope;
+  readonly reservationToken: string;
+}
+
 export interface QueuePublisher {
   publish(job: JobEnvelope): Promise<void>;
 }
 
+interface RedisDeliveryRecord {
+  readonly deliveryId: string;
+  readonly enqueuedAt: string;
+  readonly job: JobEnvelope;
+}
+
+const reserveScript = `
+  local job = redis.call('RPOP', KEYS[1])
+  if not job then
+    return nil
+  end
+  redis.call('ZADD', KEYS[2], ARGV[1], job)
+  return job
+`;
+
+const recoverStaleScript = `
+  local jobs = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, ARGV[2])
+  for _, job in ipairs(jobs) do
+    if redis.call('ZREM', KEYS[1], job) == 1 then
+      redis.call('LPUSH', KEYS[2], job)
+    end
+  end
+  return jobs
+`;
+
 export class RedisQueueAdapter implements QueuePort, QueuePublisher {
   private readonly client: RedisClientType;
+  private readonly processingQueueName: string;
   private readonly queueName: string;
 
   public constructor(config: RedisQueueConfig, client?: RedisClientType) {
     this.client = client ?? createClient({ url: config.url });
     this.queueName = config.queueName;
+    this.processingQueueName = `${config.queueName}:processing`;
   }
 
   public async connect(): Promise<void> {
@@ -45,18 +79,85 @@ export class RedisQueueAdapter implements QueuePort, QueuePublisher {
 
   public async publish(job: JobEnvelope): Promise<void> {
     validateSafePayload(job.payload);
-    await this.client.lPush(this.queueName, JSON.stringify(job));
+    const record: RedisDeliveryRecord = {
+      deliveryId: randomUUID(),
+      enqueuedAt: new Date().toISOString(),
+      job,
+    };
+    await this.client.lPush(this.queueName, JSON.stringify(record));
   }
 
-  public async take(timeoutSeconds = 1): Promise<JobEnvelope | null> {
-    const result = await this.client.brPop(this.queueName, timeoutSeconds);
-    if (!result) {
+  public async reserve(now: Date = new Date()): Promise<ReservedJob | null> {
+    const raw = await this.client.sendCommand([
+      "EVAL",
+      reserveScript,
+      "2",
+      this.queueName,
+      this.processingQueueName,
+      now.getTime().toString(),
+    ]);
+    if (typeof raw !== "string") {
       return null;
     }
 
-    const raw = Array.isArray(result) ? result[1] : result.element;
-    const parsed = JSON.parse(raw) as JobEnvelope;
-    validateSafePayload(parsed.payload);
+    const parsed = this.parseDeliveryRecord(raw);
+    return {
+      job: parsed.job,
+      reservationToken: raw,
+    };
+  }
+
+  public async acknowledge(reservation: ReservedJob): Promise<void> {
+    await this.client.zRem(
+      this.processingQueueName,
+      reservation.reservationToken,
+    );
+  }
+
+  public async fail(reservation: ReservedJob): Promise<void> {
+    const removed = await this.client.zRem(
+      this.processingQueueName,
+      reservation.reservationToken,
+    );
+    if (removed > 0) {
+      await this.client.lPush(this.queueName, reservation.reservationToken);
+    }
+  }
+
+  public async recoverStale(
+    olderThan: Date,
+    limit = 100,
+  ): Promise<ReservedJob[]> {
+    const rawJobs = await this.client.sendCommand([
+      "EVAL",
+      recoverStaleScript,
+      "2",
+      this.processingQueueName,
+      this.queueName,
+      olderThan.getTime().toString(),
+      limit.toString(),
+    ]);
+
+    if (!Array.isArray(rawJobs)) {
+      return [];
+    }
+
+    return rawJobs
+      .filter((raw): raw is string => typeof raw === "string")
+      .map((raw) => ({
+        job: this.parseDeliveryRecord(raw).job,
+        reservationToken: raw,
+      }));
+  }
+
+  public async take(): Promise<JobEnvelope | null> {
+    const reserved = await this.reserve();
+    return reserved?.job ?? null;
+  }
+
+  private parseDeliveryRecord(raw: string): RedisDeliveryRecord {
+    const parsed = JSON.parse(raw) as RedisDeliveryRecord;
+    validateSafePayload(parsed.job.payload);
     return parsed;
   }
 }

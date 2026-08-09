@@ -5,6 +5,7 @@
 - Implemented `KS-02-02` queue, transactional outbox and reconciliation foundation:
   - added safe job envelope, payload validation/redaction, retry policy and observability hooks;
   - added Redis queue adapter behind the generic queue port using `redis@6.2.0`;
+  - corrected Redis delivery to use explicit reserve, acknowledgment, failure requeue and stale in-flight recovery;
   - added PostgreSQL outbox/reconciliation repositories, transaction boundary, dispatcher and worker lifecycle;
   - added CI-backed PostgreSQL/Redis tests and queue/outbox/reconciliation documentation.
 - Implemented `KS-02-01` PostgreSQL persistence foundation:
