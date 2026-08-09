@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   SupplierRegistry,
@@ -22,7 +22,11 @@ import {
 import { runSupplierContractTests } from "../contract/supplier-contract-suite.js";
 import {
   MockSupplier,
+  createGeneratedMockSupplierFixtures,
   createDefaultMockSupplierFixtures,
+  defaultGeneratedMockCatalogSize,
+  type MockOfferFixture,
+  type MockProductFixture,
 } from "./mock-supplier.js";
 
 const setup = {
@@ -33,6 +37,32 @@ const setup = {
   missingOfferId: supplierOfferId("so-missing"),
   missingProductId: supplierProductId("sp-missing"),
   unavailableOfferId: supplierOfferId("so-beta-eur"),
+};
+
+const collectPrimitiveValues = (value: unknown): string[] => {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return [String(value)];
+  }
+
+  if (value instanceof Date) {
+    return [value.toISOString()];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap(collectPrimitiveValues);
+  }
+
+  if (typeof value === "object") {
+    return Object.values(value).flatMap(collectPrimitiveValues);
+  }
+
+  return [];
 };
 
 runSupplierContractTests(setup);
@@ -201,6 +231,148 @@ describe("mock supplier behavior", () => {
       ),
     ).not.toMatch(
       /(api[_-]?key|bearer|client[_-]?secret|password|credential|token|payment[_-]?credential)/iu,
+    );
+  });
+});
+
+describe("generated large mock supplier catalog", () => {
+  let products: readonly MockProductFixture[];
+  let offers: readonly MockOfferFixture[];
+  let generationDurationMs = 0;
+
+  beforeAll(() => {
+    const startedAt = performance.now();
+    const generated = createGeneratedMockSupplierFixtures({
+      productCount: defaultGeneratedMockCatalogSize,
+      seed: "keycore-default",
+    });
+    generationDurationMs = performance.now() - startedAt;
+    products = generated.products;
+    offers = generated.offers;
+  });
+
+  it("creates exactly 50,000 products with deterministic IDs and ordering", () => {
+    const repeated = createGeneratedMockSupplierFixtures({
+      productCount: defaultGeneratedMockCatalogSize,
+      seed: "keycore-default",
+    });
+    const sampleIndexes = [0, 1, 24_999, 25_000, 49_998, 49_999];
+
+    expect(products).toHaveLength(50_000);
+    expect(generationDurationMs).toBeLessThan(15_000);
+    expect(
+      sampleIndexes.map((index) => products[index]?.supplierProductId),
+    ).toEqual(
+      sampleIndexes.map((index) => repeated.products[index]?.supplierProductId),
+    );
+    expect(sampleIndexes.map((index) => products[index]?.title)).toEqual(
+      sampleIndexes.map((index) => repeated.products[index]?.title),
+    );
+  });
+
+  it("creates unique SupplierProductIds and SupplierOfferIds", () => {
+    expect(
+      new Set(products.map((product) => product.supplierProductId)).size,
+    ).toBe(products.length);
+    expect(new Set(offers.map((offer) => offer.supplierOfferId)).size).toBe(
+      offers.length,
+    );
+    expect(offers.length).toBeGreaterThan(products.length);
+  });
+
+  it("paginates first, middle, and last pages deterministically", async () => {
+    const supplier = new MockSupplier({ offers, products });
+    const first = await supplier.listCatalog({ limit: 100 });
+    const middle = await supplier.listCatalog({
+      cursor: "mock:25000",
+      limit: 100,
+    });
+    const last = await supplier.listCatalog({
+      cursor: "mock:49900",
+      limit: 100,
+    });
+    const repeatedMiddle = await supplier.listCatalog({
+      cursor: "mock:25000",
+      limit: 100,
+    });
+
+    expect(first.items).toHaveLength(100);
+    expect(first.items[0]?.supplierProductId).toBe("sp-keycore-default-00000");
+    expect(middle).toEqual(repeatedMiddle);
+    expect(middle.items[0]?.supplierProductId).toBe("sp-keycore-default-25000");
+    expect(last.items).toHaveLength(100);
+    expect(last.items.at(-1)?.supplierProductId).toBe(
+      "sp-keycore-default-49999",
+    );
+    expect(last.nextCursor).toBeUndefined();
+  });
+
+  it("filters generated delta catalog deterministically", async () => {
+    const supplier = new MockSupplier({ offers, products });
+    const changed = await supplier.listCatalogDelta({
+      page: { limit: 100 },
+      since: new Date("2026-02-04T17:10:00.000Z"),
+    });
+    const none = await supplier.listCatalogDelta({
+      page: { limit: 100 },
+      since: new Date("2026-03-01T00:00:00.000Z"),
+    });
+
+    expect(changed.items.length).toBeGreaterThan(0);
+    expect(changed.items.length).toBeLessThanOrEqual(100);
+    expect(none.items).toEqual([]);
+  });
+
+  it("covers all required generated region scenarios", () => {
+    const scenarios = new Set(
+      offers.map((offer) => offer.supplierReferenceMetadata?.regionScenario),
+    );
+
+    expect(scenarios).toEqual(
+      new Set([
+        "GERMANY",
+        "EU",
+        "GLOBAL",
+        "US_ONLY",
+        "LATAM",
+        "CIS",
+        "ASIA",
+        "UNKNOWN",
+        "CONTRADICTORY",
+        "VPN_REQUIRED",
+        "FOREIGN_ACCOUNT_REQUIRED",
+      ]),
+    );
+  });
+
+  it("generates varied product, offer, stock, price and currency data safely", () => {
+    const productTypes = new Set(products.map((product) => product.type));
+    const platforms = new Set(products.flatMap((product) => product.platforms));
+    const availability = new Set(offers.map((offer) => offer.availability));
+    const currencies = new Set(
+      offers.map((offer) => offer.price.currency.toString()),
+    );
+    const prices = new Set(
+      offers.slice(0, 1_000).map((offer) => offer.price.amountMinor),
+    );
+
+    expect(productTypes.size).toBeGreaterThan(1);
+    expect(platforms.size).toBeGreaterThan(1);
+    expect(availability).toEqual(
+      new Set(["IN_STOCK", "OUT_OF_STOCK", "LIMITED", "PREORDER", "UNKNOWN"]),
+    );
+    expect(currencies).toEqual(new Set(["EUR", "USD", "GBP", "PLN"]));
+    expect(prices.size).toBeGreaterThan(100);
+  });
+
+  it("contains no credentials or product-key material", () => {
+    const sampled = {
+      offers: [offers[0], offers[24_999], offers.at(-1)],
+      products: [products[0], products[24_999], products.at(-1)],
+    };
+
+    expect(collectPrimitiveValues(sampled).join(" ")).not.toMatch(
+      /(api[_-]?key|bearer|client[_-]?secret|password|credential|token|product[_-]?key|payment[_-]?credential)/iu,
     );
   });
 });

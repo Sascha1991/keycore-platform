@@ -91,6 +91,37 @@ Full catalog listing returns deterministic bounded pages. Delta listing is avail
 
 MockSupplier uses opaque cursors such as `mock:2`. These are deterministic in-memory cursors, not SQL offsets or external pagination claims.
 
+## Generated Mock Catalog
+
+MockSupplier supports both small focused fixtures and scalable generated fixtures. The generated profile is created by:
+
+```ts
+createGeneratedMockSupplierFixtures({
+  productCount: 50_000,
+  seed: "keycore-default",
+});
+```
+
+The generator uses deterministic arithmetic and a small built-in string hash. It does not use random libraries, external APIs, or real commercial catalog data. For the same seed and count it produces stable product IDs, offer IDs, titles, ordering, prices, currencies, availability states, region evidence and `changedAt` timestamps.
+
+The default scale profile creates exactly 50,000 synthetic products and deterministic offers without committing a large JSON fixture. Pagination slices fixtures before normalization so first, middle and last page tests remain practical in CI. The scale suite generates the large fixture once for the relevant test group and avoids snapshots or catalog-wide logs.
+
+Generated fixtures cover:
+
+- Germany-compatible evidence;
+- EU-compatible evidence;
+- Global-compatible evidence;
+- US-only evidence;
+- LATAM evidence;
+- CIS evidence;
+- Asia evidence;
+- unknown region evidence;
+- contradictory region evidence;
+- VPN-required activation;
+- foreign-account-required activation.
+
+Generated fixtures also vary product types, platforms, availability, prices, currencies, stock revisions and changed timestamps.
+
 ## Region Evidence
 
 Supplier region data remains structured evidence. KS-03-01 does not implement the Germany compatibility decision engine. Unknown, missing or contradictory region evidence remains review-required and is never promoted to `ALLOWED` by the mock adapter.
@@ -151,6 +182,8 @@ MockSupplier supports deterministic opt-in fault injection:
 - `MALFORMED_RESPONSE_SIMULATION`
 
 Faults are configured per operation and never random.
+
+MockSupplier also supports bounded deterministic operation delays for API-delay simulation. Timeout behavior remains explicit fault injection and does not rely on random timing.
 
 ## Observability Hooks
 
