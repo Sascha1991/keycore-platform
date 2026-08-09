@@ -1,3 +1,4 @@
+export * from "./audit/service.js";
 export * from "./domain/audit.js";
 export * from "./domain/brands.js";
 export * from "./domain/catalog.js";
