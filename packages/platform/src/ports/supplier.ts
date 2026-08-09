@@ -1,4 +1,5 @@
 import type {
+  Availability,
   OfferSummary,
   PriceSnapshot,
   ProductSummary,
@@ -36,11 +37,16 @@ export interface RateLimitMetadata {
 }
 
 export interface SupplierCapabilities {
+  readonly supportsFullCatalog: boolean;
   readonly supportsDeltaCatalog: boolean;
+  readonly supportsPriceLookup: boolean;
+  readonly supportsRegionEvidence: boolean;
+  readonly supportsPurchase: boolean;
   readonly supportsPurchaseStatusReconciliation: boolean;
   readonly supportsDelayedFulfillment: boolean;
   readonly supportsKeyRetrieval: boolean;
   readonly supportsRefundClaims: boolean;
+  readonly supportsHealthRateLimitInfo: boolean;
 }
 
 export interface SupplierIdentity {
@@ -54,6 +60,26 @@ export interface CatalogDeltaRequest {
   readonly page: PageRequest;
 }
 
+export interface NormalizedSupplierProduct {
+  readonly supplier: SupplierIdentity;
+  readonly supplierProductId: SupplierProductId;
+  readonly product: ProductSummary;
+  readonly lifecycle: Availability;
+  readonly changedAt: Date;
+}
+
+export interface NormalizedSupplierOffer {
+  readonly supplier: SupplierIdentity;
+  readonly supplierOfferId: SupplierOfferId;
+  readonly supplierProductId: SupplierProductId;
+  readonly offer: OfferSummary;
+  readonly regionEvidence: RegionEvidence;
+  readonly capturedAt: Date;
+  readonly supplierReferenceMetadata: Readonly<
+    Record<string, string | number | boolean | null>
+  >;
+}
+
 export interface PurchaseRequest {
   readonly supplierOfferId: SupplierOfferId;
   readonly orderLineId: OrderLineId;
@@ -64,11 +90,19 @@ export interface PurchaseRequest {
 export interface PurchaseReceipt {
   readonly supplierPurchaseReference: string;
   readonly acceptedAt: Date;
+  readonly state:
+    | "ACCEPTED"
+    | "FULFILLED"
+    | "DELAYED"
+    | "OUT_OF_STOCK"
+    | "REJECTED"
+    | "AMBIGUOUS";
   readonly rateLimit?: RateLimitMetadata;
 }
 
 export interface SupplierKeyHandle {
   readonly supplierPurchaseReference: string;
+  readonly keyReference: string;
   readonly receivedAt: Date;
 }
 
@@ -89,16 +123,43 @@ export interface RefundClaimReceipt {
   readonly acceptedAt: Date;
 }
 
+export const supplierErrorCategories = [
+  "AUTHENTICATION",
+  "AUTHORIZATION",
+  "RATE_LIMIT",
+  "TIMEOUT",
+  "TRANSIENT",
+  "INVALID_RESPONSE",
+  "NOT_FOUND",
+  "OUT_OF_STOCK",
+  "REJECTED",
+  "CONFLICT",
+  "UNSUPPORTED_CAPABILITY",
+  "UNKNOWN",
+] as const;
+
+export type SupplierErrorCategory = (typeof supplierErrorCategories)[number];
+
+export interface SupplierErrorContext {
+  readonly supplierId: SupplierId;
+  readonly operation: string;
+  readonly category: SupplierErrorCategory;
+  readonly correlationId?: CorrelationId;
+  readonly supplierReference?: string;
+}
+
 export interface SupplierPort {
   readonly identity: SupplierIdentity;
   readonly capabilities: SupplierCapabilities;
 
-  listCatalog(page: PageRequest): Promise<Page<ProductSummary>>;
+  listCatalog(page: PageRequest): Promise<Page<NormalizedSupplierProduct>>;
   listCatalogDelta?(
     request: CatalogDeltaRequest,
-  ): Promise<Page<ProductSummary>>;
-  getProduct(productId: SupplierProductId): Promise<ProductSummary | null>;
-  getOffer(offerId: SupplierOfferId): Promise<OfferSummary | null>;
+  ): Promise<Page<NormalizedSupplierProduct>>;
+  getProduct(
+    productId: SupplierProductId,
+  ): Promise<NormalizedSupplierProduct | null>;
+  getOffer(offerId: SupplierOfferId): Promise<NormalizedSupplierOffer | null>;
   getCurrentPrice(offerId: SupplierOfferId): Promise<PriceSnapshot>;
   getRegionEvidence(offerId: SupplierOfferId): Promise<RegionEvidence>;
   submitPurchase(request: PurchaseRequest): Promise<PurchaseReceipt>;

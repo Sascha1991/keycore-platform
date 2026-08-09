@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Implemented `KS-03-01` supplier framework and MockSupplier foundation:
+  - refined supplier-neutral capability and normalization contracts;
+  - added SupplierRegistry, supplier-neutral errors, and observability contracts;
+  - added deterministic offline MockSupplier with catalog, delta, purchase, reconciliation, key-handle, refund, health, rate-limit, and fault-injection behavior;
+  - added scalable 50,000-product deterministic generated MockSupplier fixtures with broad region/product/offer scenario coverage;
+  - added reusable supplier adapter contract tests and supplier framework documentation.
 - Implemented `KS-02-04` secure audit service foundation:
   - added recursive secret-safe audit metadata validation and append validation;
   - added authorized read-only audit query service with bounded keyset pagination;

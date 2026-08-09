@@ -11,5 +11,8 @@ export * from "./ports/supplier.js";
 export * from "./queue/job.js";
 export * from "./queue/observability.js";
 export * from "./queue/retry.js";
+export * from "./suppliers/errors.js";
+export * from "./suppliers/observability.js";
+export * from "./suppliers/registry.js";
 export * from "./vault/crypto.js";
 export * from "./vault/service.js";
