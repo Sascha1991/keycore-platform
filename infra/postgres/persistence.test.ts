@@ -6,13 +6,19 @@ import { Client, type QueryResult, type QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  correlationId,
   decryptProductKeyMaterial,
   encryptProductKeyMaterial,
   orderLineId,
+  type AuditEvent,
 } from "../../packages/platform/src/contracts.js";
 import { DevelopmentKeyManagementProvider } from "../key-management/development-provider.js";
 import { loadMigrations, migrationsDirectory } from "./migrations.js";
-import { PostgresEncryptedKeyRepository } from "./repositories.js";
+import {
+  PostgresAuditEventRepository,
+  PostgresAuditQueryRepository,
+  PostgresEncryptedKeyRepository,
+} from "./repositories.js";
 
 const databaseUrl = process.env.KEYCORE_TEST_DATABASE_URL;
 const describePostgres = databaseUrl ? describe : describe.skip;
@@ -135,6 +141,20 @@ const insertFixtureGraph = async (): Promise<{
     supplierProductExternalId,
   };
 };
+
+const auditEvent = (override: Partial<AuditEvent> = {}): AuditEvent => ({
+  actor: { id: "system", type: "SYSTEM" },
+  correlationId: correlationId(`corr-${randomUUID()}`),
+  entity: { id: randomUUID(), type: "ORDER_LINE" },
+  environment: "CI",
+  eventType: "KEY_REVEALED",
+  metadata: { keyVersion: "local-v1", retryCount: 0 },
+  outcome: "SUCCEEDED",
+  reasonCode: "AUTHORIZED_TEST_REVEAL",
+  timestampUtc: new Date("2026-01-01T00:00:00.000Z"),
+  uuid: randomUUID(),
+  ...override,
+});
 
 describePostgres("PostgreSQL persistence foundation", () => {
   beforeAll(async () => {
@@ -467,6 +487,218 @@ describePostgres("PostgreSQL persistence foundation", () => {
         `,
       ),
     ).rejects.toThrow();
+  });
+
+  it("persists audit events through the append-only repository", async () => {
+    if (!client) {
+      throw new Error("PostgreSQL client is not initialized");
+    }
+
+    const repository = new PostgresAuditEventRepository(client);
+    const event = auditEvent({
+      correlationId: correlationId("corr-audit-persist"),
+      metadata: {
+        keyVersion: "local-v1",
+        orderLineId: randomUUID(),
+        retryCount: 1,
+      },
+    });
+
+    await repository.append(event);
+
+    const persisted = await query<{
+      correlation_id: string;
+      event_type: string;
+      metadata: { keyVersion: string; retryCount: number };
+      outcome: string;
+      reason_code: string;
+    }>(
+      `
+        SELECT event_type, correlation_id, outcome, reason_code, metadata
+        FROM audit_events
+        WHERE id = $1
+      `,
+      [event.uuid],
+    );
+
+    expect(persisted.rows[0]).toEqual({
+      correlation_id: "corr-audit-persist",
+      event_type: "KEY_REVEALED",
+      metadata: {
+        keyVersion: "local-v1",
+        orderLineId: expect.any(String),
+        retryCount: 1,
+      },
+      outcome: "SUCCEEDED",
+      reason_code: "AUTHORIZED_TEST_REVEAL",
+    });
+  });
+
+  it("rejects unsafe audit metadata before persistence", async () => {
+    if (!client) {
+      throw new Error("PostgreSQL client is not initialized");
+    }
+
+    const repository = new PostgresAuditEventRepository(client);
+    const event = auditEvent({
+      metadata: {
+        nested: {
+          plaintextKey: "runtime-canary",
+        },
+      },
+    });
+
+    await expect(repository.append(event)).rejects.toThrow("forbidden field");
+
+    const persisted = await query<{ count: string }>(
+      "SELECT count(*) FROM audit_events WHERE id = $1",
+      [event.uuid],
+    );
+    expect(persisted.rows[0]?.count).toBe("0");
+  });
+
+  it("queries audit events with bounded keyset pagination", async () => {
+    if (!client) {
+      throw new Error("PostgreSQL client is not initialized");
+    }
+
+    const appendRepository = new PostgresAuditEventRepository(client);
+    const queryRepository = new PostgresAuditQueryRepository(client);
+    const sharedCorrelationId = correlationId(`corr-query-${randomUUID()}`);
+    const entity = { id: randomUUID(), type: "ORDER_LINE" };
+    const actor = { id: "auditor-system", type: "SYSTEM" } as const;
+    const first = auditEvent({
+      actor,
+      correlationId: sharedCorrelationId,
+      entity,
+      timestampUtc: new Date("2026-01-01T00:00:00.000Z"),
+      uuid: "00000000-0000-4000-8000-000000000001",
+    });
+    const second = auditEvent({
+      actor,
+      correlationId: sharedCorrelationId,
+      entity,
+      timestampUtc: new Date("2026-01-01T00:00:00.000Z"),
+      uuid: "00000000-0000-4000-8000-000000000002",
+    });
+    const third = auditEvent({
+      actor,
+      correlationId: sharedCorrelationId,
+      entity,
+      eventType: "KEY_ACCESS_DENIED",
+      outcome: "DENIED",
+      reasonCode: "NOT_AUTHORIZED",
+      timestampUtc: new Date("2026-01-01T00:00:01.000Z"),
+      uuid: "00000000-0000-4000-8000-000000000003",
+    });
+
+    await appendRepository.append(first);
+    await appendRepository.append(second);
+    await appendRepository.append(third);
+
+    const firstPage = await queryRepository.query({
+      filters: {
+        actor,
+        correlationId: sharedCorrelationId,
+        entity,
+        fromTimestampUtc: new Date("2026-01-01T00:00:00.000Z"),
+        toTimestampUtc: new Date("2026-01-01T00:00:02.000Z"),
+      },
+      pageSize: 2,
+    });
+
+    expect(firstPage.events.map((event) => event.uuid)).toEqual([
+      first.uuid,
+      second.uuid,
+    ]);
+    expect(firstPage.nextCursor).toEqual({
+      timestampUtc: second.timestampUtc,
+      uuid: second.uuid,
+    });
+    if (!firstPage.nextCursor) {
+      throw new Error("Expected audit query next cursor");
+    }
+
+    const secondPage = await queryRepository.query({
+      cursor: firstPage.nextCursor,
+      filters: {
+        actor,
+        correlationId: sharedCorrelationId,
+        entity,
+      },
+      pageSize: 2,
+    });
+
+    expect(secondPage.events.map((event) => event.uuid)).toEqual([third.uuid]);
+    expect(secondPage.nextCursor).toBeUndefined();
+  });
+
+  it("supports concurrent audit appends without UUID overwrite", async () => {
+    if (!client) {
+      throw new Error("PostgreSQL client is not initialized");
+    }
+
+    const repository = new PostgresAuditEventRepository(client);
+    const sharedCorrelationId = correlationId(
+      `corr-concurrent-${randomUUID()}`,
+    );
+    const events = Array.from({ length: 8 }, (_, index) =>
+      auditEvent({
+        correlationId: sharedCorrelationId,
+        metadata: { index },
+      }),
+    );
+
+    await Promise.all(events.map((event) => repository.append(event)));
+
+    const persisted = await query<{ count: string; distinct_count: string }>(
+      `
+        SELECT count(*)::text, count(DISTINCT id)::text AS distinct_count
+        FROM audit_events
+        WHERE correlation_id = $1
+      `,
+      [sharedCorrelationId],
+    );
+
+    expect(persisted.rows[0]).toEqual({
+      count: "8",
+      distinct_count: "8",
+    });
+  });
+
+  it("creates audit query support indexes", async () => {
+    const indexes = await query<{ indexname: string }>(
+      `
+        SELECT indexname
+        FROM pg_indexes
+        WHERE schemaname = $1 AND tablename = 'audit_events'
+      `,
+      [schemaName],
+    );
+
+    expect(indexes.rows.map((row) => row.indexname)).toEqual(
+      expect.arrayContaining([
+        "idx_audit_events_correlation_keyset",
+        "idx_audit_events_entity_keyset",
+        "idx_audit_events_event_type_keyset",
+        "idx_audit_events_actor_keyset",
+        "idx_audit_events_timestamp_keyset",
+        "idx_audit_events_outcome_keyset",
+        "idx_audit_events_reason_code_keyset",
+      ]),
+    );
+  });
+
+  it("exposes no update or delete API for normal audit appends", () => {
+    if (!client) {
+      throw new Error("PostgreSQL client is not initialized");
+    }
+
+    const repository = new PostgresAuditEventRepository(client);
+
+    expect("append" in repository).toBe(true);
+    expect("update" in repository).toBe(false);
+    expect("delete" in repository).toBe(false);
   });
 
   it("creates immutable UUID order-line identifiers", async () => {

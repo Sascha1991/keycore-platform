@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Implemented `KS-02-04` secure audit service foundation:
+  - added recursive secret-safe audit metadata validation and append validation;
+  - added authorized read-only audit query service with bounded keyset pagination;
+  - added PostgreSQL audit query repository and filter support indexes;
+  - added audit-of-audit events for executed and denied audit queries;
+  - added canary, authorization, pagination, append-only, and PostgreSQL integration coverage.
 - Implemented `KS-02-03` secure product-key vault foundation:
   - added AES-256-GCM envelope encryption with per-record DEKs and nonce uniqueness;
   - bound vault ciphertext to canonical AES-GCM AAD containing purpose, version, order-line ID, and algorithm;

@@ -1,13 +1,19 @@
 import type {
   AuditEvent,
   AuditEventPort,
+  AuditQueryPage,
+  AuditQueryRepositoryPort,
+  AuthorizedAuditQuery,
   CorrelationId,
   EncryptedKeyMaterial,
   SafePayload,
   StoredEncryptedKeyRecord,
 } from "../../packages/platform/src/contracts.js";
-import { orderLineId } from "../../packages/platform/src/contracts.js";
-import { validateSafePayload } from "../../packages/platform/src/contracts.js";
+import {
+  orderLineId,
+  validateAuditEvent,
+  validateSafePayload,
+} from "../../packages/platform/src/contracts.js";
 import type { Queryable } from "./client.js";
 
 export interface IdempotencyReservation {
@@ -22,6 +28,7 @@ export class PostgresAuditEventRepository implements AuditEventPort {
   public constructor(private readonly database: Queryable) {}
 
   public async append(event: AuditEvent): Promise<void> {
+    validateAuditEvent(event);
     await this.database.query(
       `
         INSERT INTO audit_events (
@@ -51,6 +58,144 @@ export class PostgresAuditEventRepository implements AuditEventPort {
         JSON.stringify(event.metadata),
       ],
     );
+  }
+}
+
+const mapAuditEventRow = (row: {
+  readonly actor: AuditEvent["actor"];
+  readonly correlation_id: string;
+  readonly entity: AuditEvent["entity"];
+  readonly environment: AuditEvent["environment"];
+  readonly event_type: AuditEvent["eventType"];
+  readonly id: string;
+  readonly metadata: AuditEvent["metadata"];
+  readonly outcome: AuditEvent["outcome"];
+  readonly reason_code: string;
+  readonly timestamp_utc: Date;
+}): AuditEvent => ({
+  actor: row.actor,
+  correlationId: row.correlation_id as CorrelationId,
+  entity: row.entity,
+  environment: row.environment,
+  eventType: row.event_type,
+  metadata: row.metadata,
+  outcome: row.outcome,
+  reasonCode: row.reason_code,
+  timestampUtc: row.timestamp_utc,
+  uuid: row.id,
+});
+
+export class PostgresAuditQueryRepository implements AuditQueryRepositoryPort {
+  public constructor(private readonly database: Queryable) {}
+
+  public async query(request: AuthorizedAuditQuery): Promise<AuditQueryPage> {
+    const values: unknown[] = [];
+    const predicates: string[] = [];
+    const addValue = (value: unknown): string => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+
+    if (request.filters.fromTimestampUtc) {
+      predicates.push(
+        `timestamp_utc >= ${addValue(request.filters.fromTimestampUtc)}`,
+      );
+    }
+
+    if (request.filters.toTimestampUtc) {
+      predicates.push(
+        `timestamp_utc <= ${addValue(request.filters.toTimestampUtc)}`,
+      );
+    }
+
+    if (request.filters.eventType) {
+      predicates.push(`event_type = ${addValue(request.filters.eventType)}`);
+    }
+
+    if (request.filters.correlationId) {
+      predicates.push(
+        `correlation_id = ${addValue(request.filters.correlationId)}`,
+      );
+    }
+
+    if (request.filters.entity) {
+      predicates.push(
+        `entity->>'type' = ${addValue(request.filters.entity.type)}`,
+      );
+      predicates.push(`entity->>'id' = ${addValue(request.filters.entity.id)}`);
+    }
+
+    if (request.filters.actor) {
+      predicates.push(
+        `actor->>'type' = ${addValue(request.filters.actor.type)}`,
+      );
+      predicates.push(`actor->>'id' = ${addValue(request.filters.actor.id)}`);
+    }
+
+    if (request.filters.outcome) {
+      predicates.push(`outcome = ${addValue(request.filters.outcome)}`);
+    }
+
+    if (request.filters.reasonCode) {
+      predicates.push(`reason_code = ${addValue(request.filters.reasonCode)}`);
+    }
+
+    if (request.cursor) {
+      predicates.push(
+        `(timestamp_utc, id) > (${addValue(request.cursor.timestampUtc)}, ${addValue(request.cursor.uuid)}::uuid)`,
+      );
+    }
+
+    const whereClause =
+      predicates.length > 0 ? `WHERE ${predicates.join(" AND ")}` : "";
+    const limit = request.pageSize + 1;
+    const result = await this.database.query<{
+      actor: AuditEvent["actor"];
+      correlation_id: string;
+      entity: AuditEvent["entity"];
+      environment: AuditEvent["environment"];
+      event_type: AuditEvent["eventType"];
+      id: string;
+      metadata: AuditEvent["metadata"];
+      outcome: AuditEvent["outcome"];
+      reason_code: string;
+      timestamp_utc: Date;
+    }>(
+      `
+        SELECT
+          id,
+          event_type,
+          timestamp_utc,
+          actor,
+          correlation_id,
+          entity,
+          environment,
+          outcome,
+          reason_code,
+          metadata
+        FROM audit_events
+        ${whereClause}
+        ORDER BY timestamp_utc ASC, id ASC
+        LIMIT ${addValue(limit)}
+      `,
+      values,
+    );
+
+    const rows = result.rows.slice(0, request.pageSize);
+    const events = rows.map(mapAuditEventRow);
+    const lastEvent = events.at(-1);
+
+    if (result.rows.length > request.pageSize && lastEvent) {
+      return {
+        events,
+        nextCursor: {
+          timestampUtc: lastEvent.timestampUtc,
+          uuid: lastEvent.uuid,
+        },
+      };
+    }
+
+    return { events };
   }
 }
 
