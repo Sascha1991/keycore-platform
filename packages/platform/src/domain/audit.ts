@@ -7,6 +7,11 @@ export const auditEventTypes = [
   "SUPPLIER",
   "REFUND",
   "KEY_REVEAL",
+  "KEY_STORED",
+  "KEY_REVEALED",
+  "KEY_ACCESS_DENIED",
+  "KEY_REWRAPPED",
+  "KEY_RETIRED",
   "HEALTH",
 ] as const;
 

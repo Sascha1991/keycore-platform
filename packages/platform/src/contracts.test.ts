@@ -103,8 +103,8 @@ describe("core contract value types", () => {
 describe("core contract dependency boundaries", () => {
   it("keeps core modules free of forbidden adapter dependencies", async () => {
     const forbiddenPatterns = [
-      /from\s+["'][^"']*(wordpress|woocommerce|kinguin|stripe|redis|pg|postgres|axios|fetch|node:http|node:https)[^"']*["']/i,
-      /import\s+["'][^"']*(wordpress|woocommerce|kinguin|stripe|redis|pg|postgres|axios|fetch|node:http|node:https)[^"']*["']/i,
+      /from\s+["'][^"']*(wordpress|woocommerce|kinguin|stripe|redis|pg|postgres|aws|gcp|google-cloud|azure|hashicorp|axios|fetch|node:http|node:https)[^"']*["']/i,
+      /import\s+["'][^"']*(wordpress|woocommerce|kinguin|stripe|redis|pg|postgres|aws|gcp|google-cloud|azure|hashicorp|axios|fetch|node:http|node:https)[^"']*["']/i,
     ];
 
     const files = await listSourceFiles(sourceRoot);

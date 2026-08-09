@@ -1,11 +1,18 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { Client, type QueryResult, type QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import {
+  decryptProductKeyMaterial,
+  encryptProductKeyMaterial,
+  orderLineId,
+} from "../../packages/platform/src/contracts.js";
+import { DevelopmentKeyManagementProvider } from "../key-management/development-provider.js";
 import { loadMigrations, migrationsDirectory } from "./migrations.js";
+import { PostgresEncryptedKeyRepository } from "./repositories.js";
 
 const databaseUrl = process.env.KEYCORE_TEST_DATABASE_URL;
 const describePostgres = databaseUrl ? describe : describe.skip;
@@ -290,6 +297,145 @@ describePostgres("PostgreSQL persistence foundation", () => {
         "unencrypted_product_key",
       ]),
     );
+  });
+
+  it("stores only encrypted key material and persists key version metadata", async () => {
+    if (!client) {
+      throw new Error("PostgreSQL client is not initialized");
+    }
+
+    const fixture = await insertFixtureGraph();
+    const repository = new PostgresEncryptedKeyRepository(client);
+    const provider = new DevelopmentKeyManagementProvider({
+      environmentName: "test",
+      masterKeyMaterialBase64: randomBytes(32).toString("base64"),
+      masterKeyVersion: "local-v1",
+    });
+    const canary = Buffer.from(`synthetic-canary-${randomUUID()}`, "utf8");
+    const material = await encryptProductKeyMaterial(
+      canary,
+      { orderLineId: orderLineId(fixture.orderLineId) },
+      provider,
+    );
+
+    const stored = await repository.store({
+      material,
+      orderLineId: orderLineId(fixture.orderLineId),
+    });
+    const raw = await query<{
+      authentication_tag: Buffer;
+      ciphertext: Buffer;
+      key_version: string;
+      nonce: Buffer;
+      wrapped_data_encryption_key: Buffer;
+    }>(
+      `
+        SELECT ciphertext, nonce, authentication_tag, wrapped_data_encryption_key, key_version
+        FROM encrypted_key_records
+        WHERE id = $1
+      `,
+      [stored.id],
+    );
+    const serializedRaw = JSON.stringify(raw.rows[0]);
+
+    expect(stored.keyVersion).toBe("local-v1");
+    expect(serializedRaw).not.toContain(canary.toString("utf8"));
+    expect(raw.rows[0]?.key_version).toBe("local-v1");
+  });
+
+  it("rejects duplicate encrypted key records for the same order line", async () => {
+    if (!client) {
+      throw new Error("PostgreSQL client is not initialized");
+    }
+
+    const fixture = await insertFixtureGraph();
+    const repository = new PostgresEncryptedKeyRepository(client);
+    const provider = new DevelopmentKeyManagementProvider({
+      environmentName: "test",
+      masterKeyMaterialBase64: randomBytes(32).toString("base64"),
+      masterKeyVersion: "local-v1",
+    });
+    const material = await encryptProductKeyMaterial(
+      Buffer.from(`synthetic-${randomUUID()}`, "utf8"),
+      { orderLineId: orderLineId(fixture.orderLineId) },
+      provider,
+    );
+
+    await repository.store({
+      material,
+      orderLineId: orderLineId(fixture.orderLineId),
+    });
+
+    await expect(
+      repository.store({
+        material: await encryptProductKeyMaterial(
+          Buffer.from(`synthetic-${randomUUID()}`, "utf8"),
+          { orderLineId: orderLineId(fixture.orderLineId) },
+          provider,
+        ),
+        orderLineId: orderLineId(fixture.orderLineId),
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("fails authenticated reveal when encrypted material is swapped between order lines", async () => {
+    if (!client) {
+      throw new Error("PostgreSQL client is not initialized");
+    }
+
+    const firstFixture = await insertFixtureGraph();
+    const secondFixture = await insertFixtureGraph();
+    const firstOrderLineId = orderLineId(firstFixture.orderLineId);
+    const secondOrderLineId = orderLineId(secondFixture.orderLineId);
+    const repository = new PostgresEncryptedKeyRepository(client);
+    const provider = new DevelopmentKeyManagementProvider({
+      environmentName: "test",
+      masterKeyMaterialBase64: randomBytes(32).toString("base64"),
+      masterKeyVersion: "local-v1",
+    });
+    const first = await repository.store({
+      material: await encryptProductKeyMaterial(
+        Buffer.from(`synthetic-${randomUUID()}`, "utf8"),
+        { orderLineId: firstOrderLineId },
+        provider,
+      ),
+      orderLineId: firstOrderLineId,
+    });
+    const second = await repository.store({
+      material: await encryptProductKeyMaterial(
+        Buffer.from(`synthetic-${randomUUID()}`, "utf8"),
+        { orderLineId: secondOrderLineId },
+        provider,
+      ),
+      orderLineId: secondOrderLineId,
+    });
+
+    await query(
+      `
+        UPDATE encrypted_key_records target
+        SET ciphertext = source.ciphertext,
+            nonce = source.nonce,
+            authentication_tag = source.authentication_tag,
+            wrapped_data_encryption_key = source.wrapped_data_encryption_key,
+            algorithm = source.algorithm,
+            key_version = source.key_version
+        FROM encrypted_key_records source
+        WHERE target.id = $1 AND source.id = $2
+      `,
+      [first.id, second.id],
+    );
+    const swapped = await repository.findById(first.id);
+    if (!swapped) {
+      throw new Error("Expected swapped encrypted key record");
+    }
+
+    await expect(
+      decryptProductKeyMaterial(
+        swapped,
+        { orderLineId: firstOrderLineId },
+        provider,
+      ),
+    ).rejects.toThrow("verification failed");
   });
 
   it("rejects audit metadata containing product-key fields", async () => {
