@@ -4,6 +4,7 @@
 
 - Implemented `KS-02-03` secure product-key vault foundation:
   - added AES-256-GCM envelope encryption with per-record DEKs and nonce uniqueness;
+  - bound vault ciphertext to canonical AES-GCM AAD containing purpose, version, order-line ID, and algorithm;
   - added KeyManagementProvider abstraction and development/test-only key provider;
   - added vault authorization boundary, secret-safe audit events, rewrap support, and PostgreSQL encrypted-key repository;
   - added canary leakage, tamper detection, authorization, and repository tests.

@@ -16,6 +16,19 @@ Each stored product key receives a unique random data encryption key. The produc
 
 The current vault algorithm is `AES-256-GCM-v1`, implemented with Node.js built-in crypto. Each encryption uses a fresh 96-bit nonce and a 256-bit DEK. Authentication tags are stored separately and verified during reveal. Tampered ciphertext, nonce, tag, algorithm metadata, or wrapped DEK fails closed with a generic error.
 
+AES-GCM also authenticates deterministic Additional Authenticated Data. The vault derives AAD from stable, non-secret metadata instead of storing a separate plaintext AAD field:
+
+```json
+{
+  "algorithm": "AES-256-GCM-v1",
+  "orderLineId": "<internal-order-line-id>",
+  "purpose": "keycore-product-key",
+  "version": 1
+}
+```
+
+The canonical representation binds product-key ciphertext to its owning internal order-line ID and vault algorithm/version. Moving a complete encrypted payload to a different `encrypted_key_records.order_line_id`, or changing the authenticated context, causes reveal to fail closed.
+
 ## DEK Lifecycle
 
 DEKs are generated with cryptographically secure randomness. A plaintext DEK is used only in memory to encrypt or decrypt one product key and is zero-filled after wrapping or unwrapping as soon as practical.
@@ -67,7 +80,7 @@ The vault emits secret-safe audit events for store, reveal, denied access, rewra
 
 ## Rotation and Rewrap
 
-Rotation support unwraps the existing DEK in memory and rewraps it with the new active master key. Product-key ciphertext does not need to be re-encrypted only because the master wrapping key changes. Production rotation scheduling is deferred.
+Rotation support unwraps the existing DEK in memory and rewraps it with the new active master key. Product-key ciphertext and its authenticated AAD do not change only because the master wrapping key changes. Production rotation scheduling is deferred.
 
 ## Backup Implications
 

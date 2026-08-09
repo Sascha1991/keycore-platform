@@ -13,6 +13,10 @@ export interface EncryptedKeyMaterial {
   readonly keyVersion: string;
 }
 
+export interface KeyEncryptionContext {
+  readonly orderLineId: OrderLineId;
+}
+
 export interface StoredEncryptedKeyRecord extends EncryptedKeyMaterial {
   readonly id: string;
   readonly orderLineId: OrderLineId;
@@ -62,8 +66,22 @@ const nonceBytes = 12;
 const toBuffer = (value: Uint8Array): Buffer =>
   Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 
+export const canonicalKeyVaultAad = (
+  context: KeyEncryptionContext,
+): Uint8Array =>
+  Buffer.from(
+    JSON.stringify({
+      algorithm: keyVaultAlgorithm,
+      orderLineId: context.orderLineId,
+      purpose: "keycore-product-key",
+      version: 1,
+    }),
+    "utf8",
+  );
+
 export const encryptProductKeyMaterial = async (
   receivedSecretMaterial: Uint8Array,
+  context: KeyEncryptionContext,
   keyManagementProvider: KeyManagementProvider,
 ): Promise<EncryptedKeyMaterial> => {
   const dataKey = randomBytes(dataKeyBytes);
@@ -71,6 +89,7 @@ export const encryptProductKeyMaterial = async (
 
   try {
     const cipher = createCipheriv("aes-256-gcm", dataKey, nonce);
+    cipher.setAAD(canonicalKeyVaultAad(context));
     const ciphertext = Buffer.concat([
       cipher.update(toBuffer(receivedSecretMaterial)),
       cipher.final(),
@@ -93,6 +112,7 @@ export const encryptProductKeyMaterial = async (
 
 export const decryptProductKeyMaterial = async (
   material: EncryptedKeyMaterial,
+  context: KeyEncryptionContext,
   keyManagementProvider: KeyManagementProvider,
 ): Promise<Uint8Array> => {
   if (material.algorithm !== keyVaultAlgorithm) {
@@ -110,6 +130,7 @@ export const decryptProductKeyMaterial = async (
       toBuffer(dataKey),
       toBuffer(material.nonce),
     );
+    decipher.setAAD(canonicalKeyVaultAad(context));
     decipher.setAuthTag(toBuffer(material.authenticationTag));
     return Buffer.concat([
       decipher.update(toBuffer(material.ciphertext)),

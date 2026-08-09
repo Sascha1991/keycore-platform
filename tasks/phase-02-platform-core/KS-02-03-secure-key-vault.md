@@ -33,6 +33,8 @@ This task allows synthetic test product keys to be securely stored and recovered
 - Plaintext product keys are never written to logs, traces, audit metadata, queues, exceptions, snapshots, or Git.
 - Each stored key uses a unique random DEK and nonce.
 - Product-key encryption uses authenticated encryption and fails closed on tampering.
+- Product-key encryption authenticates canonical non-secret context, including owning order-line ID and vault algorithm/version.
+- Moving encrypted material to a different order-line record fails closed during reveal.
 - Data encryption keys are wrapped through a KeyManagementProvider port.
 - Development provider requires environment-supplied master-key material and refuses production mode.
 - Reveal requires explicit authorization context and policy approval.
@@ -46,6 +48,9 @@ This task allows synthetic test product keys to be securely stored and recovered
 
 - AES/authenticated-encryption round trip.
 - Same plaintext stored twice produces different ciphertext.
+- Same-order-line encrypted material decrypts with matching authenticated context.
+- Changed order-line authenticated context fails.
+- Swapped encrypted material between order-line records fails.
 - PostgreSQL stores no plaintext key.
 - Repository API accepts encrypted material, not plaintext persistence.
 - Authorized reveal succeeds.
@@ -60,6 +65,7 @@ This task allows synthetic test product keys to be securely stored and recovered
 - Each stored key uses independent encryption material.
 - Master key version is persisted.
 - Rewrap changes wrapped DEK/key version without requiring product-key plaintext persistence.
+- Rewrap does not change product-key ciphertext or authenticated ownership context.
 - Secret-safe audit events for store, reveal and denied access.
 - Canary plaintext does not leak into logs, exceptions, PostgreSQL, queue/outbox metadata, audit payloads, or serialized encrypted metadata.
 - Migrations/schema still contain no plaintext-key column.

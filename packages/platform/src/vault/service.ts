@@ -62,6 +62,7 @@ export class ProductKeyVaultService {
   ): Promise<KeyRecordId> {
     const material = await encryptProductKeyMaterial(
       request.receivedSecretMaterial,
+      { orderLineId: request.orderLineId },
       this.keyManagementProvider,
     );
     const record = await this.repository.store({
@@ -107,6 +108,7 @@ export class ProductKeyVaultService {
 
     const revealed = await decryptProductKeyMaterial(
       record,
+      { orderLineId: record.orderLineId },
       this.keyManagementProvider,
     );
     await this.auditKeyEvent({

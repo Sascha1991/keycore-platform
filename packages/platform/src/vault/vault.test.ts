@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   correlationId,
   customerId,
+  canonicalKeyVaultAad,
   keyRecordId,
   orderLineId,
   validateSafePayload,
@@ -170,18 +171,20 @@ describe("secure product-key vault cryptography", () => {
   it("round-trips with authenticated encryption", async () => {
     const provider = new MemoryWrappingProvider("mk-v1");
     const secret = generatedSecret();
-    const material = await encryptProductKeyMaterial(secret, provider);
+    const context = { orderLineId: orderLineId(randomUUID()) };
+    const material = await encryptProductKeyMaterial(secret, context, provider);
 
     await expect(
-      decryptProductKeyMaterial(material, provider),
+      decryptProductKeyMaterial(material, context, provider),
     ).resolves.toEqual(secret);
   });
 
   it("stores the same secret twice with different ciphertext and wrapping material", async () => {
     const provider = new MemoryWrappingProvider("mk-v1");
     const secret = generatedSecret();
-    const first = await encryptProductKeyMaterial(secret, provider);
-    const second = await encryptProductKeyMaterial(secret, provider);
+    const context = { orderLineId: orderLineId(randomUUID()) };
+    const first = await encryptProductKeyMaterial(secret, context, provider);
+    const second = await encryptProductKeyMaterial(secret, context, provider);
 
     expect(
       Buffer.from(first.ciphertext).equals(Buffer.from(second.ciphertext)),
@@ -198,8 +201,10 @@ describe("secure product-key vault cryptography", () => {
 
   it("fails closed on tampered ciphertext, tag, nonce, and wrapped DEK", async () => {
     const provider = new MemoryWrappingProvider("mk-v1");
+    const context = { orderLineId: orderLineId(randomUUID()) };
     const material = await encryptProductKeyMaterial(
       generatedSecret(),
+      context,
       provider,
     );
     const tamper = (value: Uint8Array): Uint8Array => {
@@ -211,18 +216,21 @@ describe("secure product-key vault cryptography", () => {
     await expect(
       decryptProductKeyMaterial(
         { ...material, ciphertext: tamper(material.ciphertext) },
+        context,
         provider,
       ),
     ).rejects.toThrow("verification failed");
     await expect(
       decryptProductKeyMaterial(
         { ...material, authenticationTag: tamper(material.authenticationTag) },
+        context,
         provider,
       ),
     ).rejects.toThrow("verification failed");
     await expect(
       decryptProductKeyMaterial(
         { ...material, nonce: tamper(material.nonce) },
+        context,
         provider,
       ),
     ).rejects.toThrow("verification failed");
@@ -232,16 +240,53 @@ describe("secure product-key vault cryptography", () => {
           ...material,
           wrappedDataEncryptionKey: tamper(material.wrappedDataEncryptionKey),
         },
+        context,
         provider,
       ),
     ).rejects.toThrow("verification failed");
   });
 
+  it("fails closed when authenticated ownership context changes", async () => {
+    const provider = new MemoryWrappingProvider("mk-v1");
+    const originalContext = { orderLineId: orderLineId(randomUUID()) };
+    const movedContext = { orderLineId: orderLineId(randomUUID()) };
+    const material = await encryptProductKeyMaterial(
+      generatedSecret(),
+      originalContext,
+      provider,
+    );
+
+    await expect(
+      decryptProductKeyMaterial(material, originalContext, provider),
+    ).resolves.toBeInstanceOf(Uint8Array);
+    await expect(
+      decryptProductKeyMaterial(material, movedContext, provider),
+    ).rejects.toThrow("verification failed");
+  });
+
+  it("uses deterministic secret-free AAD", () => {
+    const canaryText = asText(generatedSecret());
+    const context = { orderLineId: orderLineId(randomUUID()) };
+    const aad = Buffer.from(canonicalKeyVaultAad(context)).toString("utf8");
+
+    expect(aad).toBe(
+      JSON.stringify({
+        algorithm: "AES-256-GCM-v1",
+        orderLineId: context.orderLineId,
+        purpose: "keycore-product-key",
+        version: 1,
+      }),
+    );
+    expect(aad).not.toContain(canaryText);
+  });
+
   it("rewraps the DEK without changing product-key ciphertext", async () => {
     const oldProvider = new MemoryWrappingProvider("mk-v1");
     const newProvider = new MemoryWrappingProvider("mk-v2");
+    const context = { orderLineId: orderLineId(randomUUID()) };
     const material = await encryptProductKeyMaterial(
       generatedSecret(),
+      context,
       oldProvider,
     );
 
@@ -258,7 +303,11 @@ describe("secure product-key vault cryptography", () => {
       ),
     ).toBe(false);
     await expect(
-      decryptProductKeyMaterial({ ...material, ...rewrapped }, newProvider),
+      decryptProductKeyMaterial(
+        { ...material, ...rewrapped },
+        context,
+        newProvider,
+      ),
     ).resolves.toBeInstanceOf(Uint8Array);
   });
 });
@@ -292,6 +341,52 @@ describe("secure product-key vault service", () => {
       "KEY_REVEALED",
     ]);
     expect(JSON.stringify(audit.events)).not.toContain(asText(secret));
+  });
+
+  it("fails closed when encrypted material is swapped between order lines", async () => {
+    const repository = new InMemoryEncryptedKeyRepository();
+    const audit = new CapturingAuditPort();
+    const provider = new MemoryWrappingProvider("mk-v1");
+    const vault = new ProductKeyVaultService(
+      repository,
+      provider,
+      authorization(true),
+      audit,
+      "CI",
+    );
+    const firstContext = accessContext();
+    const secondContext = accessContext();
+    const firstSecret = generatedSecret();
+    const secondSecret = generatedSecret();
+
+    const firstId = await vault.storeReceivedKey({
+      correlationId: firstContext.correlationId,
+      orderLineId: firstContext.orderLineId,
+      receivedSecretMaterial: firstSecret,
+    });
+    const secondId = await vault.storeReceivedKey({
+      correlationId: secondContext.correlationId,
+      orderLineId: secondContext.orderLineId,
+      receivedSecretMaterial: secondSecret,
+    });
+    const firstRecord = await repository.findById(firstId);
+    const secondRecord = await repository.findById(secondId);
+    if (!firstRecord || !secondRecord) {
+      throw new Error("Expected encrypted key records");
+    }
+
+    repository.records.set(firstRecord.id, {
+      ...firstRecord,
+      authenticationTag: secondRecord.authenticationTag,
+      ciphertext: secondRecord.ciphertext,
+      keyVersion: secondRecord.keyVersion,
+      nonce: secondRecord.nonce,
+      wrappedDataEncryptionKey: secondRecord.wrappedDataEncryptionKey,
+    });
+
+    await expect(
+      vault.retrieveForAuthorizedReveal(firstContext),
+    ).rejects.toThrow("verification failed");
   });
 
   it("denies unauthorized reveal before decrypting", async () => {

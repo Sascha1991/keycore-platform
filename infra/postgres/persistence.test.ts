@@ -6,6 +6,7 @@ import { Client, type QueryResult, type QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  decryptProductKeyMaterial,
   encryptProductKeyMaterial,
   orderLineId,
 } from "../../packages/platform/src/contracts.js";
@@ -311,7 +312,11 @@ describePostgres("PostgreSQL persistence foundation", () => {
       masterKeyVersion: "local-v1",
     });
     const canary = Buffer.from(`synthetic-canary-${randomUUID()}`, "utf8");
-    const material = await encryptProductKeyMaterial(canary, provider);
+    const material = await encryptProductKeyMaterial(
+      canary,
+      { orderLineId: orderLineId(fixture.orderLineId) },
+      provider,
+    );
 
     const stored = await repository.store({
       material,
@@ -352,6 +357,7 @@ describePostgres("PostgreSQL persistence foundation", () => {
     });
     const material = await encryptProductKeyMaterial(
       Buffer.from(`synthetic-${randomUUID()}`, "utf8"),
+      { orderLineId: orderLineId(fixture.orderLineId) },
       provider,
     );
 
@@ -364,11 +370,72 @@ describePostgres("PostgreSQL persistence foundation", () => {
       repository.store({
         material: await encryptProductKeyMaterial(
           Buffer.from(`synthetic-${randomUUID()}`, "utf8"),
+          { orderLineId: orderLineId(fixture.orderLineId) },
           provider,
         ),
         orderLineId: orderLineId(fixture.orderLineId),
       }),
     ).rejects.toThrow();
+  });
+
+  it("fails authenticated reveal when encrypted material is swapped between order lines", async () => {
+    if (!client) {
+      throw new Error("PostgreSQL client is not initialized");
+    }
+
+    const firstFixture = await insertFixtureGraph();
+    const secondFixture = await insertFixtureGraph();
+    const firstOrderLineId = orderLineId(firstFixture.orderLineId);
+    const secondOrderLineId = orderLineId(secondFixture.orderLineId);
+    const repository = new PostgresEncryptedKeyRepository(client);
+    const provider = new DevelopmentKeyManagementProvider({
+      environmentName: "test",
+      masterKeyMaterialBase64: randomBytes(32).toString("base64"),
+      masterKeyVersion: "local-v1",
+    });
+    const first = await repository.store({
+      material: await encryptProductKeyMaterial(
+        Buffer.from(`synthetic-${randomUUID()}`, "utf8"),
+        { orderLineId: firstOrderLineId },
+        provider,
+      ),
+      orderLineId: firstOrderLineId,
+    });
+    const second = await repository.store({
+      material: await encryptProductKeyMaterial(
+        Buffer.from(`synthetic-${randomUUID()}`, "utf8"),
+        { orderLineId: secondOrderLineId },
+        provider,
+      ),
+      orderLineId: secondOrderLineId,
+    });
+
+    await query(
+      `
+        UPDATE encrypted_key_records target
+        SET ciphertext = source.ciphertext,
+            nonce = source.nonce,
+            authentication_tag = source.authentication_tag,
+            wrapped_data_encryption_key = source.wrapped_data_encryption_key,
+            algorithm = source.algorithm,
+            key_version = source.key_version
+        FROM encrypted_key_records source
+        WHERE target.id = $1 AND source.id = $2
+      `,
+      [first.id, second.id],
+    );
+    const swapped = await repository.findById(first.id);
+    if (!swapped) {
+      throw new Error("Expected swapped encrypted key record");
+    }
+
+    await expect(
+      decryptProductKeyMaterial(
+        swapped,
+        { orderLineId: firstOrderLineId },
+        provider,
+      ),
+    ).rejects.toThrow("verification failed");
   });
 
   it("rejects audit metadata containing product-key fields", async () => {
