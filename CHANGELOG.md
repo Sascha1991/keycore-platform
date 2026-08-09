@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Implemented `KS-02-03` secure product-key vault foundation:
+  - added AES-256-GCM envelope encryption with per-record DEKs and nonce uniqueness;
+  - added KeyManagementProvider abstraction and development/test-only key provider;
+  - added vault authorization boundary, secret-safe audit events, rewrap support, and PostgreSQL encrypted-key repository;
+  - added canary leakage, tamper detection, authorization, and repository tests.
 - Implemented `KS-02-02` queue, transactional outbox and reconciliation foundation:
   - added safe job envelope, payload validation/redaction, retry policy and observability hooks;
   - added Redis queue adapter behind the generic queue port using `redis@6.2.0`;

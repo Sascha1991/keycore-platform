@@ -2,8 +2,11 @@ import type {
   AuditEvent,
   AuditEventPort,
   CorrelationId,
+  EncryptedKeyMaterial,
   SafePayload,
+  StoredEncryptedKeyRecord,
 } from "../../packages/platform/src/contracts.js";
+import { orderLineId } from "../../packages/platform/src/contracts.js";
 import { validateSafePayload } from "../../packages/platform/src/contracts.js";
 import type { Queryable } from "./client.js";
 
@@ -73,6 +76,187 @@ export class PostgresIdempotencyRepository {
         reservation.providerEventId ?? null,
         reservation.status,
       ],
+    );
+  }
+}
+
+const toBuffer = (value: Uint8Array): Buffer =>
+  Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+
+const mapEncryptedKeyRecord = (row: {
+  readonly algorithm: string;
+  readonly authentication_tag: Buffer;
+  readonly ciphertext: Buffer;
+  readonly created_at: Date;
+  readonly id: string;
+  readonly key_version: string;
+  readonly nonce: Buffer;
+  readonly order_line_id: string;
+  readonly retired_at: Date | null;
+  readonly rotated_at: Date | null;
+  readonly wrapped_data_encryption_key: Buffer;
+}): StoredEncryptedKeyRecord => ({
+  algorithm: row.algorithm as EncryptedKeyMaterial["algorithm"],
+  authenticationTag: row.authentication_tag,
+  ciphertext: row.ciphertext,
+  createdAt: row.created_at,
+  id: row.id,
+  keyVersion: row.key_version,
+  nonce: row.nonce,
+  orderLineId: orderLineId(row.order_line_id),
+  retiredAt: row.retired_at,
+  rotatedAt: row.rotated_at,
+  wrappedDataEncryptionKey: row.wrapped_data_encryption_key,
+});
+
+export class PostgresEncryptedKeyRepository {
+  public constructor(private readonly database: Queryable) {}
+
+  public async store(request: {
+    readonly orderLineId: StoredEncryptedKeyRecord["orderLineId"];
+    readonly material: EncryptedKeyMaterial;
+  }): Promise<StoredEncryptedKeyRecord> {
+    const result = await this.database.query<{
+      algorithm: string;
+      authentication_tag: Buffer;
+      ciphertext: Buffer;
+      created_at: Date;
+      id: string;
+      key_version: string;
+      nonce: Buffer;
+      order_line_id: string;
+      retired_at: Date | null;
+      rotated_at: Date | null;
+      wrapped_data_encryption_key: Buffer;
+    }>(
+      `
+        INSERT INTO encrypted_key_records(
+          order_line_id,
+          ciphertext,
+          nonce,
+          authentication_tag,
+          wrapped_data_encryption_key,
+          algorithm,
+          key_version
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `,
+      [
+        request.orderLineId,
+        toBuffer(request.material.ciphertext),
+        toBuffer(request.material.nonce),
+        toBuffer(request.material.authenticationTag),
+        toBuffer(request.material.wrappedDataEncryptionKey),
+        request.material.algorithm,
+        request.material.keyVersion,
+      ],
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error("Encrypted key record storage failed");
+    }
+
+    return mapEncryptedKeyRecord(row);
+  }
+
+  public async findById(id: string): Promise<StoredEncryptedKeyRecord | null> {
+    const result = await this.database.query<{
+      algorithm: string;
+      authentication_tag: Buffer;
+      ciphertext: Buffer;
+      created_at: Date;
+      id: string;
+      key_version: string;
+      nonce: Buffer;
+      order_line_id: string;
+      retired_at: Date | null;
+      rotated_at: Date | null;
+      wrapped_data_encryption_key: Buffer;
+    }>("SELECT * FROM encrypted_key_records WHERE id = $1", [id]);
+
+    const row = result.rows[0];
+    return row ? mapEncryptedKeyRecord(row) : null;
+  }
+
+  public async findActiveByOrderLineId(
+    id: StoredEncryptedKeyRecord["orderLineId"],
+  ): Promise<StoredEncryptedKeyRecord | null> {
+    const result = await this.database.query<{
+      algorithm: string;
+      authentication_tag: Buffer;
+      ciphertext: Buffer;
+      created_at: Date;
+      id: string;
+      key_version: string;
+      nonce: Buffer;
+      order_line_id: string;
+      retired_at: Date | null;
+      rotated_at: Date | null;
+      wrapped_data_encryption_key: Buffer;
+    }>(
+      `
+        SELECT *
+        FROM encrypted_key_records
+        WHERE order_line_id = $1 AND retired_at IS NULL
+      `,
+      [id],
+    );
+
+    const row = result.rows[0];
+    return row ? mapEncryptedKeyRecord(row) : null;
+  }
+
+  public async rewrap(
+    id: string,
+    request: {
+      readonly wrappedDataEncryptionKey: Uint8Array;
+      readonly keyVersion: string;
+      readonly rotatedAt: Date;
+    },
+  ): Promise<StoredEncryptedKeyRecord> {
+    const result = await this.database.query<{
+      algorithm: string;
+      authentication_tag: Buffer;
+      ciphertext: Buffer;
+      created_at: Date;
+      id: string;
+      key_version: string;
+      nonce: Buffer;
+      order_line_id: string;
+      retired_at: Date | null;
+      rotated_at: Date | null;
+      wrapped_data_encryption_key: Buffer;
+    }>(
+      `
+        UPDATE encrypted_key_records
+        SET wrapped_data_encryption_key = $2,
+            key_version = $3,
+            rotated_at = $4
+        WHERE id = $1 AND retired_at IS NULL
+        RETURNING *
+      `,
+      [
+        id,
+        toBuffer(request.wrappedDataEncryptionKey),
+        request.keyVersion,
+        request.rotatedAt,
+      ],
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error("Encrypted key record rewrap failed");
+    }
+
+    return mapEncryptedKeyRecord(row);
+  }
+
+  public async retire(id: string, retiredAt: Date): Promise<void> {
+    await this.database.query(
+      "UPDATE encrypted_key_records SET retired_at = $2 WHERE id = $1",
+      [id, retiredAt],
     );
   }
 }
