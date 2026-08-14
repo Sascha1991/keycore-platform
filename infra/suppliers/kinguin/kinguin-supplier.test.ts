@@ -23,6 +23,7 @@ import {
   type SafePayload,
 } from "../../../packages/platform/src/contracts.js";
 import { runSupplierContractTests } from "../contract/supplier-contract-suite.js";
+import { KinguinLiveReadonlyGuardedTransport } from "./kinguin-live-readonly.js";
 import {
   InMemoryKinguinOfferProductIndex,
   KinguinHttpClient,
@@ -310,6 +311,16 @@ class FakeTransport implements KinguinHttpTransport {
       }
     }
     return response;
+  }
+}
+
+class RedirectingTransport implements KinguinHttpTransport {
+  public async send(): Promise<KinguinHttpResponse> {
+    return {
+      body: "",
+      headers: { location: "https://evil.example/v1/products" },
+      status: 302,
+    };
   }
 }
 
@@ -964,6 +975,121 @@ describe("Kinguin connector foundation", () => {
 
   it("rejects unsafe log text helpers", () => {
     expect(() => assertNoUnsafeKinguinText(textSerial)).toThrow();
+  });
+});
+
+describe("Kinguin live read-only guard", () => {
+  const allowedBaseUrl = "https://gateway.kinguin.net/esa/api";
+  const allowedProductList = "https://gateway.kinguin.net/esa/api/v1/products";
+  const allowedProduct =
+    "https://gateway.kinguin.net/esa/api/v2/products/product-alpha";
+
+  const guarded = (
+    enabled = true,
+    delegate: KinguinHttpTransport = new FakeTransport(),
+  ) =>
+    new KinguinLiveReadonlyGuardedTransport({
+      baseUrl: allowedBaseUrl,
+      delegate,
+      enabled,
+    });
+
+  const allowedRequest = (path = allowedProductList): KinguinHttpRequest => ({
+    headers: { "X-Api-Key": fixtureHeaderValue },
+    maxResponseBytes: 100_000,
+    method: "GET",
+    path,
+    timeoutMs: 1_000,
+  });
+
+  it("is disabled without explicit opt-in", async () => {
+    await expect(guarded(false).send(allowedRequest())).rejects.toMatchObject({
+      category: "REJECTED",
+    });
+  });
+
+  it("allows approved GET product and reference endpoints", async () => {
+    await expect(guarded().send(allowedRequest())).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(
+      guarded().send(allowedRequest(allowedProduct)),
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      guarded().send(
+        allowedRequest("https://gateway.kinguin.net/esa/api/v1/regions"),
+      ),
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      guarded().send(
+        allowedRequest("https://gateway.kinguin.net/esa/api/v1/platforms"),
+      ),
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      guarded().send(
+        allowedRequest("https://gateway.kinguin.net/esa/api/v1/genres"),
+      ),
+    ).resolves.toMatchObject({ status: 200 });
+  });
+
+  it("blocks mutation methods and order or key paths", async () => {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const) {
+      await expect(
+        guarded().send({ ...allowedRequest(), method } as KinguinHttpRequest),
+      ).rejects.toMatchObject({ category: "REJECTED" });
+    }
+    await expect(
+      guarded().send(
+        allowedRequest("https://gateway.kinguin.net/esa/api/v2/order"),
+      ),
+    ).rejects.toMatchObject({ category: "REJECTED" });
+    await expect(
+      guarded().send(
+        allowedRequest("https://gateway.kinguin.net/esa/api/v1/order/abc"),
+      ),
+    ).rejects.toMatchObject({ category: "REJECTED" });
+    await expect(
+      guarded().send(
+        allowedRequest("https://gateway.kinguin.net/esa/api/v2/order/abc/keys"),
+      ),
+    ).rejects.toMatchObject({ category: "REJECTED" });
+  });
+
+  it("blocks unexpected host and unexpected path", async () => {
+    await expect(
+      guarded().send(
+        allowedRequest("https://evil.example/esa/api/v1/products"),
+      ),
+    ).rejects.toMatchObject({ category: "REJECTED" });
+    await expect(
+      guarded().send(
+        allowedRequest("https://gateway.kinguin.net/esa/api/v1/accounts"),
+      ),
+    ).rejects.toMatchObject({ category: "REJECTED" });
+  });
+
+  it("keeps API key absent from guard records and rejection errors", async () => {
+    const transport = guarded();
+    await expect(transport.send(allowedRequest())).resolves.toMatchObject({
+      status: 200,
+    });
+    expect(JSON.stringify(transport.requests)).not.toContain(
+      fixtureHeaderValue,
+    );
+    await transport
+      .send(allowedRequest("https://gateway.kinguin.net/esa/api/v1/accounts"))
+      .catch((error: unknown) => {
+        expect(JSON.stringify(error)).not.toContain(fixtureHeaderValue);
+      });
+  });
+
+  it("does not let redirects bypass the safety policy", async () => {
+    const response = await guarded(true, new RedirectingTransport()).send(
+      allowedRequest(),
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.location).toBe("https://evil.example/v1/products");
   });
 });
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `KS-04-01b` Kinguin read-only integration verification:
+  - added a fail-closed live read-only guard for Kinguin verification;
+  - added a local opt-in verification command that never prints credentials or raw live payloads;
+  - added guard tests for allowed read-only endpoints, blocked mutations, blocked order/key paths, host/path validation, redirect safety, and secret-safe output.
 - Implemented `KS-04-01` Kinguin connector foundation:
   - added Kinguin-specific HTTP transport and supplier adapter behind supplier-neutral ports;
   - added documented product, offer, order, key, key-return, reference-data and webhook mapping;
