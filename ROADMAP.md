@@ -12,6 +12,8 @@ Domain model, persistence, migrations, queues, encryption, audit trail and share
 
 Supplier adapter contract, offer normalization, capabilities, mock supplier and contract tests.
 
+KS-03-02 extends this phase with supplier-neutral multi-supplier routing, deterministic candidate ranking and safe fallback planning. Real supplier connector work remains in Phase 04.
+
 ## Phase 04 – Kinguin Connector
 
 Authentication, catalog retrieval, offer retrieval, ordering, status polling/webhooks, key retrieval and refunds based on actual API documentation.
