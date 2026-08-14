@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Implemented `KS-04-01` Kinguin connector foundation:
+  - added Kinguin-specific HTTP transport and supplier adapter behind supplier-neutral ports;
+  - added documented product, offer, order, key, key-return, reference-data and webhook mapping;
+  - added Secure KeyVault handoff for retrieved serial material without exposing keys in audit or queue metadata;
+  - added synthetic Kinguin contract tests with no live HTTP, no credentials and no real product keys.
 - Implemented `KS-03-02` multi-supplier routing foundation:
   - added supplier-neutral product-to-supplier-offer mapping and routing contracts;
   - added deterministic eligibility, ranking, currency-comparison and fallback-planning behavior;
