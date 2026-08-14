@@ -25,8 +25,9 @@ Introduce the supplier-neutral routing foundation needed to evaluate more than o
 - Germany compatibility and manual-review outcomes remain explicit.
 - Currency comparison is deterministic and requires either same currency or an injected conversion boundary.
 - Fallback planning never skips reconciliation after an ambiguous supplier purchase attempt.
+- Automatic fallback is fail-closed: only `FAILED_TERMINAL` can progress to the next eligible supplier, while `AMBIGUOUS`, `FAILED_RETRYABLE`, `SUCCEEDED` and `NOT_STARTED` do not return cross-supplier fallback candidates.
 - Observability and audit outputs contain correlation/policy metadata and no secrets.
-- Contract tests verify deterministic ranking, safe fallback, region boundaries, currency handling, supplier failure isolation and no real supplier/network imports.
+- Contract tests verify deterministic ranking, safe fallback state handling, region boundaries, currency handling, supplier failure isolation and no real supplier/network imports.
 
 ## Required Checks
 

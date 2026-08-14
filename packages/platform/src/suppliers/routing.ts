@@ -282,6 +282,11 @@ const safeAuditMetadata = (
   status: result.status,
 });
 
+const attemptKey = (attempt: {
+  readonly supplierId: SupplierId;
+  readonly supplierOfferId: SupplierOfferId;
+}): string => `${attempt.supplierId}|${attempt.supplierOfferId}`;
+
 export class SupplierRoutingService {
   public constructor(
     private readonly registry: SupplierRegistry,
@@ -350,13 +355,11 @@ export class SupplierRoutingService {
       (attempt) => attempt.state === "AMBIGUOUS",
     );
     if (ambiguousAttempt) {
-      const plan = {
-        action: "RECONCILE_CURRENT_SUPPLIER_FIRST",
-        correlationId: request.selection.correlationId,
-        orderedCandidates: [],
-        policyVersion: request.selection.policyVersion,
-        reasonCode: "AMBIGUOUS_PURCHASE_REQUIRES_RECONCILIATION",
-      } satisfies SupplierFallbackPlan;
+      const plan = this.blockedFallbackPlan(
+        request.selection,
+        "RECONCILE_CURRENT_SUPPLIER_FIRST",
+        "AMBIGUOUS_PURCHASE_REQUIRES_RECONCILIATION",
+      );
       this.observability?.record({
         correlationId: plan.correlationId,
         occurredAt: request.selection.evaluatedAt,
@@ -369,15 +372,45 @@ export class SupplierRoutingService {
       return plan;
     }
 
-    const attempted = new Set(
-      request.attempts.map(
-        (attempt) => `${attempt.supplierId}|${attempt.supplierOfferId}`,
-      ),
+    const succeededAttempt = request.attempts.find(
+      (attempt) => attempt.state === "SUCCEEDED",
     );
+    if (succeededAttempt) {
+      return this.blockedFallbackPlan(
+        request.selection,
+        "NO_FALLBACK",
+        "PURCHASE_ALREADY_SUCCEEDED",
+      );
+    }
+
+    const retryableAttempt = request.attempts.find(
+      (attempt) => attempt.state === "FAILED_RETRYABLE",
+    );
+    if (retryableAttempt) {
+      return this.blockedFallbackPlan(
+        request.selection,
+        "NO_FALLBACK",
+        "RETRYABLE_FAILURE_REQUIRES_CURRENT_SUPPLIER_RETRY",
+      );
+    }
+
+    const terminallyFailed = new Set(
+      request.attempts
+        .filter((attempt) => attempt.state === "FAILED_TERMINAL")
+        .map(attemptKey),
+    );
+    if (terminallyFailed.size === 0) {
+      return this.blockedFallbackPlan(
+        request.selection,
+        "NO_FALLBACK",
+        "NO_TERMINAL_FAILURE_FOR_FALLBACK",
+      );
+    }
+
     const remaining = request.selection.evaluatedCandidates.filter(
       (candidate) =>
         candidate.status === "ELIGIBLE" &&
-        !attempted.has(`${candidate.supplierId}|${candidate.supplierOfferId}`),
+        !terminallyFailed.has(attemptKey(candidate)),
     );
     const action = remaining.length > 0 ? "SAFE_TO_TRY_NEXT" : "NO_FALLBACK";
     const plan = {
@@ -393,6 +426,28 @@ export class SupplierRoutingService {
     this.observability?.record({
       correlationId: plan.correlationId,
       occurredAt: request.selection.evaluatedAt,
+      operation: "createFallbackPlan",
+      supplierId: "routing" as SupplierId,
+      type: "SUPPLIER_FALLBACK_PLAN_CREATED",
+    });
+    return plan;
+  }
+
+  private blockedFallbackPlan(
+    selection: SupplierSelectionResult,
+    action: FallbackAction,
+    reasonCode: string,
+  ): SupplierFallbackPlan {
+    const plan = {
+      action,
+      correlationId: selection.correlationId,
+      orderedCandidates: [],
+      policyVersion: selection.policyVersion,
+      reasonCode,
+    } satisfies SupplierFallbackPlan;
+    this.observability?.record({
+      correlationId: plan.correlationId,
+      occurredAt: selection.evaluatedAt,
       operation: "createFallbackPlan",
       supplierId: "routing" as SupplierId,
       type: "SUPPLIER_FALLBACK_PLAN_CREATED",

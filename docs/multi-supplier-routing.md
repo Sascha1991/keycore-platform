@@ -45,9 +45,15 @@ Routing depends on `RegionEligibilityPort` for Germany compatibility decisions. 
 
 Fallback planning uses the evaluated candidate list plus previous supplier purchase attempts.
 
-If an attempt is ambiguous, routing returns `RECONCILE_CURRENT_SUPPLIER_FIRST` and does not try the next supplier. This protects against duplicate procurement when the previous supplier might have accepted the order.
+Fallback is fail-closed by attempt state:
 
-If the previous attempt failed terminally, remaining eligible suppliers are returned in deterministic order. If none remain, the result is `NO_FALLBACK`.
+- `AMBIGUOUS` returns `RECONCILE_CURRENT_SUPPLIER_FIRST` with no candidates. This protects against duplicate procurement when the previous supplier might have accepted the order.
+- `SUCCEEDED` returns `NO_FALLBACK` with no candidates. A completed supplier purchase prevents any further supplier purchasing for the procurement.
+- `FAILED_RETRYABLE` returns `NO_FALLBACK` with no candidates. The caller must retry or reconcile the current supplier according to future procurement policy.
+- `NOT_STARTED` returns `NO_FALLBACK` unless there is also a stricter conflicting state. It is not treated as a failed purchase and does not trigger cross-supplier fallback.
+- `FAILED_TERMINAL` is the only state that can exclude a supplier and allow progression to the next untouched eligible supplier.
+
+If multiple attempt states conflict, the safest outcome wins: ambiguous attempts require reconciliation, succeeded attempts prevent more purchasing, and retryable attempts prevent automatic cross-supplier switching. Remaining eligible fallback candidates are always returned in deterministic routing order. If none remain, the result is `NO_FALLBACK`.
 
 ## Observability And Audit
 

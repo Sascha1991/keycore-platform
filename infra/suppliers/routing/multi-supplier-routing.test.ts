@@ -25,8 +25,11 @@ import {
   type ProductSupplierOfferMapping,
   type RegionEligibilityPort,
   type RegionEvidence,
+  type SupplierId,
   type SupplierObservabilityEvent,
   type SupplierObservabilityPort,
+  type SupplierOfferId,
+  type SupplierProductId,
   type SupplierRoutingPolicy,
 } from "../../../packages/platform/src/contracts.js";
 import {
@@ -39,10 +42,13 @@ const now = new Date("2026-01-10T00:00:00.000Z");
 const canonicalProductId = productId("canonical-product-routing");
 const supplierAId = supplierId("mock-supplier-a");
 const supplierBId = supplierId("mock-supplier-b");
+const supplierCId = supplierId("mock-supplier-c");
 const supplierAOfferId = supplierOfferId("a-offer-1");
 const supplierBOfferId = supplierOfferId("b-offer-1");
+const supplierCOfferId = supplierOfferId("c-offer-1");
 const supplierAProductId = supplierProductId("a-product-1");
 const supplierBProductId = supplierProductId("b-product-1");
+const supplierCProductId = supplierProductId("c-product-1");
 
 class StaticMappingPort implements ProductSupplierMappingPort {
   public constructor(
@@ -66,8 +72,8 @@ class StaticRegionEligibility implements RegionEligibilityPort {
   ) {}
 
   public async evaluate(request: {
-    readonly supplierId: typeof supplierAId;
-    readonly supplierOfferId: typeof supplierAOfferId;
+    readonly supplierId: SupplierId;
+    readonly supplierOfferId: SupplierOfferId;
     readonly regionEvidence: RegionEvidence;
   }): Promise<GermanyCompatibilityDecision> {
     return this.decisions[request.supplierId] ?? "ALLOWED";
@@ -128,9 +134,9 @@ const vpnEvidence = (): RegionEvidence => ({
 });
 
 const supplier = (request: {
-  readonly supplierReference: typeof supplierAId;
-  readonly productReference: typeof supplierAProductId;
-  readonly offerReference: typeof supplierAOfferId;
+  readonly supplierReference: SupplierId;
+  readonly productReference: SupplierProductId;
+  readonly offerReference: SupplierOfferId;
   readonly amountMinor: bigint;
   readonly currencyCode?: "EUR" | "USD";
   readonly availability?: "IN_STOCK" | "OUT_OF_STOCK" | "LIMITED" | "UNKNOWN";
@@ -211,6 +217,16 @@ const mappings = (): readonly ProductSupplierOfferMapping[] => [
   },
 ];
 
+const threeSupplierMappings = (): readonly ProductSupplierOfferMapping[] => [
+  ...mappings(),
+  {
+    productId: canonicalProductId,
+    supplierId: supplierCId,
+    supplierOfferId: supplierCOfferId,
+    supplierProductId: supplierCProductId,
+  },
+];
+
 const basePolicy = (
   override: Partial<SupplierRoutingPolicy> = {},
 ): SupplierRoutingPolicy => ({
@@ -248,6 +264,7 @@ const createRouting = (
   request: {
     readonly supplierA?: MockSupplier;
     readonly supplierB?: MockSupplier;
+    readonly supplierC?: MockSupplier;
     readonly region?: RegionEligibilityPort;
     readonly mappingPort?: ProductSupplierMappingPort;
     readonly observability?: SupplierObservabilityPort;
@@ -273,6 +290,9 @@ const createRouting = (
         supplierReference: supplierBId,
       }),
   );
+  if (request.supplierC) {
+    registry.register(request.supplierC);
+  }
 
   return new SupplierRoutingService(
     registry,
@@ -605,10 +625,10 @@ describe("multi-supplier routing foundation", () => {
     ).resolves.toMatchObject({ status: "MANUAL_REVIEW_REQUIRED" });
   });
 
-  it("creates ordered fallback plans and blocks ambiguous-purchase fallback", async () => {
+  it("allows terminal A failure to progress to B", async () => {
     const routing = createRouting();
     const selection = await select(routing);
-    const safePlan = await routing.createFallbackPlan({
+    const plan = await routing.createFallbackPlan({
       attempts: [
         {
           state: "FAILED_TERMINAL",
@@ -618,7 +638,18 @@ describe("multi-supplier routing foundation", () => {
       ],
       selection,
     });
-    const ambiguousPlan = await routing.createFallbackPlan({
+
+    expect(plan.action).toBe("SAFE_TO_TRY_NEXT");
+    expect(plan.reasonCode).toBe("TERMINAL_FAILURE_ALLOWS_SAFE_FALLBACK");
+    expect(
+      plan.orderedCandidates.map((candidate) => candidate.supplierId),
+    ).toEqual([supplierBId]);
+  });
+
+  it("requires reconciliation for ambiguous A and returns no fallback candidates", async () => {
+    const routing = createRouting();
+    const selection = await select(routing);
+    const plan = await routing.createFallbackPlan({
       attempts: [
         {
           state: "AMBIGUOUS",
@@ -629,10 +660,200 @@ describe("multi-supplier routing foundation", () => {
       selection,
     });
 
-    expect(safePlan.action).toBe("SAFE_TO_TRY_NEXT");
-    expect(safePlan.orderedCandidates[0]?.supplierId).toBe(supplierBId);
-    expect(ambiguousPlan.action).toBe("RECONCILE_CURRENT_SUPPLIER_FIRST");
-    expect(ambiguousPlan.orderedCandidates).toEqual([]);
+    expect(plan.action).toBe("RECONCILE_CURRENT_SUPPLIER_FIRST");
+    expect(plan.reasonCode).toBe("AMBIGUOUS_PURCHASE_REQUIRES_RECONCILIATION");
+    expect(plan.orderedCandidates).toEqual([]);
+  });
+
+  it("does not automatically switch suppliers for retryable A failure", async () => {
+    const routing = createRouting();
+    const selection = await select(routing);
+    const plan = await routing.createFallbackPlan({
+      attempts: [
+        {
+          state: "FAILED_RETRYABLE",
+          supplierId: supplierAId,
+          supplierOfferId: supplierAOfferId,
+        },
+      ],
+      selection,
+    });
+
+    expect(plan.action).toBe("NO_FALLBACK");
+    expect(plan.reasonCode).toBe(
+      "RETRYABLE_FAILURE_REQUIRES_CURRENT_SUPPLIER_RETRY",
+    );
+    expect(plan.orderedCandidates).toEqual([]);
+  });
+
+  it("never returns another supplier after succeeded A", async () => {
+    const routing = createRouting();
+    const selection = await select(routing);
+    const plan = await routing.createFallbackPlan({
+      attempts: [
+        {
+          state: "SUCCEEDED",
+          supplierId: supplierAId,
+          supplierOfferId: supplierAOfferId,
+        },
+      ],
+      selection,
+    });
+
+    expect(plan.action).toBe("NO_FALLBACK");
+    expect(plan.reasonCode).toBe("PURCHASE_ALREADY_SUCCEEDED");
+    expect(plan.orderedCandidates).toEqual([]);
+  });
+
+  it("does not treat NOT_STARTED as terminal failure", async () => {
+    const routing = createRouting();
+    const selection = await select(routing);
+    const plan = await routing.createFallbackPlan({
+      attempts: [
+        {
+          state: "NOT_STARTED",
+          supplierId: supplierAId,
+          supplierOfferId: supplierAOfferId,
+        },
+      ],
+      selection,
+    });
+
+    expect(plan.action).toBe("NO_FALLBACK");
+    expect(plan.reasonCode).toBe("NO_TERMINAL_FAILURE_FOR_FALLBACK");
+    expect(plan.orderedCandidates).toEqual([]);
+  });
+
+  it("chooses no further purchase for succeeded plus terminal attempts", async () => {
+    const routing = createRouting();
+    const selection = await select(routing);
+    const plan = await routing.createFallbackPlan({
+      attempts: [
+        {
+          state: "FAILED_TERMINAL",
+          supplierId: supplierAId,
+          supplierOfferId: supplierAOfferId,
+        },
+        {
+          state: "SUCCEEDED",
+          supplierId: supplierAId,
+          supplierOfferId: supplierAOfferId,
+        },
+      ],
+      selection,
+    });
+
+    expect(plan.action).toBe("NO_FALLBACK");
+    expect(plan.reasonCode).toBe("PURCHASE_ALREADY_SUCCEEDED");
+    expect(plan.orderedCandidates).toEqual([]);
+  });
+
+  it("requires reconciliation for ambiguous plus terminal attempts", async () => {
+    const routing = createRouting();
+    const selection = await select(routing);
+    const plan = await routing.createFallbackPlan({
+      attempts: [
+        {
+          state: "FAILED_TERMINAL",
+          supplierId: supplierAId,
+          supplierOfferId: supplierAOfferId,
+        },
+        {
+          state: "AMBIGUOUS",
+          supplierId: supplierBId,
+          supplierOfferId: supplierBOfferId,
+        },
+      ],
+      selection,
+    });
+
+    expect(plan.action).toBe("RECONCILE_CURRENT_SUPPLIER_FIRST");
+    expect(plan.reasonCode).toBe("AMBIGUOUS_PURCHASE_REQUIRES_RECONCILIATION");
+    expect(plan.orderedCandidates).toEqual([]);
+  });
+
+  it("skips multiple terminal failures and selects the next untouched eligible supplier", async () => {
+    const routing = createRouting({
+      mappingPort: new StaticMappingPort(threeSupplierMappings()),
+      supplierC: supplier({
+        amountMinor: 2_000n,
+        offerReference: supplierCOfferId,
+        productReference: supplierCProductId,
+        supplierReference: supplierCId,
+      }),
+    });
+    const selection = await select(routing);
+    const plan = await routing.createFallbackPlan({
+      attempts: [
+        {
+          state: "FAILED_TERMINAL",
+          supplierId: supplierAId,
+          supplierOfferId: supplierAOfferId,
+        },
+        {
+          state: "FAILED_TERMINAL",
+          supplierId: supplierBId,
+          supplierOfferId: supplierBOfferId,
+        },
+      ],
+      selection,
+    });
+
+    expect(plan.action).toBe("SAFE_TO_TRY_NEXT");
+    expect(
+      plan.orderedCandidates.map((candidate) => candidate.supplierId),
+    ).toEqual([supplierCId]);
+  });
+
+  it("returns no fallback when no eligible supplier remains after terminal failures", async () => {
+    const routing = createRouting();
+    const selection = await select(routing);
+    const plan = await routing.createFallbackPlan({
+      attempts: [
+        {
+          state: "FAILED_TERMINAL",
+          supplierId: supplierAId,
+          supplierOfferId: supplierAOfferId,
+        },
+        {
+          state: "FAILED_TERMINAL",
+          supplierId: supplierBId,
+          supplierOfferId: supplierBOfferId,
+        },
+      ],
+      selection,
+    });
+
+    expect(plan.action).toBe("NO_FALLBACK");
+    expect(plan.reasonCode).toBe("NO_ELIGIBLE_FALLBACK");
+    expect(plan.orderedCandidates).toEqual([]);
+  });
+
+  it("plans fallback deterministically across repeated calls", async () => {
+    const routing = createRouting({
+      mappingPort: new StaticMappingPort(threeSupplierMappings()),
+      supplierC: supplier({
+        amountMinor: 2_000n,
+        offerReference: supplierCOfferId,
+        productReference: supplierCProductId,
+        supplierReference: supplierCId,
+      }),
+    });
+    const selection = await select(routing);
+    const attempts = [
+      {
+        state: "FAILED_TERMINAL",
+        supplierId: supplierAId,
+        supplierOfferId: supplierAOfferId,
+      },
+    ] as const;
+    const first = await routing.createFallbackPlan({ attempts, selection });
+    const second = await routing.createFallbackPlan({ attempts, selection });
+
+    expect(first).toEqual(second);
+    expect(
+      first.orderedCandidates.map((candidate) => candidate.supplierId),
+    ).toEqual([supplierBId, supplierCId]);
   });
 
   it("is deterministic, preserves correlation and policy version, and emits safe observability/audit", async () => {
