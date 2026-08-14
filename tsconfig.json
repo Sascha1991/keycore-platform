@@ -24,6 +24,7 @@
     "infra/**/*.ts",
     "packages/**/*.ts",
     "scripts/**/*.mjs",
+    "scripts/**/*.ts",
     "vitest.config.ts"
   ]
 }
