@@ -1,4 +1,6 @@
 export * from "./audit/service.js";
+export * from "./catalog/germany-eligibility.js";
+export * from "./catalog/synchronization.js";
 export * from "./domain/audit.js";
 export * from "./domain/brands.js";
 export * from "./domain/catalog.js";
