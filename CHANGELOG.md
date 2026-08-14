@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Implemented `KS-03-02` multi-supplier routing foundation:
+  - added supplier-neutral product-to-supplier-offer mapping and routing contracts;
+  - added deterministic eligibility, ranking, currency-comparison and fallback-planning behavior;
+  - hardened fallback planning so only terminal supplier failures can automatically progress to another supplier;
+  - added routing observability and audit event vocabulary;
+  - added multi-supplier routing tests without real supplier or network imports.
 - Implemented `KS-03-01` supplier framework and MockSupplier foundation:
   - refined supplier-neutral capability and normalization contracts;
   - added SupplierRegistry, supplier-neutral errors, and observability contracts;
