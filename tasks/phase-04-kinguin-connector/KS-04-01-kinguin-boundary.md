@@ -36,6 +36,8 @@ Prepare the Kinguin connector only after official/private documentation and requ
 - Product, offer, order, key, return-key, reference-data, and webhook mappings follow the official Kinguin eCommerce API documentation.
 - Key serial material is handed only to the Secure KeyVault boundary and never appears in audit or queue metadata.
 - `order.complete` remains documented as deprecated and supported only as a compatibility webhook classification.
+- Undocumented numeric Kinguin rate limits are not represented as exhausted capacity; HTTP `429` still maps to `RATE_LIMIT`.
+- Purchase and offer resolution use an explicit `SupplierOfferId` to `SupplierProductId` mapping boundary and never scan the global catalog during purchase.
 
 ## Required Tests
 

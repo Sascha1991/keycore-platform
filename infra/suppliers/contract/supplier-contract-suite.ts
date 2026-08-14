@@ -222,9 +222,11 @@ export const runSupplierContractTests = (
       expect(["HEALTHY", "DEGRADED", "OUTAGE", "UNKNOWN"]).toContain(
         health.status,
       );
-      expect(health.rateLimit?.remaining).toBeLessThanOrEqual(
-        health.rateLimit?.limit ?? Number.MAX_SAFE_INTEGER,
-      );
+      if (health.rateLimit) {
+        expect(health.rateLimit.remaining).toBeLessThanOrEqual(
+          health.rateLimit.limit ?? Number.MAX_SAFE_INTEGER,
+        );
+      }
     });
 
     it("keeps errors and returned structures free of credentials", async () => {

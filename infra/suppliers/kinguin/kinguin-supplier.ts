@@ -106,6 +106,18 @@ export interface KinguinPurchaseLineInput {
   readonly offerId?: string;
 }
 
+export interface KinguinOfferProductMapping {
+  readonly supplierOfferId: SupplierOfferId;
+  readonly supplierProductId: SupplierProductId;
+}
+
+export interface KinguinOfferProductIndex {
+  resolveProductForOffer(
+    supplierOfferId: SupplierOfferId,
+  ): Promise<SupplierProductId | null>;
+  rememberProductOffers(product: KinguinProduct, operation: string): void;
+}
+
 export interface KinguinWebhookRequest {
   readonly headers: Readonly<Record<string, string | undefined>>;
   readonly rawBody: string;
@@ -132,7 +144,7 @@ export interface KinguinKeyVaultHandoffResult {
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
-interface KinguinProduct {
+export interface KinguinProduct {
   readonly kinguinId?: number;
   readonly productId?: string;
   readonly name?: string;
@@ -161,7 +173,7 @@ interface KinguinProduct {
   readonly offers?: readonly KinguinOffer[];
 }
 
-interface KinguinOffer {
+export interface KinguinOffer {
   readonly name?: string;
   readonly offerId?: string;
   readonly price?: number | string;
@@ -208,6 +220,11 @@ const capabilities: SupplierCapabilities = {
   supportsPurchaseStatusReconciliation: true,
   supportsRefundClaims: true,
   supportsRegionEvidence: true,
+};
+
+const capabilitiesWithUndocumentedRateLimits: SupplierCapabilities = {
+  ...capabilities,
+  supportsHealthRateLimitInfo: false,
 };
 
 const keyContentTypes = [
@@ -435,6 +452,53 @@ const normalizeOfferPayload = (
   };
 };
 
+export class InMemoryKinguinOfferProductIndex implements KinguinOfferProductIndex {
+  private readonly productByOffer = new Map<string, SupplierProductId>();
+
+  public constructor(mappings: readonly KinguinOfferProductMapping[] = []) {
+    for (const mapping of mappings) {
+      this.remember(mapping.supplierOfferId, mapping.supplierProductId, "seed");
+    }
+  }
+
+  public async resolveProductForOffer(
+    supplierOffer: SupplierOfferId,
+  ): Promise<SupplierProductId | null> {
+    return this.productByOffer.get(supplierOffer) ?? null;
+  }
+
+  public rememberProductOffers(
+    product: KinguinProduct,
+    operation: string,
+  ): void {
+    const supplierProduct = supplierProductReference(product);
+    for (const offer of product.offers ?? []) {
+      const offerId = supplierOfferReference(product, offer);
+      this.remember(offerId, supplierProduct, operation);
+    }
+    for (const cheapestOffer of product.cheapestOfferId ?? []) {
+      this.remember(supplierOfferId(cheapestOffer), supplierProduct, operation);
+    }
+  }
+
+  private remember(
+    supplierOffer: SupplierOfferId,
+    supplierProduct: SupplierProductId,
+    operation: string,
+  ): void {
+    const existing = this.productByOffer.get(supplierOffer);
+    if (existing !== undefined && existing !== supplierProduct) {
+      throw new SupplierError({
+        category: "CONFLICT",
+        operation,
+        supplierId: identity.supplierId,
+        supplierReference: supplierOffer,
+      });
+    }
+    this.productByOffer.set(supplierOffer, supplierProduct);
+  }
+}
+
 export const mapRegionEvidence = (product: KinguinProduct): RegionEvidence => {
   const excludedCountries = (product.countryLimitation ?? []).map((code) =>
     regionCode(code),
@@ -586,7 +650,10 @@ export class KinguinHttpClient {
         supplierId: identity.supplierId,
       });
     }
-    const path = new URL(request.path, this.config.baseUrl).toString();
+    const baseUrl = this.config.baseUrl.endsWith("/")
+      ? this.config.baseUrl
+      : `${this.config.baseUrl}/`;
+    const path = new URL(request.path.replace(/^\//u, ""), baseUrl).toString();
     this.logger.info("Kinguin request", { operation: request.operation });
     let response: KinguinHttpResponse;
     try {
@@ -627,13 +694,17 @@ export class KinguinHttpClient {
 
 export class KinguinSupplier implements SupplierPort {
   public readonly identity = identity;
-  public readonly capabilities = capabilities;
+  public readonly capabilities = capabilitiesWithUndocumentedRateLimits;
   private readonly purchases = new Map<
     IdempotencyKey,
     { readonly receipt: PurchaseReceipt; readonly semantic: string }
   >();
+  private readonly refundClaims = new Map<string, RefundClaimReceipt>();
 
-  public constructor(private readonly client: KinguinHttpClient) {}
+  public constructor(
+    private readonly client: KinguinHttpClient,
+    private readonly offerProductIndex: KinguinOfferProductIndex = new InMemoryKinguinOfferProductIndex(),
+  ) {}
 
   public async listCatalog(
     page: PageRequest,
@@ -684,9 +755,11 @@ export class KinguinSupplier implements SupplierPort {
       });
     }
     const now = new Date();
-    const items = payload.results.map((item) =>
-      normalizeProductPayload(item as KinguinProduct, now),
-    );
+    const items = payload.results.map((item) => {
+      const product = item as KinguinProduct;
+      this.offerProductIndex.rememberProductOffers(product, "searchProducts");
+      return normalizeProductPayload(product, now);
+    });
     const itemCount =
       typeof payload.item_count === "number"
         ? payload.item_count
@@ -712,7 +785,9 @@ export class KinguinSupplier implements SupplierPort {
           supplierId: identity.supplierId,
         });
       }
-      return normalizeProductPayload(payload as KinguinProduct, new Date());
+      const product = payload as KinguinProduct;
+      this.offerProductIndex.rememberProductOffers(product, "getProduct");
+      return normalizeProductPayload(product, new Date());
     } catch (error) {
       if (error instanceof SupplierError && error.category === "NOT_FOUND") {
         return null;
@@ -918,7 +993,6 @@ export class KinguinSupplier implements SupplierPort {
   public async getHealth(): Promise<SupplierHealth> {
     return {
       checkedAt: new Date(),
-      rateLimit: { limit: 0, remaining: 0 },
       status: "UNKNOWN",
     };
   }
@@ -926,11 +1000,18 @@ export class KinguinSupplier implements SupplierPort {
   public async submitRefundClaim(
     request: RefundClaimRequest,
   ): Promise<RefundClaimReceipt> {
+    const claimKey = `${request.supplierPurchaseReference}|${request.orderLineId}`;
+    const existing = this.refundClaims.get(claimKey);
+    if (existing) {
+      return existing;
+    }
     await this.returnKeys(request.supplierPurchaseReference);
-    return {
+    const receipt = {
       acceptedAt: new Date(),
       supplierClaimReference: `kinguin-return:${request.supplierPurchaseReference}`,
-    };
+    } satisfies RefundClaimReceipt;
+    this.refundClaims.set(claimKey, receipt);
+    return receipt;
   }
 
   public buildPurchasePayload(request: {
@@ -1111,23 +1192,53 @@ export class KinguinSupplier implements SupplierPort {
     offerReference: SupplierOfferId,
     operation: string,
   ): Promise<KinguinProduct> {
-    const products = await this.client.requestJson({
+    const productReference =
+      await this.offerProductIndex.resolveProductForOffer(offerReference);
+    if (!productReference) {
+      throw new SupplierError({
+        category: "NOT_FOUND",
+        operation,
+        supplierId: identity.supplierId,
+        supplierReference: offerReference,
+      });
+    }
+    const payload = await this.client.requestJson({
       method: "GET",
       operation,
-      path: "/v1/products",
-      query: { limit: 100, page: 1 },
+      path: `/v2/products/${encodeURIComponent(productReference)}`,
     });
-    if (!isObject(products) || !Array.isArray(products.results)) {
+    if (!isObject(payload)) {
       throw new SupplierError({
         category: "INVALID_RESPONSE",
         operation,
         supplierId: identity.supplierId,
       });
     }
-    const product = (products.results as readonly KinguinProduct[]).find(
-      (item) => item.offers?.some((offer) => offer.offerId === offerReference),
+    const product = payload as KinguinProduct;
+    const resolvedProductReference = supplierProductReference(product);
+    if (resolvedProductReference !== productReference) {
+      throw new SupplierError({
+        category: "CONFLICT",
+        operation,
+        supplierId: identity.supplierId,
+        supplierReference: offerReference,
+      });
+    }
+    this.offerProductIndex.rememberProductOffers(product, operation);
+    const matchingOfferProduct =
+      await this.offerProductIndex.resolveProductForOffer(offerReference);
+    if (matchingOfferProduct !== productReference) {
+      throw new SupplierError({
+        category: "CONFLICT",
+        operation,
+        supplierId: identity.supplierId,
+        supplierReference: offerReference,
+      });
+    }
+    const productContainsOffer = product.offers?.some(
+      (offer) => offer.offerId === offerReference,
     );
-    if (!product) {
+    if (!productContainsOffer) {
       throw new SupplierError({
         category: "NOT_FOUND",
         operation,

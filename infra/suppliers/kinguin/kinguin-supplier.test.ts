@@ -9,18 +9,22 @@ import {
   idempotencyKey,
   money,
   orderLineId,
+  productId,
   supplierId,
   supplierOfferId,
   supplierProductId,
   type AuditEvent,
   type AuditEventPort,
   type JobEnvelope,
+  type ProductSupplierMappingPort,
+  type ProductSupplierOfferMapping,
   type ProductKeyVaultPort,
   type QueuePort,
   type SafePayload,
 } from "../../../packages/platform/src/contracts.js";
 import { runSupplierContractTests } from "../contract/supplier-contract-suite.js";
 import {
+  InMemoryKinguinOfferProductIndex,
   KinguinHttpClient,
   KinguinSupplier,
   KinguinWebhookReceiver,
@@ -102,21 +106,82 @@ const productPage = [
   product,
   {
     ...product,
+    cheapestOfferId: ["offer-beta"],
     kinguinId: 1950,
     name: "Synthetic Kinguin Product Beta",
+    offers: [
+      {
+        availableQty: 8,
+        availableTextQty: 8,
+        isPreorder: false,
+        name: "Synthetic Kinguin Product Beta Steam CD Key",
+        offerId: "offer-beta",
+        price: 8.79,
+        qty: 8,
+        releaseDate: "2020-10-07",
+        textQty: 8,
+      },
+    ],
     originalName: "Synthetic Kinguin Product Beta",
     productId: "product-beta",
     updatedAt: "2026-01-01T00:02:00+00:00",
   },
   {
     ...product,
+    cheapestOfferId: ["offer-gamma"],
     kinguinId: 1951,
     name: "Synthetic Kinguin Product Gamma",
+    offers: [
+      {
+        availableQty: 4,
+        availableTextQty: 4,
+        isPreorder: false,
+        name: "Synthetic Kinguin Product Gamma Steam CD Key",
+        offerId: "offer-gamma",
+        price: 9.79,
+        qty: 4,
+        releaseDate: "2020-10-07",
+        textQty: 4,
+      },
+    ],
     originalName: "Synthetic Kinguin Product Gamma",
     productId: "product-gamma",
     updatedAt: "2026-01-01T00:03:00+00:00",
   },
 ];
+
+const lateProduct = {
+  ...product,
+  cheapestOfferId: ["offer-late"],
+  countryLimitation: [],
+  kinguinId: 2050,
+  offers: [
+    {
+      availableQty: 3,
+      availableTextQty: 3,
+      isPreorder: false,
+      name: "Synthetic Kinguin Product Late Steam CD Key",
+      offerId: "offer-late",
+      price: 10.79,
+      qty: 3,
+      releaseDate: "2020-10-07",
+      textQty: 3,
+    },
+  ],
+  productId: "product-late",
+  regionId: 3,
+  regionalLimitations: "REGION FREE",
+};
+
+class StaticMappingPort implements ProductSupplierMappingPort {
+  public constructor(
+    private readonly mappings: readonly ProductSupplierOfferMapping[],
+  ) {}
+
+  public async findSupplierOffers() {
+    return this.mappings;
+  }
+}
 
 class StaticSecrets implements SecretProvider {
   public constructor(
@@ -140,6 +205,7 @@ class FakeTransport implements KinguinHttpTransport {
       results: productPage,
     });
     this.respond("GET", "/v2/products/product-alpha", product);
+    this.respond("GET", "/v2/products/product-late", lateProduct);
     this.respond("GET", "/v1/order/order-alpha", {
       orderExternalId: "idem-alpha",
       orderId: "order-alpha",
@@ -205,8 +271,9 @@ class FakeTransport implements KinguinHttpTransport {
       });
     }
     const url = new URL(request.path);
+    const apiPath = url.pathname.replace(/^\/esa\/api/u, "") || "/";
     if (
-      url.pathname === "/v1/products" &&
+      apiPath === "/v1/products" &&
       request.query?.updatedSince === "2026-01-02T00:00:00.000Z"
     ) {
       return {
@@ -215,11 +282,11 @@ class FakeTransport implements KinguinHttpTransport {
         status: 200,
       };
     }
-    const response = this.responses.get(`${request.method} ${url.pathname}`);
+    const response = this.responses.get(`${request.method} ${apiPath}`);
     if (!response) {
       return { body: "{}", headers: {}, status: 404 };
     }
-    if (url.pathname === "/v1/products" && response.status === 200) {
+    if (apiPath === "/v1/products" && response.status === 200) {
       let parsed: {
         readonly item_count?: number;
         readonly results?: readonly unknown[];
@@ -310,7 +377,27 @@ const createHarness = () => {
     KINGUIN_WEBHOOK_PRODUCT_UPDATE_SECRET: "whp",
   });
   const client = new KinguinHttpClient(config(), secrets, transport);
-  const supplier = new KinguinSupplier(client);
+  const supplier = new KinguinSupplier(
+    client,
+    new InMemoryKinguinOfferProductIndex([
+      {
+        supplierOfferId: supplierOfferId("offer-alpha"),
+        supplierProductId: supplierProductId("product-alpha"),
+      },
+      {
+        supplierOfferId: supplierOfferId("offer-delayed"),
+        supplierProductId: supplierProductId("product-alpha"),
+      },
+      {
+        supplierOfferId: supplierOfferId("offer-unavailable"),
+        supplierProductId: supplierProductId("product-alpha"),
+      },
+      {
+        supplierOfferId: supplierOfferId("offer-late"),
+        supplierProductId: supplierProductId("product-late"),
+      },
+    ]),
+  );
   return { client, secrets, supplier, transport };
 };
 
@@ -456,6 +543,147 @@ describe("Kinguin connector foundation", () => {
         })),
       }),
     ).toThrow();
+  });
+
+  it("omits undocumented numeric rate limits from default health", async () => {
+    const { supplier } = createHarness();
+    const health = await supplier.getHealth();
+
+    expect(health.status).toBe("UNKNOWN");
+    expect(health.rateLimit).toBeUndefined();
+    expect(supplier.capabilities.supportsHealthRateLimitInfo).toBe(false);
+  });
+
+  it("keeps Kinguin routable when policy allows unknown health and other rules pass", async () => {
+    const { supplier } = createHarness();
+    const registry = new SupplierRegistry();
+    registry.register(supplier);
+    const routing = new SupplierRoutingService(
+      registry,
+      new StaticMappingPort([
+        {
+          productId: productId("canonical-kinguin-late"),
+          supplierId: supplierId("kinguin"),
+          supplierOfferId: supplierOfferId("offer-late"),
+          supplierProductId: supplierProductId("product-late"),
+        },
+      ]),
+      { evaluate: async () => "ALLOWED" },
+      { now: () => now },
+    );
+
+    const result = await routing.selectSupplier(
+      {
+        correlationId: correlationId("corr-kinguin-routing"),
+        productId: productId("canonical-kinguin-late"),
+      },
+      {
+        allowedCurrencies: [currency("EUR")],
+        allowDegradedSuppliers: false,
+        allowReviewRequired: false,
+        allowUnknownHealth: true,
+        comparisonCurrency: currency("EUR"),
+        maxPriceAgeMs: 7 * 24 * 60 * 60 * 1_000,
+        requiredCapabilities: ["PRICE_LOOKUP", "REGION_EVIDENCE", "PURCHASE"],
+        requiredHealth: "HEALTHY",
+        version: "kinguin-test-policy",
+      },
+    );
+
+    expect(result.status).toBe("SELECTED");
+    expect(result.selectedCandidate?.supplierId).toBe(supplierId("kinguin"));
+    expect(result.rejectionReasons).not.toContain("RATE_LIMITED");
+  });
+
+  it("resolves offers outside the first catalog page through explicit offer-product mapping", async () => {
+    const { supplier, transport } = createHarness();
+    const offer = await supplier.getOffer(supplierOfferId("offer-late"));
+
+    expect(offer).toMatchObject({
+      supplierOfferId: "offer-late",
+      supplierProductId: "product-late",
+    });
+    expect(transport.requests.at(-1)?.path).toBe(
+      "https://gateway.kinguin.net/esa/api/v2/products/product-late",
+    );
+    expect(
+      transport.requests.some((request) => {
+        const url = new URL(request.path);
+        return url.pathname === "/v1/products" && request.query?.page === 1;
+      }),
+    ).toBe(false);
+  });
+
+  it("submits purchases with exact mapped product and offer without a catalog scan", async () => {
+    const { supplier, transport } = createHarness();
+    const receipt = await supplier.submitPurchase({
+      clientIdempotencyReference: idempotencyKey("idem-late"),
+      correlationId: correlationId("corr-late"),
+      orderLineId: orderLineId("line-late"),
+      supplierOfferId: supplierOfferId("offer-late"),
+    });
+    const purchaseRequest = transport.requests.find((request) => {
+      const url = new URL(request.path);
+      return request.method === "POST" && url.pathname.endsWith("/v2/order");
+    });
+
+    expect(receipt.state).toBe("ACCEPTED");
+    expect(purchaseRequest?.body).toEqual({
+      orderExternalId: "idem-late",
+      products: [
+        {
+          keyType: "text",
+          offerId: "offer-late",
+          price: "10.79",
+          productId: "product-late",
+          qty: 1,
+        },
+      ],
+    });
+    expect(
+      transport.requests.some((request) => {
+        const url = new URL(request.path);
+        return url.pathname === "/v1/products";
+      }),
+    ).toBe(false);
+  });
+
+  it("fails closed for unknown and conflicting offer-product mappings", async () => {
+    const { client, transport } = createHarness();
+    const missingSupplier = new KinguinSupplier(client);
+    await expect(
+      missingSupplier.getOffer(supplierOfferId("offer-late")),
+    ).resolves.toBeNull();
+
+    transport.respond("GET", "/v2/products/product-alpha", {
+      ...lateProduct,
+      productId: "product-different",
+    });
+    const conflictingSupplier = new KinguinSupplier(
+      client,
+      new InMemoryKinguinOfferProductIndex([
+        {
+          supplierOfferId: supplierOfferId("offer-late"),
+          supplierProductId: supplierProductId("product-alpha"),
+        },
+      ]),
+    );
+    await expect(
+      conflictingSupplier.getOffer(supplierOfferId("offer-late")),
+    ).rejects.toMatchObject({ category: "CONFLICT" });
+  });
+
+  it("keeps offer lookup deterministic for repeated mapped lookups", async () => {
+    const { supplier, transport } = createHarness();
+    const first = await supplier.getOffer(supplierOfferId("offer-late"));
+    const second = await supplier.getOffer(supplierOfferId("offer-late"));
+
+    expect(first).toEqual(second);
+    expect(
+      transport.requests
+        .map((request) => new URL(request.path).pathname)
+        .filter((path) => path.endsWith("/v2/products/product-late")),
+    ).toHaveLength(2);
   });
 
   it("treats purchase timeout as ambiguous and routing does not fallback after ambiguous purchase", async () => {

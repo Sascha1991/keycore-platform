@@ -63,6 +63,16 @@ Products and offers normalize into existing supplier-neutral KeyCore records. Ki
 
 Raw Kinguin payloads are not persisted as canonical models.
 
+## Offer-To-Product Mapping
+
+Kinguin ordering requires the exact Kinguin `productId` and `offerId`. The adapter therefore maintains an explicit `SupplierOfferId` to `SupplierProductId` mapping boundary.
+
+The in-memory foundation index can be seeded by the application/catalog-sync layer and is also populated from known Kinguin product or catalog responses. It fails closed if a supplier offer is later observed under a different supplier product.
+
+Purchase execution does not scan `GET /v1/products` to resolve an offer. The purchase path resolves the mapped supplier product first, refreshes the product through `GET /v2/products/{productId}`, verifies the product still contains the exact offer, and then builds `POST /v2/order` with the exact mapped product and offer identifiers.
+
+Missing mappings fail closed as `NOT_FOUND`. Conflicting mappings fail closed as `CONFLICT`. No title matching or undocumented offer lookup endpoint is used.
+
 ## Region Evidence
 
 Kinguin `countryLimitation` is treated as excluded country codes. It is never interpreted as an allow list.
@@ -163,7 +173,9 @@ Raw response bodies are not exposed in `SupplierError` messages.
 
 ## Rate Limits
 
-The reviewed Kinguin documentation does not define numeric API rate limits. The adapter maps HTTP `429` to `RATE_LIMIT` and exposes unknown health/rate-limit metadata rather than inventing limits.
+The reviewed Kinguin documentation does not define numeric API rate limits. The adapter maps HTTP `429` to `RATE_LIMIT` and omits `rateLimit` metadata from health responses when numeric limits are unknown.
+
+Unknown rate-limit data is not represented as `{ limit: 0, remaining: 0 }`, because supplier routing treats `remaining <= 0` as exhausted capacity. Kinguin can remain routable when policy allows unknown health and all other eligibility rules pass. No fake high capacity value is invented.
 
 ## Known Ambiguities
 
@@ -171,6 +183,7 @@ The reviewed Kinguin documentation does not define numeric API rate limits. The 
 - Webhook verification is documented as a shared `X-Event-Secret` header, not as an HMAC signature. The adapter does not invent a signature algorithm.
 - `order.complete` is deprecated according to the official changelog but remains listed in KS-04-01 requirements. It is supported only as a compatibility classification.
 - Kinguin does not document strong idempotency guarantees for `orderExternalId`; duplicate/timeout behavior remains subject to reconciliation.
+- Durable production persistence for `SupplierOfferId` to `SupplierProductId` mappings remains a later application/catalog-sync responsibility. KS-04-01 provides the adapter-local boundary and fail-closed semantics.
 
 ## Deferred Work
 
