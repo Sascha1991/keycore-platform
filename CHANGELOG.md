@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Implemented `KS-05-01` catalog synchronization and Germany eligibility foundation:
+  - added supplier-neutral full, incremental and webhook-to-sync catalog orchestration;
+  - added Germany eligibility policy `de-eligibility-v1` with fail-closed structured evidence handling;
+  - added durable supplier product/offer state, offer-to-product mapping, sync runs and checkpoints;
+  - added PostgreSQL migration/repository support and 50,000-product synthetic scale coverage;
+  - stabilized supplier-offer/product mapping conflict diagnostics and aligned CI with `npm@11.6.2`;
+  - kept WooCommerce publication, product grouping, search indexing, GAMIVO and live bulk supplier crawls out of scope.
 - Added `KS-04-01b` Kinguin read-only integration verification:
   - added a fail-closed live read-only guard for Kinguin verification;
   - added a local opt-in verification command that never prints credentials or raw live payloads;
