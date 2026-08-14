@@ -1,14 +1,24 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  StorefrontAmbiguousError,
+  correlationId,
   currency,
   money,
+  offerId,
   productId,
   storefrontChannel,
   storefrontProductId,
+  StorefrontPublicationService,
+  type StorefrontCanonicalProduct,
+  type StorefrontOfferSummary,
+  type StorefrontPriceProvider,
   type StorefrontProductRepresentation,
+  type StorefrontPublicationSnapshot,
 } from "../../packages/platform/src/contracts.js";
+import { InMemoryStorefrontPublicationRepository } from "./in-memory-publication-repository.js";
 import {
+  FetchWooCommerceHttpClient,
   moneyToWooPrice,
   toWooCommerceProductPayload,
   WooCommerceStorefrontAdapter,
@@ -16,6 +26,8 @@ import {
 } from "./woocommerce-adapter.js";
 
 const storefront = storefrontChannel("KEYRANO_DE");
+const corr = correlationId("corr-woo-ambiguous-create");
+const now = new Date("2026-08-15T00:00:00.000Z");
 const representation: StorefrontProductRepresentation = {
   lifecycle: "IN_STOCK",
   metadata: {
@@ -82,6 +94,104 @@ describe("WooCommerce storefront adapter", () => {
     });
   });
 
+  it("classifies POST transport failure as ambiguous", async () => {
+    const client = new FetchWooCommerceHttpClient(failingFetch);
+
+    await expect(
+      client.request({
+        body: "{}",
+        headers: {},
+        method: "POST",
+        url: "https://woo.example.test/wp-json/wc/v3/products",
+      }),
+    ).rejects.toBeInstanceOf(StorefrontAmbiguousError);
+  });
+
+  it("makes publication reconciliation required after POST transport uncertainty and does not retry create", async () => {
+    let postAttempts = 0;
+    const repository = new InMemoryStorefrontPublicationRepository({
+      snapshots: [snapshot()],
+    });
+    const remote = new WooCommerceStorefrontAdapter(
+      config(),
+      new FetchWooCommerceHttpClient(async () => {
+        postAttempts += 1;
+        throw new TypeError("connection reset after dispatch");
+      }),
+    );
+    const service = new StorefrontPublicationService({
+      environment: "STAGING",
+      now: () => now,
+      priceProvider: new FixedPriceProvider(),
+      repository,
+      storefront: remote,
+    });
+
+    const first = await service.publish({
+      correlationId: corr,
+      productId: representation.productId,
+      storefront,
+    });
+    const second = await service.publish({
+      correlationId: corr,
+      productId: representation.productId,
+      storefront,
+    });
+
+    expect(first).toMatchObject({
+      outcome: "RECONCILIATION_REQUIRED",
+      reasonCode: "RECONCILE_AMBIGUOUS_CREATE",
+    });
+    expect(second).toMatchObject({
+      outcome: "RECONCILIATION_REQUIRED",
+      reasonCode: "RECONCILE_PENDING_CREATE",
+    });
+    expect(postAttempts).toBe(1);
+  });
+
+  it("classifies truncated POST responses as ambiguous", async () => {
+    const client = new FetchWooCommerceHttpClient(
+      async () =>
+        ({
+          status: 201,
+          text: async () => {
+            throw new Error("truncated response");
+          },
+        }) as unknown as Response,
+    );
+
+    await expect(
+      client.request({
+        body: "{}",
+        headers: {},
+        method: "POST",
+        url: "https://woo.example.test/wp-json/wc/v3/products",
+      }),
+    ).rejects.toBeInstanceOf(StorefrontAmbiguousError);
+  });
+
+  it("does not classify deterministic HTTP create rejection as ambiguous", async () => {
+    const client = new CapturingWooClient({
+      body: { code: "woocommerce_rest_cannot_create" },
+      status: 401,
+    });
+    const adapter = new WooCommerceStorefrontAdapter(config(), client);
+
+    await expect(adapter.createProduct(representation)).rejects.toThrow(
+      "create failed",
+    );
+    await expect(
+      adapter.createProduct(representation),
+    ).rejects.not.toBeInstanceOf(StorefrontAmbiguousError);
+  });
+
+  it("normal successful create remains unchanged", async () => {
+    const client = new CapturingWooClient({ status: 201, body: { id: 456 } });
+    const adapter = new WooCommerceStorefrontAdapter(config(), client);
+
+    await expect(adapter.createProduct(representation)).resolves.toBe("456");
+  });
+
   it("updates by known remote WooCommerce ID and never searches by title", async () => {
     const client = new CapturingWooClient({ status: 200, body: { id: 123 } });
     const adapter = new WooCommerceStorefrontAdapter(config(), client);
@@ -96,6 +206,19 @@ describe("WooCommerce storefront adapter", () => {
       url: "https://woo.example.test/wp-json/wc/v3/products/123",
     });
     expect(client.requests[0]?.url).not.toContain("search");
+  });
+
+  it("classifies PUT transport uncertainty as ambiguous for reconciliation", async () => {
+    const client = new FetchWooCommerceHttpClient(failingFetch);
+
+    await expect(
+      client.request({
+        body: "{}",
+        headers: {},
+        method: "PUT",
+        url: "https://woo.example.test/wp-json/wc/v3/products/123",
+      }),
+    ).rejects.toBeInstanceOf(StorefrontAmbiguousError);
   });
 
   it("unpublishes with draft and hidden catalog visibility instead of hard delete", async () => {
@@ -261,3 +384,47 @@ const readRequestBody = (request: { readonly body?: string } | undefined) => {
   }
   return JSON.parse(request.body) as Record<string, unknown>;
 };
+
+const failingFetch: typeof fetch = async () => {
+  throw new TypeError("network connection reset");
+};
+
+class FixedPriceProvider implements StorefrontPriceProvider {
+  public async quoteSellPrice(): Promise<typeof representation.price> {
+    return representation.price;
+  }
+}
+
+const snapshot = (
+  override: Partial<StorefrontPublicationSnapshot> = {},
+): StorefrontPublicationSnapshot => ({
+  mappings: [{ state: "AUTO_MATCHED" }],
+  offers: [offer()],
+  product: product(),
+  ...override,
+});
+
+const product = (
+  override: Partial<StorefrontCanonicalProduct> = {},
+): StorefrontCanonicalProduct => ({
+  active: true,
+  canonicalTitle: "Cyberpunk 2077",
+  edition: "STANDARD",
+  lifecycle: "IN_STOCK",
+  platforms: ["WINDOWS"],
+  productId: representation.productId,
+  productType: "GAME",
+  safeDescription: "Safe customer-facing description.",
+  safeIdentifiers: [{ type: "STEAM_APP_ID", value: "1091500" }],
+  ...override,
+});
+
+const offer = (
+  override: Partial<StorefrontOfferSummary> = {},
+): StorefrontOfferSummary => ({
+  active: true,
+  availability: "IN_STOCK",
+  germanyCompatibility: "ALLOWED",
+  offerId: offerId("offer-allowed"),
+  ...override,
+});

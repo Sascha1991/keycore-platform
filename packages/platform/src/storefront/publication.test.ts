@@ -391,7 +391,62 @@ describe("Storefront publication foundation", () => {
     expect(result.reasonCode).toBe(
       "RECONCILE_LOCAL_PERSISTENCE_AFTER_REMOTE_CREATE",
     );
+    expect(result.record.remoteProductId).toBe("woo-1");
     expect(fixture.remote.creates).toHaveLength(1);
+
+    await fixture.service.publish({
+      correlationId: corr,
+      productId: fixture.product.productId,
+      storefront,
+    });
+
+    expect(fixture.remote.creates).toHaveLength(1);
+  });
+
+  it("marks ambiguous update as reconciliation instead of ordinary failed update", async () => {
+    const fixture = createFixture();
+    await fixture.service.publish({
+      correlationId: corr,
+      productId: fixture.product.productId,
+      storefront,
+    });
+    fixture.remote.ambiguousUpdate = true;
+    fixture.priceProvider.nextPrice = money(2999n, currency("EUR"));
+
+    const result = await fixture.service.publish({
+      correlationId: corr,
+      productId: fixture.product.productId,
+      storefront,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "RECONCILIATION_REQUIRED",
+      reasonCode: "RECONCILE_AMBIGUOUS_UPDATE",
+    });
+  });
+
+  it("marks ambiguous unpublish as reconciliation instead of ordinary failed unpublish", async () => {
+    const fixture = createFixture();
+    await fixture.service.publish({
+      correlationId: corr,
+      productId: fixture.product.productId,
+      storefront,
+    });
+    fixture.remote.ambiguousUnpublish = true;
+    fixture.repository.putSnapshot(
+      snapshot({ offers: [offer({ germanyCompatibility: "BLOCKED" })] }),
+    );
+
+    const result = await fixture.service.publish({
+      correlationId: corr,
+      productId: fixture.product.productId,
+      storefront,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "RECONCILIATION_REQUIRED",
+      reasonCode: "RECONCILE_AMBIGUOUS_UNPUBLISH",
+    });
   });
 
   it("fails closed when one ProductId storefront mapping is changed to another remote ID", async () => {
@@ -533,6 +588,35 @@ describe("Storefront publication foundation", () => {
     );
   });
 
+  it("emits the configured audit environment without rewriting staging or production", async () => {
+    const staging = createFixture({}, { environment: "STAGING" });
+    await staging.service.publish({
+      correlationId: corr,
+      productId: staging.product.productId,
+      storefront,
+    });
+    const production = createFixture({}, { environment: "PRODUCTION" });
+    await production.service.publish({
+      correlationId: corr,
+      productId: production.product.productId,
+      storefront,
+    });
+
+    expect(staging.audit.events[0]?.environment).toBe("STAGING");
+    expect(production.audit.events[0]?.environment).toBe("PRODUCTION");
+  });
+
+  it("does not infer audit environment from storefront name", async () => {
+    const fixture = createFixture({}, { environment: "LOCAL" });
+    await fixture.service.publish({
+      correlationId: corr,
+      productId: fixture.product.productId,
+      storefront: storefrontChannel("KEYRANO_DE"),
+    });
+
+    expect(fixture.audit.events[0]?.environment).toBe("LOCAL");
+  });
+
   it("creates one storefront product for a canonical product with two suppliers", async () => {
     const fixture = createFixture({
       mappings: [{ state: "AUTO_MATCHED" }, { state: "MANUAL_MATCHED" }],
@@ -640,6 +724,8 @@ class FakeStorefront implements StorefrontPort {
   public readonly deletes: readonly unknown[] = [];
   public failCreate = false;
   public ambiguousCreate = false;
+  public ambiguousUpdate = false;
+  public ambiguousUnpublish = false;
 
   public async createProduct(
     product: StorefrontProductRepresentation,
@@ -659,12 +745,18 @@ class FakeStorefront implements StorefrontPort {
     readonly product: StorefrontProductRepresentation;
   }): Promise<void> {
     this.updates.push(input);
+    if (this.ambiguousUpdate) {
+      throw new StorefrontAmbiguousError();
+    }
   }
 
   public async unpublishProduct(input: {
     readonly remoteProductId: StorefrontProductId;
   }): Promise<void> {
     (this.unpublishes as unknown[]).push(input);
+    if (this.ambiguousUnpublish) {
+      throw new StorefrontAmbiguousError();
+    }
   }
 
   public async readProduct(): Promise<StorefrontRemoteProductSnapshot | null> {
@@ -686,7 +778,10 @@ class CapturingAudit implements AuditEventPort {
 
 const createFixture = (
   override: Partial<StorefrontPublicationSnapshot> = {},
-  options: { readonly hideOutOfStockProducts?: boolean } = {},
+  options: {
+    readonly environment?: AuditEvent["environment"];
+    readonly hideOutOfStockProducts?: boolean;
+  } = {},
 ) => {
   const fixtureProduct = override.product ?? product();
   const repository = new InMemoryStorefrontPublicationRepository({
@@ -697,6 +792,7 @@ const createFixture = (
   const audit = new CapturingAudit();
   const serviceOptions = {
     audit,
+    environment: options.environment ?? "CI",
     now: () => now,
     priceProvider,
     repository,

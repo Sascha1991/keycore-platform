@@ -68,6 +68,8 @@ export const storefrontReasonCodes = [
   "FAILED_REMOTE_UPDATE",
   "FAILED_REMOTE_UNPUBLISH",
   "RECONCILE_AMBIGUOUS_CREATE",
+  "RECONCILE_AMBIGUOUS_UPDATE",
+  "RECONCILE_AMBIGUOUS_UNPUBLISH",
   "RECONCILE_PENDING_CREATE",
   "RECONCILE_LOCAL_PERSISTENCE_AFTER_REMOTE_CREATE",
   "MAPPING_CONFLICT_PRODUCT_STOREFRONT",
@@ -266,6 +268,7 @@ export interface StorefrontPublicationServiceOptions {
   readonly repository: StorefrontPublicationRepository;
   readonly priceProvider: StorefrontPriceProvider;
   readonly storefront: StorefrontPort;
+  readonly environment: AuditEvent["environment"];
   readonly audit?: AuditEventPort;
   readonly now?: () => Date;
   readonly hideOutOfStockProducts?: boolean;
@@ -380,8 +383,9 @@ export class StorefrontPublicationService {
     );
 
     let remoteCreated = false;
+    let remoteProductId: StorefrontProductId | undefined;
     try {
-      const remoteProductId = await this.options.storefront.createProduct(
+      remoteProductId = await this.options.storefront.createProduct(
         input.representation,
       );
       remoteCreated = true;
@@ -428,7 +432,10 @@ export class StorefrontPublicationService {
       if (remoteCreated) {
         return this.markReconciliation({
           correlationId: input.correlationId,
-          existing: pending,
+          existing: {
+            ...pending,
+            ...(remoteProductId ? { remoteProductId } : {}),
+          },
           reasonCode: "RECONCILE_LOCAL_PERSISTENCE_AFTER_REMOTE_CREATE",
           storefront: input.storefront,
         });
@@ -491,6 +498,14 @@ export class StorefrontPublicationService {
         state: "PUBLISHED",
       };
     } catch (error) {
+      if (error instanceof StorefrontAmbiguousError) {
+        return this.markReconciliation({
+          correlationId: input.correlationId,
+          existing: pending,
+          reasonCode: "RECONCILE_AMBIGUOUS_UPDATE",
+          storefront: input.existing.storefront,
+        });
+      }
       return this.fail({
         correlationId: input.correlationId,
         existing: pending,
@@ -541,6 +556,14 @@ export class StorefrontPublicationService {
           state: "UNPUBLISHED",
         };
       } catch (error) {
+        if (error instanceof StorefrontAmbiguousError) {
+          return this.markReconciliation({
+            correlationId: input.correlationId,
+            existing: pending,
+            reasonCode: "RECONCILE_AMBIGUOUS_UNPUBLISH",
+            storefront: input.storefront,
+          });
+        }
         return this.fail({
           correlationId: input.correlationId,
           existing: pending,
@@ -581,6 +604,8 @@ export class StorefrontPublicationService {
     readonly correlationId: CorrelationId;
     readonly reasonCode:
       | "RECONCILE_AMBIGUOUS_CREATE"
+      | "RECONCILE_AMBIGUOUS_UPDATE"
+      | "RECONCILE_AMBIGUOUS_UNPUBLISH"
       | "RECONCILE_PENDING_CREATE"
       | "RECONCILE_LOCAL_PERSISTENCE_AFTER_REMOTE_CREATE";
   }): Promise<StorefrontPublicationResult> {
@@ -751,7 +776,7 @@ export class StorefrontPublicationService {
       actor: { id: "storefront-publication-service", type: "SERVICE" },
       correlationId: input.correlationId,
       entity: { id: input.record.productId, type: "PRODUCT" },
-      environment: "CI",
+      environment: this.options.environment,
       eventType: input.eventType,
       metadata: {
         fingerprint: input.record.fingerprint ?? "",

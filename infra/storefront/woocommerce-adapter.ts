@@ -1,4 +1,5 @@
 import {
+  StorefrontAmbiguousError,
   storefrontProductId,
   type ProductId,
   type StorefrontChannel,
@@ -28,6 +29,8 @@ export interface WooCommerceHttpClient {
 }
 
 export class FetchWooCommerceHttpClient implements WooCommerceHttpClient {
+  public constructor(private readonly fetchFn: typeof fetch = fetch) {}
+
   public async request(input: {
     readonly method: "GET" | "POST" | "PUT";
     readonly url: string;
@@ -41,12 +44,21 @@ export class FetchWooCommerceHttpClient implements WooCommerceHttpClient {
     if (input.body !== undefined) {
       requestInit.body = input.body;
     }
-    const response = await fetch(input.url, requestInit);
-    const text = await response.text();
-    return {
-      body: text.length > 0 ? (JSON.parse(text) as unknown) : null,
-      status: response.status,
-    };
+    try {
+      const response = await this.fetchFn(input.url, requestInit);
+      const text = await response.text();
+      return {
+        body: text.length > 0 ? (JSON.parse(text) as unknown) : null,
+        status: response.status,
+      };
+    } catch (error) {
+      if (isMutatingMethod(input.method)) {
+        throw new StorefrontAmbiguousError(
+          `WooCommerce ${input.method} request outcome is ambiguous`,
+        );
+      }
+      throw error;
+    }
   }
 }
 
@@ -96,7 +108,14 @@ export class WooCommerceStorefrontAdapter implements StorefrontPort {
       url: this.endpoint("products"),
     });
     assertSuccess(response.status, "WooCommerce product create failed");
-    const id = readWooProductId(response.body);
+    let id: number;
+    try {
+      id = readWooProductId(response.body);
+    } catch {
+      throw new StorefrontAmbiguousError(
+        "WooCommerce product create succeeded but remote product ID was unreadable",
+      );
+    }
     return storefrontProductId(String(id));
   }
 
@@ -250,6 +269,9 @@ const assertSuccess = (status: number, message: string): void => {
     throw new Error(message);
   }
 };
+
+const isMutatingMethod = (method: "GET" | "POST" | "PUT"): boolean =>
+  method === "POST" || method === "PUT";
 
 const readWooProductId = (body: unknown): number => {
   if (

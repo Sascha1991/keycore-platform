@@ -30,6 +30,18 @@ The state model is:
 
 `PENDING_CREATE` and `REVIEW_REQUIRED` prevent blind duplicate creation. Ambiguous create outcomes and local persistence failures after a remote create require reconciliation before another create is attempted.
 
+## Ambiguous Remote Operations
+
+WooCommerce transport uncertainty is fail-closed for mutating requests.
+
+For `POST /wp-json/wc/v3/products`, network disconnects, connection resets, aborts, timeouts, unreadable responses or truncated responses are classified as `StorefrontAmbiguousError`. The publication service records `RECONCILE_AMBIGUOUS_CREATE`, moves the publication to `REVIEW_REQUIRED` and does not issue another automatic create on retry.
+
+Deterministic HTTP rejections, such as authentication or client errors returned by WooCommerce, remain ordinary failures and do not become ambiguous solely because they are non-2xx responses.
+
+For `PUT` update and soft-unpublish, transport uncertainty cannot create duplicate products, but the remote state may still be unknown. The service records `RECONCILE_AMBIGUOUS_UPDATE` or `RECONCILE_AMBIGUOUS_UNPUBLISH` and requires operational reconciliation rather than assuming success or blind completion.
+
+When WooCommerce returns a remote product ID but the local publication persistence write fails, the reconciliation record preserves the known remote product ID when the repository is available for the reconciliation write. If the repository is completely unavailable, the operation must stop and requires operational reconciliation from logs/metrics and WooCommerce state. The service does not invent success, search WooCommerce by title or blind-create another product.
+
 ## Eligibility
 
 A product is publishable only when all of these are true:
@@ -102,6 +114,8 @@ The migration is reversible and does not rewrite catalog, offer, order or suppli
 ## Audit
 
 Publication emits audit-safe `STOREFRONT_*` events for create, update, unpublish, failure and reconciliation-required outcomes. Metadata contains safe identifiers, state, reason code and publication version only.
+
+The audit environment is injected through `StorefrontPublicationServiceOptions.environment` using the existing audit environment values: `LOCAL`, `CI`, `STAGING` or `PRODUCTION`. It is not inferred from the storefront channel, domain name or `KEYRANO_DE`.
 
 ## Local Configuration
 

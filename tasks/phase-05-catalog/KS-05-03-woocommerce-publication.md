@@ -54,6 +54,8 @@ Review/merge required.
 - Existing WooCommerce products are updated by durable remote ID mapping, not by title search.
 - Remote mappings are idempotent and cannot be silently reassigned.
 - Create ambiguity or local persistence failure after remote create requires reconciliation before retry.
+- WooCommerce create transport uncertainty is classified as reconciliation-required and cannot trigger a blind second create.
+- Audit events use a configured environment value and do not infer production from storefront/domain naming.
 - Products are soft-unpublished by draft/hidden state rather than hard-deleted.
 - Payloads contain only safe customer-facing fields and KeyCore references.
 - Supplier IDs, supplier costs, credentials, product keys and customer data are not exposed to storefront payloads or audit metadata.
@@ -65,6 +67,8 @@ Review/merge required.
 - State machine tests for create, update, no-op, block, soft-unpublish, failure and reconciliation.
 - Mapping conflict tests for product/storefront and remote/storefront uniqueness.
 - WooCommerce adapter contract tests for `wc/v3` paths, auth header shape, safe payloads and no hard delete.
+- WooCommerce mutating transport ambiguity tests for create, update and soft-unpublish.
+- Audit environment injection tests.
 - PostgreSQL mapping persistence and conflict tests.
 - Existing catalog, grouping, routing, Kinguin, queue, vault, audit and persistence tests remain green.
 - Secret scan and dependency audit remain clean.
