@@ -104,6 +104,8 @@ Migration `004_canonical_product_grouping` adds:
 
 It also drops the KS-05-01 unique index on `supplier_products(product_id)`, because canonical grouping requires multiple supplier products to map to one canonical product.
 
+In the active KS-05-02 schema, `supplier_product_canonical_mappings` is the authoritative grouping decision record. `supplier_products.product_id` is a compatibility and routing projection maintained from that decision record, not a separate source of truth. Rollback of migration `004_canonical_product_grouping` removes the KS-05-02 metadata tables but intentionally does not recreate the legacy `supplier_products(product_id)` unique index, because that invariant is incompatible with legitimate many-supplier-products-to-one-canonical-product mappings. The projection remains in place across rollback and is not rewritten or deleted by the down migration.
+
 Raw supplier payloads, credentials, product keys and production customer/order data are not persisted by the grouping layer.
 
 ## Audit

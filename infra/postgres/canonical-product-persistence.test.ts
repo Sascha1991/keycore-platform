@@ -51,6 +51,16 @@ const rollbackAllMigrations = async (): Promise<void> => {
   }
 };
 
+const loadMigration = async (version: string) => {
+  const migration = (await loadMigrations()).find(
+    (candidate) => candidate.version === version,
+  );
+  if (!migration) {
+    throw new Error(`Expected migration ${version}`);
+  }
+  return migration;
+};
+
 describePostgres("PostgreSQL canonical product grouping persistence", () => {
   beforeAll(async () => {
     client = new Client({ connectionString: databaseUrl });
@@ -153,6 +163,51 @@ describePostgres("PostgreSQL canonical product grouping persistence", () => {
       state: "REVIEW_REQUIRED",
     });
   });
+
+  it("rolls back migration 004 without restoring the incompatible legacy unique index", async () => {
+    const migration = await loadMigration("004");
+    const repository = new PostgresCanonicalProductGroupingRepository({
+      query,
+    });
+    const service = new CanonicalProductGroupingService({
+      now: () => now,
+      repository,
+    });
+    const first = await service.evaluateSupplierProduct(
+      evidence({
+        identifiers: [trustedIdentifier("STEAM_APP_ID", "424242")],
+        supplierId: "rollback-supplier-a",
+        supplierProductId: "rollback-a",
+      }),
+    );
+    await service.evaluateSupplierProduct(
+      evidence({
+        identifiers: [trustedIdentifier("STEAM_APP_ID", "424242")],
+        supplierId: "rollback-supplier-b",
+        supplierProductId: "rollback-b",
+      }),
+    );
+    const canonicalProductId = requiredProductId(first.productId);
+
+    const beforeRollback =
+      await supplierProductProjectionCount(canonicalProductId);
+    expect(beforeRollback).toBe("2");
+
+    await query(migration.downSql);
+
+    await expect(
+      tableExists("supplier_product_canonical_mappings"),
+    ).resolves.toBe(false);
+    await expect(legacySupplierProductUniqueIndexExists()).resolves.toBe(false);
+    await expect(
+      supplierProductProjectionCount(canonicalProductId),
+    ).resolves.toBe("2");
+
+    await query(migration.upSql);
+    await expect(
+      tableExists("supplier_product_canonical_mappings"),
+    ).resolves.toBe(true);
+  });
 });
 
 const evidence = (
@@ -199,4 +254,43 @@ const requiredMapping = async (
     throw new Error("Expected mapping");
   }
   return mapping;
+};
+
+const supplierProductProjectionCount = async (
+  canonicalProductId: ProductId,
+): Promise<string> => {
+  const result = await query<{ count: string }>(
+    "SELECT count(*)::text FROM supplier_products WHERE product_id = $1",
+    [canonicalProductId],
+  );
+  return result.rows[0]?.count ?? "0";
+};
+
+const tableExists = async (tableName: string): Promise<boolean> => {
+  const result = await query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = $1 AND table_name = $2
+      )
+    `,
+    [schemaName, tableName],
+  );
+  return result.rows[0]?.exists ?? false;
+};
+
+const legacySupplierProductUniqueIndexExists = async (): Promise<boolean> => {
+  const result = await query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = $1
+          AND indexname = 'supplier_products_supplier_product_internal_unique'
+      )
+    `,
+    [schemaName],
+  );
+  return result.rows[0]?.exists ?? false;
 };
