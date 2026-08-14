@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Implemented `KS-05-02` canonical product grouping foundation:
+  - added supplier-neutral canonical grouping policy `canonical-grouping-v1`;
+  - added evidence, title normalization, edition safety, platform safety and mapping state models;
+  - added in-memory and PostgreSQL grouping repositories with reversible migration and indexed strong identifier lookup;
+  - corrected migration rollback so the obsolete `supplier_products(product_id)` legacy unique index is not restored over valid many-to-one canonical mappings;
+  - added manual match/detach/reject command foundation and audit-safe event metadata;
+  - kept WooCommerce publication, WordPress sync, GAMIVO, Steam API calls, fuzzy matching, pricing and procurement out of scope.
 - Implemented `KS-05-01` catalog synchronization and Germany eligibility foundation:
   - added supplier-neutral full, incremental and webhook-to-sync catalog orchestration;
   - added Germany eligibility policy `de-eligibility-v1` with fail-closed structured evidence handling;
