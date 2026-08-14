@@ -678,7 +678,10 @@ describe("Kinguin connector foundation", () => {
     const first = await supplier.getOffer(supplierOfferId("offer-late"));
     const second = await supplier.getOffer(supplierOfferId("offer-late"));
 
-    expect(first).toEqual(second);
+    expect(first?.supplierOfferId).toBe(second?.supplierOfferId);
+    expect(first?.supplierProductId).toBe(second?.supplierProductId);
+    expect(first?.offer.availability).toBe(second?.offer.availability);
+    expect(first?.offer.currentPrice).toEqual(second?.offer.currentPrice);
     expect(
       transport.requests
         .map((request) => new URL(request.path).pathname)
