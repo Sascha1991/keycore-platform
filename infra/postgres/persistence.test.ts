@@ -194,6 +194,7 @@ describePostgres("PostgreSQL persistence foundation", () => {
       "idempotency_records",
       "outbox_events",
       "reconciliation_records",
+      "storefront_publications",
     ];
 
     const result = await query<{ table_name: string }>(
