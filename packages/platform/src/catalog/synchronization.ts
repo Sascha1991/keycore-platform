@@ -26,6 +26,20 @@ import {
 
 export type CatalogSyncMode = "FULL" | "INCREMENTAL" | "WEBHOOK";
 export type CatalogSyncRunStatus = "RUNNING" | "SUCCEEDED" | "FAILED";
+export type CatalogSyncErrorCode = "CATALOG_OFFER_PRODUCT_MAPPING_CHANGED";
+
+export const catalogOfferProductMappingChangedMessage =
+  "Catalog offer/product mapping changed" as const;
+
+export class CatalogSyncError extends Error {
+  public constructor(
+    public readonly code: CatalogSyncErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CatalogSyncError";
+  }
+}
 
 export interface CatalogSyncRun {
   readonly runId: string;
@@ -408,7 +422,10 @@ export class CatalogSyncService {
         throw new Error("Catalog offer supplier identity mismatch");
       }
       if (offer.supplierProductId !== product.supplierProductId) {
-        throw new Error("Catalog offer/product mapping mismatch");
+        throw new CatalogSyncError(
+          "CATALOG_OFFER_PRODUCT_MAPPING_CHANGED",
+          catalogOfferProductMappingChangedMessage,
+        );
       }
 
       const existingMapping = await this.options.repository.getOfferMapping({
@@ -416,8 +433,9 @@ export class CatalogSyncService {
         supplierOfferId: offer.supplierOfferId,
       });
       if (existingMapping && existingMapping !== offer.supplierProductId) {
-        throw new Error(
-          "Supplier offer/product mapping changed without reconciliation",
+        throw new CatalogSyncError(
+          "CATALOG_OFFER_PRODUCT_MAPPING_CHANGED",
+          catalogOfferProductMappingChangedMessage,
         );
       }
 

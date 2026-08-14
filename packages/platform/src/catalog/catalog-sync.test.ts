@@ -11,6 +11,7 @@ import {
 import {
   CatalogSyncService,
   StaticCatalogOfferDiscovery,
+  catalogOfferProductMappingChangedMessage,
   createOfferPriceSnapshot,
   createPriceRevalidationJobPayload,
 } from "./synchronization.js";
@@ -100,7 +101,7 @@ describe("catalog synchronization foundation", () => {
     ).resolves.toBe(firstOffer.supplierProductId);
   });
 
-  it("fails closed if an offer mapping moves to another product without reconciliation", async () => {
+  it("fails closed deterministically if an offer mapping moves to another product without reconciliation", async () => {
     const fixtures = createGeneratedMockSupplierFixtures({
       productCount: 2,
       seed: "swap",
@@ -113,19 +114,28 @@ describe("catalog synchronization foundation", () => {
       offerDiscovery: new StaticCatalogOfferDiscovery(normalOffers),
       repository,
     }).runFullSync(supplier);
+    const originalOffer = requiredOffer(normalOffers[0] ?? null);
+    const otherProductOffer = findOfferForDifferentProduct(
+      normalOffers,
+      originalOffer.supplierProductId,
+    );
+    const originalCheckpoint = await repository.getCheckpoint({
+      mode: "FULL",
+      supplierId: supplier.identity.supplierId,
+    });
 
     const moved = {
-      ...requiredOffer(normalOffers[0] ?? null),
-      supplierProductId: requiredOffer(normalOffers[1] ?? null)
-        .supplierProductId,
+      ...originalOffer,
+      supplierProductId: otherProductOffer.supplierProductId,
     };
     const service = new CatalogSyncService({
       eligibilityEngine: new GermanyEligibilityEngine(),
       offerDiscovery: new StaticCatalogOfferDiscovery([moved]),
+      now: () => new Date("2026-08-14T10:05:00.000Z"),
       repository,
     });
     const secondProduct = await supplier.getProduct(
-      requiredFixture(fixtures.products[1]).supplierProductId,
+      otherProductOffer.supplierProductId,
     );
 
     const result = await service.ingestWebhook({
@@ -135,7 +145,32 @@ describe("catalog synchronization foundation", () => {
     });
 
     expect(result.run.status).toBe("FAILED");
-    expect(result.run.errorMessage).toMatch(/mapping (changed|mismatch)/u);
+    expect(result.run.errorMessage).toBe(
+      catalogOfferProductMappingChangedMessage,
+    );
+    await expect(
+      repository.getOfferMapping({
+        supplierId: supplier.identity.supplierId,
+        supplierOfferId: originalOffer.supplierOfferId,
+      }),
+    ).resolves.toBe(originalOffer.supplierProductId);
+    await expect(
+      repository.getCheckpoint({
+        mode: "FULL",
+        supplierId: supplier.identity.supplierId,
+      }),
+    ).resolves.toEqual(originalCheckpoint);
+
+    const repeated = await service.ingestWebhook({
+      offers: [moved],
+      product: requiredProduct(secondProduct),
+      supplier,
+    });
+
+    expect(repeated.run.status).toBe("FAILED");
+    expect(repeated.run.errorMessage).toBe(
+      catalogOfferProductMappingChangedMessage,
+    );
   });
 
   it("advances incremental checkpoints only after success", async () => {
@@ -330,6 +365,19 @@ const requiredProduct = (
     throw new Error("Expected normalized supplier product fixture");
   }
   return product;
+};
+
+const findOfferForDifferentProduct = (
+  offers: readonly NormalizedSupplierOffer[],
+  supplierProductId: string,
+): NormalizedSupplierOffer => {
+  const offer = offers.find(
+    (candidate) => candidate.supplierProductId !== supplierProductId,
+  );
+  if (!offer) {
+    throw new Error("Expected generated fixture with another product offer");
+  }
+  return offer;
 };
 
 const requiredFixture = <TFixture>(fixture: TFixture | undefined): TFixture => {

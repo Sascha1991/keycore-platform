@@ -7,6 +7,7 @@ import {
   CatalogSyncService,
   GermanyEligibilityEngine,
   StaticCatalogOfferDiscovery,
+  catalogOfferProductMappingChangedMessage,
   germanyEligibilityPolicyVersion,
   type NormalizedSupplierOffer,
 } from "../../packages/platform/src/contracts.js";
@@ -137,31 +138,65 @@ describePostgres("PostgreSQL catalog synchronization persistence", () => {
       offerDiscovery: new StaticCatalogOfferDiscovery(normalized),
       repository,
     }).runFullSync(supplier);
+    const originalOffer = requiredNormalizedOffer(normalized[0]);
+    const otherProductOffer = findOfferForDifferentProduct(
+      normalized,
+      originalOffer.supplierProductId,
+    );
+    const originalCheckpoint = await repository.getCheckpoint({
+      mode: "FULL",
+      supplierId: supplier.identity.supplierId,
+    });
 
     const moved = {
-      ...requiredNormalizedOffer(normalized[0]),
-      supplierProductId: requiredNormalizedOffer(normalized[1])
-        .supplierProductId,
+      ...originalOffer,
+      supplierProductId: otherProductOffer.supplierProductId,
     };
     const product = await supplier.getProduct(
-      requiredFixture(fixtures.products[1]).supplierProductId,
+      otherProductOffer.supplierProductId,
     );
     if (!product) {
       throw new Error("Expected generated product");
     }
 
-    const result = await new CatalogSyncService({
+    const service = new CatalogSyncService({
       eligibilityEngine: new GermanyEligibilityEngine(),
       offerDiscovery: new StaticCatalogOfferDiscovery([moved]),
       repository,
-    }).ingestWebhook({
+    });
+    const result = await service.ingestWebhook({
       offers: [moved],
       product,
       supplier,
     });
 
     expect(result.run.status).toBe("FAILED");
-    expect(result.run.errorMessage).toContain("mapping changed");
+    expect(result.run.errorMessage).toBe(
+      catalogOfferProductMappingChangedMessage,
+    );
+    await expect(
+      repository.getOfferMapping({
+        supplierId: supplier.identity.supplierId,
+        supplierOfferId: originalOffer.supplierOfferId,
+      }),
+    ).resolves.toBe(originalOffer.supplierProductId);
+    await expect(
+      repository.getCheckpoint({
+        mode: "FULL",
+        supplierId: supplier.identity.supplierId,
+      }),
+    ).resolves.toEqual(originalCheckpoint);
+
+    const repeated = await service.ingestWebhook({
+      offers: [moved],
+      product,
+      supplier,
+    });
+
+    expect(repeated.run.status).toBe("FAILED");
+    expect(repeated.run.errorMessage).toBe(
+      catalogOfferProductMappingChangedMessage,
+    );
   });
 });
 
@@ -184,6 +219,19 @@ const requiredNormalizedOffer = (
 ): NormalizedSupplierOffer => {
   if (!offer) {
     throw new Error("Expected normalized supplier offer fixture");
+  }
+  return offer;
+};
+
+const findOfferForDifferentProduct = (
+  offers: readonly NormalizedSupplierOffer[],
+  supplierProductId: string,
+): NormalizedSupplierOffer => {
+  const offer = offers.find(
+    (candidate) => candidate.supplierProductId !== supplierProductId,
+  );
+  if (!offer) {
+    throw new Error("Expected generated fixture with another product offer");
   }
   return offer;
 };
