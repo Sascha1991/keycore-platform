@@ -12,6 +12,7 @@ export interface PostgresTestDatabaseOptions {
 export class PostgresTestDatabase {
   private readonly client: Client;
   private readonly appliedMigrations: Migration[] = [];
+  private queryQueue: Promise<unknown> = Promise.resolve();
   private connected = false;
 
   public constructor(private readonly options: PostgresTestDatabaseOptions) {
@@ -42,7 +43,11 @@ export class PostgresTestDatabase {
     sql: string,
     values?: readonly unknown[],
   ): Promise<QueryResult<TResult>> {
-    return this.client.query<TResult>(sql, values ? [...values] : undefined);
+    const query = this.queryQueue.then(() =>
+      this.client.query<TResult>(sql, values ? [...values] : undefined),
+    );
+    this.queryQueue = query.catch(() => undefined);
+    return query;
   }
 
   public async applyAllMigrations(): Promise<void> {
