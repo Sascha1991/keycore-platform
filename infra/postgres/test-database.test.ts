@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
+import { loadMigrations } from "./migrations.js";
 import { PostgresTestDatabase } from "./test-database.js";
 
 const databaseUrl = process.env.KEYCORE_TEST_DATABASE_URL;
@@ -9,6 +10,7 @@ const describePostgres = databaseUrl ? describe : describe.skip;
 
 describePostgres("PostgreSQL integration test database bootstrap", () => {
   it("initializes isolated schemas concurrently without racing pgcrypto", async () => {
+    const expectedMigrationCount = String((await loadMigrations()).length);
     const leftSchema = `ks_bootstrap_left_${randomUUID().replaceAll("-", "_")}`;
     const rightSchema = `ks_bootstrap_right_${randomUUID().replaceAll("-", "_")}`;
     const [left, right] = await Promise.all([
@@ -32,8 +34,12 @@ describePostgres("PostgreSQL integration test database bootstrap", () => {
       await expect(tableExists(left, rightSchema, "suppliers")).resolves.toBe(
         true,
       );
-      await expect(schemaMigrationCount(left)).resolves.toBe("5");
-      await expect(schemaMigrationCount(right)).resolves.toBe("5");
+      await expect(schemaMigrationCount(left)).resolves.toBe(
+        expectedMigrationCount,
+      );
+      await expect(schemaMigrationCount(right)).resolves.toBe(
+        expectedMigrationCount,
+      );
       await expect(pgcryptoCount(left)).resolves.toBe("1");
 
       await left.query(
@@ -47,7 +53,9 @@ describePostgres("PostgreSQL integration test database bootstrap", () => {
       await expect(tableExists(right, rightSchema, "suppliers")).resolves.toBe(
         true,
       );
-      await expect(schemaMigrationCount(right)).resolves.toBe("5");
+      await expect(schemaMigrationCount(right)).resolves.toBe(
+        expectedMigrationCount,
+      );
       await expect(pgcryptoCount(right)).resolves.toBe("1");
     } finally {
       await left.cleanup();
