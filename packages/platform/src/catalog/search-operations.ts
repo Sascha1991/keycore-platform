@@ -443,14 +443,7 @@ export const computeSearchRank = (
   if (document.normalizedSearchTitle.startsWith(normalizedQuery)) {
     return rank(document, 1);
   }
-  const searchable = [
-    document.normalizedSearchTitle,
-    document.productType,
-    document.edition,
-    ...document.platforms,
-  ]
-    .join(" ")
-    .toLowerCase();
+  const searchable = createCatalogSearchDocumentSourceText(document);
   const tokens = normalizedQuery.split(" ");
   if (tokens.every((token) => searchable.includes(token))) {
     return rank(document, 2);
@@ -538,6 +531,26 @@ export const sanitizeSearchQuery = (
 
 export const normalizeSearchText = (value: string): string =>
   normalizeProductTitle(value).replace(/[^\p{Letter}\p{Number}\s]+/gu, " ");
+
+export const createCatalogSearchDocumentSourceText = (
+  document: Pick<
+    CatalogSearchDocument,
+    | "canonicalTitle"
+    | "normalizedSearchTitle"
+    | "productType"
+    | "edition"
+    | "platforms"
+  >,
+): string =>
+  [
+    document.canonicalTitle,
+    document.normalizedSearchTitle,
+    document.productType,
+    document.edition,
+    ...[...document.platforms].sort(),
+  ]
+    .join(" ")
+    .toLowerCase();
 
 export const shouldReevaluateStorefront = (
   categories: readonly CatalogChangeCategory[],

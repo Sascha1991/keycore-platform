@@ -1,6 +1,7 @@
 import {
   catalogSearchPolicyVersion,
   computeSearchRank,
+  createCatalogSearchDocumentSourceText,
   documentMatchesQuery,
   pageSearchResults,
   sortSearchResults,
@@ -79,9 +80,10 @@ export class PostgresCatalogSearchRepository
         INSERT INTO catalog_search_documents(
           product_id, canonical_title, normalized_search_title, product_type,
           platforms, edition, active, germany_publishable,
-          storefront_publication_state, updated_at, search_document_version
+          storefront_publication_state, updated_at, search_document_version,
+          search_text
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_tsvector('simple', $12))
         ON CONFLICT (product_id)
         DO UPDATE SET
           canonical_title = EXCLUDED.canonical_title,
@@ -93,20 +95,22 @@ export class PostgresCatalogSearchRepository
           germany_publishable = EXCLUDED.germany_publishable,
           storefront_publication_state = EXCLUDED.storefront_publication_state,
           updated_at = EXCLUDED.updated_at,
-          search_document_version = EXCLUDED.search_document_version
+          search_document_version = EXCLUDED.search_document_version,
+          search_text = EXCLUDED.search_text
       `,
       [
         document.productId,
         document.canonicalTitle,
         document.normalizedSearchTitle,
         document.productType,
-        [...document.platforms],
+        [...document.platforms].sort(),
         document.edition,
         document.active,
         document.germanyPublishable,
         document.storefrontPublicationState ?? null,
         document.updatedAt,
         document.searchDocumentVersion,
+        createCatalogSearchDocumentSourceText(document),
       ],
     );
     return JSON.stringify(prior) !== JSON.stringify(document);

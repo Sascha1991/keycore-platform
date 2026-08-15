@@ -70,6 +70,61 @@ describe.skipIf(!connectionString)("PostgresCatalogSearchRepository", () => {
       expect(next.items.map((item) => item.document.productId)).not.toContain(
         firstProductId,
       );
+      await expect(
+        searchVectorText(database, firstProductId),
+      ).resolves.toContain("postgres");
+      await expect(searchGinIndexCount(database)).resolves.toBe(1);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("refreshes search_text when canonical title or platform changes", async () => {
+    const database = await initDatabase();
+    try {
+      const repository = new PostgresCatalogSearchRepository(database);
+      const canonicalProductId = await insertCanonicalProduct(database, {
+        title: "Original Search Title",
+        platform: "WINDOWS",
+        edition: "STANDARD",
+        active: true,
+      });
+      const service = new CatalogOperationsService({
+        projectionRepository: repository,
+        projectionSource: repository,
+      });
+
+      await service.refreshProduct({
+        correlationId: correlationId("postgres-search-vector-initial"),
+        productId: canonicalProductId,
+      });
+      await database.query(
+        `
+          UPDATE products
+          SET title = 'Updated Vector Title',
+            platform = 'LINUX,WINDOWS',
+            updated_at = now()
+          WHERE id = $1
+        `,
+        [canonicalProductId],
+      );
+      await service.refreshProduct({
+        correlationId: correlationId("postgres-search-vector-updated"),
+        productId: canonicalProductId,
+      });
+
+      const vector = await searchVectorText(database, canonicalProductId);
+      const search = new CatalogSearchService({ repository });
+      const page = await search.search({
+        platforms: ["LINUX"],
+        text: "updated vector",
+      });
+
+      expect(vector).toContain("updated");
+      expect(vector).toContain("linux");
+      expect(page.items.map((item) => item.document.productId)).toEqual([
+        canonicalProductId,
+      ]);
     } finally {
       await database.cleanup();
     }
@@ -125,6 +180,42 @@ describe.skipIf(!connectionString)("PostgresCatalogSearchRepository", () => {
     }
   });
 });
+
+const searchVectorText = async (
+  database: PostgresTestDatabase,
+  canonicalProductId: ReturnType<typeof productId>,
+): Promise<string> => {
+  const result = await database.query<{ readonly vector_text: string }>(
+    `
+      SELECT search_text::text AS vector_text
+      FROM catalog_search_documents
+      WHERE product_id = $1
+    `,
+    [canonicalProductId],
+  );
+  const vector = result.rows[0]?.vector_text;
+  if (!vector) {
+    throw new Error("Expected persisted search_text vector");
+  }
+  return vector;
+};
+
+const searchGinIndexCount = async (
+  database: PostgresTestDatabase,
+): Promise<number> => {
+  const result = await database.query<{ readonly index_count: string }>(
+    `
+      SELECT count(*)::text AS index_count
+      FROM pg_indexes
+      WHERE schemaname = $1
+        AND tablename = 'catalog_search_documents'
+        AND indexname = 'catalog_search_documents_text_idx'
+        AND indexdef ILIKE '%USING gin%'
+    `,
+    [database.schemaName],
+  );
+  return Number.parseInt(result.rows[0]?.index_count ?? "0", 10);
+};
 
 const initDatabase = async (): Promise<PostgresTestDatabase> =>
   PostgresTestDatabase.initialize({

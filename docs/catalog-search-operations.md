@@ -40,7 +40,9 @@ It does not store API keys, supplier credentials, product keys, supplier cost, r
 
 ## PostgreSQL Index Strategy
 
-Migration `006_catalog_search_operations` adds `catalog_search_documents`, `catalog_operations`, normalized title prefix indexing, exact filter indexing, GIN platform indexing and a generated `tsvector` search document with a GIN index.
+Migration `006_catalog_search_operations` adds `catalog_search_documents`, `catalog_operations`, normalized title prefix indexing, exact filter indexing, GIN platform indexing and a normal persisted `tsvector` search document with a GIN index.
+
+`search_text` is not a generated column. The projection writer builds one deterministic source string from canonical title, normalized title, product type, edition and stably sorted platforms, then writes `to_tsvector('simple', sourceText)` during insert/upsert. This keeps the read model rebuildable while respecting PostgreSQL generated-column immutability rules.
 
 PostgreSQL remains the native search foundation for KS-05-04. Elasticsearch/OpenSearch/Meilisearch are not introduced.
 
@@ -95,7 +97,7 @@ Supplier adapters never call WooCommerce directly.
 
 ## Scale Characteristics
 
-The unit suite includes deterministic synthetic 50,000-product coverage. Local measurement during implementation rebuilt 50,000 in-memory projections in 419 ms, performed exact lookup in 0.04 ms, ran a paginated filtered text query in 82.03 ms and refreshed one product in 0.12 ms. CI does not assert fragile millisecond thresholds.
+The unit suite includes deterministic synthetic 50,000-product coverage. Local measurement during PR #11 hardening rebuilt 50,000 in-memory projections in 418 ms, performed exact lookup in 0.05 ms, ran a paginated filtered text query in 83.8 ms and refreshed one product in 0.15 ms. CI does not assert fragile millisecond thresholds.
 
 ## Security
 

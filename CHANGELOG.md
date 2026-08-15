@@ -7,6 +7,7 @@
   - added deterministic ranking, bounded cursor pagination and safe filter support;
   - added restartable reindex and targeted refresh operations with durable checkpoints;
   - added safe catalog-change, webhook refresh-signal and storefront re-evaluation payloads;
+  - hardened the PostgreSQL search projection to persist `search_text` explicitly instead of using a generated `tsvector` column rejected by PostgreSQL 16;
   - kept live WooCommerce, live Kinguin bulk crawl, GAMIVO, checkout, procurement and Phase 06 out of scope.
 - Implemented `KS-05-03` WooCommerce storefront publication foundation:
   - added supplier-neutral storefront publication state machine, eligibility evaluation and price boundary;

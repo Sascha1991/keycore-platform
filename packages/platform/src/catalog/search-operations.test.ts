@@ -10,6 +10,7 @@ import {
   CatalogSearchService,
   catalogSearchPolicyVersion,
   catalogSearchRefreshJobPayload,
+  createCatalogSearchDocumentSourceText,
   createCatalogProductChangedEvent,
   shouldReevaluateStorefront,
   type CatalogSearchDocument,
@@ -434,6 +435,21 @@ describe("Catalog change helpers", () => {
     expect(shouldReevaluateStorefront(["TITLE"])).toBe(true);
     expect(shouldReevaluateStorefront(["AVAILABILITY"])).toBe(true);
     expect(shouldReevaluateStorefront(["WEBHOOK_REFRESH_SIGNAL"])).toBe(false);
+  });
+
+  it("builds deterministic search source text with stable platform ordering", () => {
+    const left = document({
+      platforms: ["LINUX", "WINDOWS"],
+      productId: uuidProduct(1),
+    });
+    const right = document({
+      platforms: ["WINDOWS", "LINUX"],
+      productId: uuidProduct(2),
+    });
+
+    expect(createCatalogSearchDocumentSourceText(left)).toBe(
+      createCatalogSearchDocumentSourceText(right),
+    );
   });
 });
 

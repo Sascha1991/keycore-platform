@@ -10,13 +10,7 @@ CREATE TABLE catalog_search_documents (
   storefront_publication_state TEXT,
   updated_at TIMESTAMPTZ NOT NULL,
   search_document_version TEXT NOT NULL,
-  search_text TSVECTOR GENERATED ALWAYS AS (
-    to_tsvector(
-      'simple',
-      canonical_title || ' ' || normalized_search_title || ' ' ||
-      product_type || ' ' || edition || ' ' || array_to_string(platforms, ' ')
-    )
-  ) STORED,
+  search_text TSVECTOR NOT NULL,
   CONSTRAINT catalog_search_documents_version_check CHECK (search_document_version = 'catalog-search-v1')
 );
 
