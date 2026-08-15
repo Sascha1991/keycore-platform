@@ -213,11 +213,19 @@ const searchGinIndexCount = async (
   const result = await database.query<{ readonly index_count: string }>(
     `
       SELECT count(*)::text AS index_count
-      FROM pg_indexes
-      WHERE schemaname = $1
-        AND tablename = 'catalog_search_documents'
-        AND indexname = 'catalog_search_documents_text_idx'
-        AND indexdef ILIKE '%USING gin%'
+      FROM pg_class index_class
+      JOIN pg_namespace namespace
+        ON namespace.oid = index_class.relnamespace
+      JOIN pg_index index_metadata
+        ON index_metadata.indexrelid = index_class.oid
+      JOIN pg_class table_class
+        ON table_class.oid = index_metadata.indrelid
+      JOIN pg_am access_method
+        ON access_method.oid = index_class.relam
+      WHERE namespace.nspname = $1
+        AND table_class.relname = 'catalog_search_documents'
+        AND index_class.relname = 'catalog_search_documents_text_idx'
+        AND access_method.amname = 'gin'
     `,
     [database.schemaName],
   );

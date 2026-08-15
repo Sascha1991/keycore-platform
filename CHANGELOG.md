@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Implemented `KS-06-01` pricing and margin foundation:
+  - added supplier-neutral `pricing-policy-v1` pricing with integer minor-unit `Money` calculations;
+  - added fee, tax and FX boundaries that fail closed for unknown or stale inputs;
+  - added durable global pricing policies, product overrides, manual sell prices and price snapshots;
+  - hardened manual sell-price persistence so configured manual prices must be greater than zero at domain, repository, PostgreSQL and hydration boundaries;
+  - added deterministic multi-offer safe quote selection behind the storefront price boundary;
+  - added audit-safe pricing events, safe recalculation payloads and 50,000-offer synthetic pricing coverage;
+  - kept admin UI, checkout, payment, procurement, GAMIVO, live FX, production VAT assumptions and live WooCommerce out of scope.
 - Implemented `KS-05-04` catalog search and incremental operations foundation:
   - added PostgreSQL-native, supplier-neutral search projections with `catalog-search-v1`;
   - added deterministic ranking, bounded cursor pagination and safe filter support;
