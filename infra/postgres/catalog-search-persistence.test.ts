@@ -48,7 +48,7 @@ describe.skipIf(!connectionString)("PostgresCatalogSearchRepository", () => {
       });
 
       const search = new CatalogSearchService({ repository });
-      const page = await search.search({
+      const filteredPage = await search.search({
         editions: ["DELUXE"],
         germanyPublishable: true,
         limit: 1,
@@ -56,20 +56,25 @@ describe.skipIf(!connectionString)("PostgresCatalogSearchRepository", () => {
         publicationStates: ["PUBLISHED"],
         text: "postgres search",
       });
-      const next = await search.search({
-        ...(page.nextCursor ? { cursor: page.nextCursor } : {}),
+      const firstPage = await search.search({
+        limit: 1,
+        text: "postgres search",
+      });
+      const secondPage = await search.search({
+        ...(firstPage.nextCursor ? { cursor: firstPage.nextCursor } : {}),
         limit: 1,
         text: "postgres search",
       });
 
-      expect(page.items).toHaveLength(1);
-      expect(page.items[0]?.document).toMatchObject({
+      expect(filteredPage.items).toHaveLength(1);
+      expect(filteredPage.items[0]?.document).toMatchObject({
         productId: firstProductId,
         searchDocumentVersion: catalogSearchPolicyVersion,
       });
-      expect(next.items.map((item) => item.document.productId)).not.toContain(
-        firstProductId,
-      );
+      expect(firstPage.nextCursor).toBeDefined();
+      expect(
+        secondPage.items.map((item) => item.document.productId),
+      ).not.toEqual(firstPage.items.map((item) => item.document.productId));
       await expect(
         searchVectorText(database, firstProductId),
       ).resolves.toContain("postgres");

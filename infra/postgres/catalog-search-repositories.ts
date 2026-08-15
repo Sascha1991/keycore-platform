@@ -83,7 +83,7 @@ export class PostgresCatalogSearchRepository
           storefront_publication_state, updated_at, search_document_version,
           search_text
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_tsvector('simple', $12))
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_tsvector('simple'::regconfig, $12::text))
         ON CONFLICT (product_id)
         DO UPDATE SET
           canonical_title = EXCLUDED.canonical_title,
@@ -324,7 +324,7 @@ const buildWhere = (
   }
   if (query.text) {
     add(
-      "(normalized_search_title LIKE ? OR search_text @@ plainto_tsquery('simple', ?))",
+      "(normalized_search_title LIKE ? OR search_text @@ plainto_tsquery('simple'::regconfig, ?::text))",
       `${query.text}%`,
     );
     values.push(query.text);
