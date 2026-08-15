@@ -90,6 +90,7 @@ export class PostgresOrderRepository implements OrderRepository {
     readonly now: Date;
   }): Promise<OrderCreatePersistenceResult> {
     return this.db.transaction(async (client) => {
+      await lockOrderIdempotencyKey(client, input.order.idempotencyKey);
       const existing = await findByIdempotencyKey(
         client,
         input.order.idempotencyKey,
@@ -352,6 +353,15 @@ const findByIdempotencyKey = async (
   );
   const row = result.rows[0];
   return row ? orderFromRow(row) : null;
+};
+
+const lockOrderIdempotencyKey = async (
+  db: Queryable,
+  idempotencyKey: string,
+): Promise<void> => {
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 7001))", [
+    idempotencyKey,
+  ]);
 };
 
 const insertHistory = async (

@@ -101,6 +101,20 @@ CREATE TABLE keycore_orders (
   CONSTRAINT keycore_orders_fulfillment_gate_check CHECK (
     fulfillment_status <> 'SUCCEEDED'
     OR procurement_status = 'SUCCEEDED'
+  ),
+  CONSTRAINT keycore_orders_completed_state_check CHECK (
+    status <> 'COMPLETED'
+    OR (
+      fulfillment_status = 'SUCCEEDED'
+      AND procurement_status = 'SUCCEEDED'
+    )
+  ),
+  CONSTRAINT keycore_orders_refunded_state_check CHECK (
+    status <> 'REFUNDED'
+    OR (
+      refund_status = 'SUCCEEDED'
+      AND payment_status = 'REFUNDED'
+    )
   )
 );
 

@@ -124,11 +124,12 @@ For KS-07-01, quantity is limited to `1`. Unsupported quantity returns `UNSUPPOR
 
 PostgreSQL order creation uses one transaction:
 
-1. read existing order by idempotency key;
-2. atomically update the matching active `price_locks` row to `CONSUMED`;
-3. insert the `keycore_orders` row;
-4. insert transition history;
-5. insert the transactional outbox event.
+1. take a transaction-scoped PostgreSQL advisory lock derived from the order idempotency key;
+2. read existing order by idempotency key;
+3. atomically update the matching active `price_locks` row to `CONSUMED`;
+4. insert the `keycore_orders` row;
+5. insert transition history;
+6. insert the transactional outbox event.
 
 If the lock cannot be claimed, no order is inserted. If the order cannot be inserted, the lock claim rolls back. A unique index on `keycore_orders.price_lock_id` prevents two orders from owning the same single-use lock.
 
@@ -142,7 +143,9 @@ Order creation requires an idempotency key. The idempotency fingerprint is deriv
 - expected customer amount;
 - expected currency.
 
-Same key and same fingerprint returns the same logical `OrderId`. Same key and different fingerprint returns `ORDER_IDEMPOTENCY_CONFLICT`. The service rechecks idempotency after lock-consumption races so concurrent retry storms converge on one logical order.
+Same key and same fingerprint returns the same logical `OrderId`. Same key and different fingerprint returns `ORDER_IDEMPOTENCY_CONFLICT`. The PostgreSQL repository serializes only callers with the same order idempotency key by calling `pg_advisory_xact_lock(hashtextextended(idempotencyKey, 7001))` inside the creation transaction before claiming any price lock.
+
+This prevents same-key requests using different price locks from both claiming locks and then racing on `keycore_orders.idempotency_key`. Losing conflicting callers read the canonical order, return `ORDER_IDEMPOTENCY_CONFLICT` and leave their unchosen price locks active.
 
 ## Payment and Risk Gating
 
@@ -227,7 +230,7 @@ Migration `009_order_orchestration` adds:
 - `order_transition_history`;
 - `external_event_receipts`.
 
-Constraints enforce valid states, positive money, `quantity = 1`, optimistic record versions, idempotency uniqueness, single price-lock ownership and active procurement payment/risk gates. A trigger rejects updates to immutable commercial fields.
+Constraints enforce valid states, positive money, `quantity = 1`, optimistic record versions, idempotency uniqueness, single price-lock ownership, active procurement payment/risk gates, completed-order fulfillment/procurement consistency and refunded-order refund/payment consistency. A trigger rejects updates to immutable commercial fields.
 
 ## Phase 07 Boundaries
 

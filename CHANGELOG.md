@@ -6,6 +6,7 @@
   - added KeyCore-owned order state machine with payment, procurement, fulfillment, risk and refund sub-states;
   - added atomic PostgreSQL order creation that claims a single-use price lock and writes transactional outbox intent;
   - added order idempotency, external event deduplication, transition history and optimistic concurrency handling;
+  - hardened concurrent same-key order idempotency across different price locks with transaction-scoped PostgreSQL advisory locking;
   - added procurement payment/risk gates, ambiguous-procurement manual-review behavior and refund lifecycle modeling;
   - added reversible PostgreSQL `keycore_orders`, `order_transition_history` and `external_event_receipts` migration;
   - kept real Stripe, live supplier purchase, product-key retrieval, invoice creation, WooCommerce order authority and KS-07-02 out of scope.

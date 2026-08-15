@@ -146,6 +146,62 @@ describePostgres("PostgresOrderRepository", () => {
     }
   });
 
+  it("returns idempotency conflicts without consuming losing locks when the same key races across different PriceLocks", async () => {
+    const database = await initDatabase();
+    try {
+      const product = await insertFixtureProduct(database);
+      const locks = await Promise.all(
+        Array.from({ length: 10 }, () => createActiveLock(database, product)),
+      );
+      const results = await Promise.all(
+        locks.map((lock) =>
+          withOrderClient(database.schemaName, (service) =>
+            service.createOrder({
+              correlationId,
+              idempotencyKey: "same-key-different-locks",
+              priceLockId: lock.id,
+              productId: product,
+              quantity: 1,
+            }),
+          ),
+        ),
+      );
+
+      expect(
+        results.filter((result) => result.status === "CREATED"),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "CONFLICT"),
+      ).toHaveLength(9);
+      expect(
+        results
+          .filter((result) => result.status === "CONFLICT")
+          .every(
+            (result) => result.reasonCode === "ORDER_IDEMPOTENCY_CONFLICT",
+          ),
+      ).toBe(true);
+      expect(new Set(results.map((result) => result.order?.id)).size).toBe(1);
+      await expect(orderCount(database)).resolves.toBe(1);
+      const winningOrder = required(
+        results.find((result) => result.status === "CREATED")?.order,
+      );
+      await expect(outboxCount(database, winningOrder.id)).resolves.toBe(1);
+      await expect(historyCount(database, winningOrder.id)).resolves.toBe(1);
+      const lockStates = await priceLockStates(
+        database,
+        locks.map((lock) => lock.id),
+      );
+      expect(lockStates.get(winningOrder.priceLockId)).toBe("CONSUMED");
+      expect(
+        [...lockStates.entries()]
+          .filter(([lockId]) => lockId !== winningOrder.priceLockId)
+          .every((entry) => entry[1] === "ACTIVE"),
+      ).toBe(true);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("returns stable idempotency conflicts for conflicting reuse after creation", async () => {
     const database = await initDatabase();
     try {
@@ -275,6 +331,95 @@ describePostgres("PostgresOrderRepository", () => {
     }
   });
 
+  it("deduplicates concurrent identical external event receipts without raw database errors", async () => {
+    const database = await initDatabase();
+    try {
+      const product = await insertFixtureProduct(database);
+      const lock = await createActiveLock(database, product);
+      const order = await createOrder(
+        database,
+        product,
+        lock.id,
+        "receipt-race",
+      );
+      const results = await Promise.all(
+        Array.from({ length: 10 }, () =>
+          withOrderClient(database.schemaName, (service) =>
+            service.recordExternalEvent({
+              correlationId,
+              eventFingerprint: "same-event-race",
+              eventType: "payment.updated",
+              externalEventId: "evt-receipt-race",
+              orderId: order.id,
+              provider: "mock-payment",
+            }),
+          ),
+        ),
+      );
+
+      expect(
+        results.filter((result) => result.status === "RECORDED"),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "DUPLICATE"),
+      ).toHaveLength(9);
+      await expect(
+        externalReceiptCount(database, "mock-payment", "evt-receipt-race"),
+      ).resolves.toBe(1);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("returns concurrent external event conflicts for reused identity with changed fingerprints", async () => {
+    const database = await initDatabase();
+    try {
+      const product = await insertFixtureProduct(database);
+      const lock = await createActiveLock(database, product);
+      const order = await createOrder(
+        database,
+        product,
+        lock.id,
+        "receipt-conflict-race",
+      );
+      const results = await Promise.all(
+        Array.from({ length: 10 }, (_value, index) =>
+          withOrderClient(database.schemaName, (service) =>
+            service.recordExternalEvent({
+              correlationId,
+              eventFingerprint: `event-fingerprint-${index}`,
+              eventType: "payment.updated",
+              externalEventId: "evt-receipt-conflict-race",
+              orderId: order.id,
+              provider: "mock-payment",
+            }),
+          ),
+        ),
+      );
+
+      expect(
+        results.filter((result) => result.status === "RECORDED"),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "CONFLICT"),
+      ).toHaveLength(9);
+      expect(
+        results
+          .filter((result) => result.status === "CONFLICT")
+          .every((result) => result.reasonCode === "EXTERNAL_EVENT_CONFLICT"),
+      ).toBe(true);
+      await expect(
+        externalReceiptCount(
+          database,
+          "mock-payment",
+          "evt-receipt-conflict-race",
+        ),
+      ).resolves.toBe(1);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("allows one concurrent refund request and keeps commercial fields immutable", async () => {
     const database = await initDatabase();
     try {
@@ -331,6 +476,52 @@ describePostgres("PostgresOrderRepository", () => {
             VALUES ($1, $2, 1300, 'EUR', 1, 'PROCUREMENT_IN_PROGRESS',
               'PENDING', 'IN_PROGRESS', 'NOT_STARTED', 'APPROVED',
               'NOT_REQUESTED', 1, 'bad-state', 'bad-fingerprint',
+              $3, $4, $4)
+          `,
+          [
+            product,
+            lock.id,
+            correlationId,
+            new Date("2026-08-15T00:00:00.000Z"),
+          ],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `
+            INSERT INTO keycore_orders(
+              product_id, price_lock_id, customer_amount_minor, currency,
+              quantity, status, payment_status, procurement_status,
+              fulfillment_status, risk_status, refund_status, record_version,
+              idempotency_key, idempotency_fingerprint, correlation_id,
+              created_at, updated_at
+            )
+            VALUES ($1, $2, 1300, 'EUR', 1, 'COMPLETED',
+              'CAPTURED', 'IN_PROGRESS', 'SUCCEEDED', 'APPROVED',
+              'NOT_REQUESTED', 1, 'bad-completed', 'bad-fingerprint',
+              $3, $4, $4)
+          `,
+          [
+            product,
+            lock.id,
+            correlationId,
+            new Date("2026-08-15T00:00:00.000Z"),
+          ],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `
+            INSERT INTO keycore_orders(
+              product_id, price_lock_id, customer_amount_minor, currency,
+              quantity, status, payment_status, procurement_status,
+              fulfillment_status, risk_status, refund_status, record_version,
+              idempotency_key, idempotency_fingerprint, correlation_id,
+              created_at, updated_at
+            )
+            VALUES ($1, $2, 1300, 'EUR', 1, 'REFUNDED',
+              'CAPTURED', 'SUCCEEDED', 'SUCCEEDED', 'APPROVED',
+              'PENDING', 1, 'bad-refunded', 'bad-fingerprint',
               $3, $4, $4)
           `,
           [
@@ -612,6 +803,19 @@ const priceLockStatus = async (
   return result.rows[0]?.status ?? "";
 };
 
+const priceLockStates = async (
+  database: PostgresTestDatabase,
+  lockIds: readonly string[],
+): Promise<ReadonlyMap<string, string>> => {
+  const result = await database.query<{
+    readonly id: string;
+    readonly status: string;
+  }>("SELECT id::text, status FROM price_locks WHERE id = ANY($1::uuid[])", [
+    lockIds,
+  ]);
+  return new Map(result.rows.map((row) => [row.id, row.status]));
+};
+
 const orderCount = async (database: PostgresTestDatabase): Promise<number> => {
   const result = await database.query<{ readonly count: string }>(
     "SELECT count(*)::text FROM keycore_orders",
@@ -637,6 +841,22 @@ const outboxCount = async (
   const result = await database.query<{ readonly count: string }>(
     "SELECT count(*)::text FROM outbox_events WHERE aggregate_id = $1",
     [requestedOrderId],
+  );
+  return Number.parseInt(result.rows[0]?.count ?? "0", 10);
+};
+
+const externalReceiptCount = async (
+  database: PostgresTestDatabase,
+  provider: string,
+  externalEventId: string,
+): Promise<number> => {
+  const result = await database.query<{ readonly count: string }>(
+    `
+      SELECT count(*)::text
+      FROM external_event_receipts
+      WHERE provider = $1 AND external_event_id = $2
+    `,
+    [provider, externalEventId],
   );
   return Number.parseInt(result.rows[0]?.count ?? "0", 10);
 };
