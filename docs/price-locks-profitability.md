@@ -89,11 +89,19 @@ Lock creation requires an idempotency key. Repeating the same key with the same 
 
 The idempotency fingerprint is derived from non-secret quote identity, price, policy/tax/FX versions and expiry.
 
+PostgreSQL creation uses an atomic idempotent insert. The repository attempts `INSERT ... ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING ...`; when another application instance wins the race, it reads the persisted row and compares `idempotency_fingerprint`.
+
+If the fingerprint matches, the caller receives the existing logical lock. If it differs, the caller receives `IDEMPOTENCY_CONFLICT`. Raw unique-constraint errors are not part of the application idempotency contract.
+
+The database keeps nullable idempotency columns for future migration or administrative compatibility, but the tuple is atomic: either both `idempotency_key` and `idempotency_fingerprint` are null, or both are present. The service-created path requires an idempotency key.
+
 ## Consumption and Concurrency
 
 The repository exposes `consumeIfActive(lockId, expectedVersion)`. PostgreSQL consumption is a single conditional update on `id`, `status = ACTIVE`, `record_version` and non-expired state.
 
 Two concurrent consumers cannot both consume the same lock. The loser receives a conflict/consumed result and no order behavior is implemented in this task.
+
+Status transitions also use optimistic versions. A stale status update returns an explicit conflict with the current persisted lock instead of surfacing a generic persistence error. The service maps that current state fail-closed.
 
 ## Persistence
 

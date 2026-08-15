@@ -105,8 +105,20 @@ export interface PriceLockConsumptionResult {
   readonly reasonCode: PriceLockReasonCode;
 }
 
+export type PriceLockCreatePersistenceResult =
+  | { readonly status: "CREATED"; readonly lock: PriceLock }
+  | { readonly status: "EXISTING_SAME"; readonly lock: PriceLock }
+  | { readonly status: "EXISTING_CONFLICT"; readonly lock: PriceLock };
+
+export type PriceLockStatusUpdateResult =
+  | { readonly status: "UPDATED"; readonly lock: PriceLock }
+  | { readonly status: "CONFLICT"; readonly currentLock: PriceLock | null };
+
 export interface PriceLockRepository {
   create(lock: PriceLock): Promise<PriceLock>;
+  createIdempotently(
+    lock: PriceLock,
+  ): Promise<PriceLockCreatePersistenceResult>;
   findById(lockId: string): Promise<PriceLock | null>;
   findByIdempotencyKey(idempotencyKey: string): Promise<PriceLock | null>;
   updateStatus(input: {
@@ -115,7 +127,7 @@ export interface PriceLockRepository {
     readonly status: PriceLockStatus;
     readonly reasonCode: PriceLockReasonCode;
     readonly now: Date;
-  }): Promise<PriceLock>;
+  }): Promise<PriceLockStatusUpdateResult>;
   consumeIfActive(input: {
     readonly lockId: string;
     readonly expectedVersion: number;
@@ -152,37 +164,17 @@ export class PriceLockService {
       input.expiresAt,
       createdAt,
     );
-    if (rejection) {
-      return { reasonCode: rejection, status: "BLOCKED" };
+    if (rejection || input.idempotencyKey.trim().length === 0) {
+      return {
+        reasonCode: rejection ?? "INVALID_LOCK_REQUEST",
+        status: "BLOCKED",
+      };
     }
 
     const fingerprint = priceLockIdempotencyFingerprint({
       expiresAt: input.expiresAt,
       quote: input.quote,
     });
-    const existing = await this.options.repository.findByIdempotencyKey(
-      input.idempotencyKey,
-    );
-    if (existing) {
-      if (existing.idempotencyFingerprint === fingerprint) {
-        return existing.reasonCode
-          ? {
-              lock: existing,
-              reasonCode: existing.reasonCode,
-              status: "IDEMPOTENT",
-            }
-          : { lock: existing, status: "IDEMPOTENT" };
-      }
-      await this.audit({
-        correlationId: input.correlationId,
-        eventType: "PRICING_PRICE_LOCK_CONFLICT",
-        lock: existing,
-        outcome: "DENIED",
-        reasonCode: "IDEMPOTENCY_CONFLICT",
-      });
-      return { reasonCode: "IDEMPOTENCY_CONFLICT", status: "CONFLICT" };
-    }
-
     const lock: PriceLock = {
       correlationId: input.correlationId,
       createdAt,
@@ -208,7 +200,27 @@ export class PriceLockService {
         : {}),
       reasonCode: "PRICE_LOCK_CREATED",
     };
-    const created = await this.options.repository.create(lock);
+    const persisted = await this.options.repository.createIdempotently(lock);
+    if (persisted.status === "EXISTING_SAME") {
+      return persisted.lock.reasonCode
+        ? {
+            lock: persisted.lock,
+            reasonCode: persisted.lock.reasonCode,
+            status: "IDEMPOTENT",
+          }
+        : { lock: persisted.lock, status: "IDEMPOTENT" };
+    }
+    if (persisted.status === "EXISTING_CONFLICT") {
+      await this.audit({
+        correlationId: input.correlationId,
+        eventType: "PRICING_PRICE_LOCK_CONFLICT",
+        lock: persisted.lock,
+        outcome: "DENIED",
+        reasonCode: "IDEMPOTENCY_CONFLICT",
+      });
+      return { reasonCode: "IDEMPOTENCY_CONFLICT", status: "CONFLICT" };
+    }
+    const created = persisted.lock;
     await this.audit({
       correlationId: input.correlationId,
       eventType: "PRICING_PRICE_LOCK_CREATED",
@@ -337,13 +349,16 @@ export class PriceLockService {
       const expired =
         lock.status === "EXPIRED"
           ? lock
-          : await this.options.repository.updateStatus({
+          : await this.updatedOrCurrentTerminal({
+              evaluatedAt,
               expectedVersion: lock.recordVersion,
               lockId: lock.id,
-              now: evaluatedAt,
               reasonCode: "PRICE_LOCK_EXPIRED",
               status: "EXPIRED",
             });
+      if (expired.status !== "EXPIRED") {
+        return terminalResultForLock(expired, evaluatedAt);
+      }
       return {
         evaluatedAt,
         lock: expired,
@@ -396,13 +411,16 @@ export class PriceLockService {
 
     const reasonCode = mapPricingSelectionReason(input.current);
     const status = revalidationStatusFor(reasonCode);
-    const updated = await this.options.repository.updateStatus({
+    const updated = await this.updatedOrCurrentTerminal({
+      evaluatedAt: input.evaluatedAt,
       expectedVersion: input.lock.recordVersion,
       lockId: input.lock.id,
-      now: input.evaluatedAt,
       reasonCode,
       status: status === "REPRICE_REQUIRED" ? "REPRICE_REQUIRED" : "BLOCKED",
     });
+    if (updated.status !== "REPRICE_REQUIRED" && updated.status !== "BLOCKED") {
+      return terminalResultForLock(updated, input.evaluatedAt);
+    }
     return {
       evaluatedAt: input.evaluatedAt,
       lock: updated,
@@ -447,6 +465,26 @@ export class PriceLockService {
       throw new Error("Price lock not found");
     }
     return lock;
+  }
+
+  private async updatedOrCurrentTerminal(input: {
+    readonly lockId: string;
+    readonly expectedVersion: number;
+    readonly status: PriceLockStatus;
+    readonly reasonCode: PriceLockReasonCode;
+    readonly evaluatedAt: Date;
+  }): Promise<PriceLock> {
+    const result = await this.options.repository.updateStatus({
+      expectedVersion: input.expectedVersion,
+      lockId: input.lockId,
+      now: input.evaluatedAt,
+      reasonCode: input.reasonCode,
+      status: input.status,
+    });
+    if (result.status === "UPDATED") {
+      return result.lock;
+    }
+    return result.currentLock ?? (await this.requireLock(input.lockId));
   }
 
   private async auditValidation(
@@ -607,3 +645,47 @@ const revalidationStatusFor = (
   reasonCode === "SUPPLIER_PRICE_INCREASED"
     ? "REPRICE_REQUIRED"
     : "BLOCKED";
+
+const terminalResultForLock = (
+  lock: PriceLock,
+  evaluatedAt: Date,
+): PriceLockValidationResult => {
+  if (lock.status === "CONSUMED") {
+    return {
+      evaluatedAt,
+      lock,
+      reasonCode: "PRICE_LOCK_ALREADY_CONSUMED",
+      status: "CONSUMED",
+    };
+  }
+  if (lock.status === "EXPIRED") {
+    return {
+      evaluatedAt,
+      lock,
+      reasonCode: "PRICE_LOCK_EXPIRED",
+      status: "EXPIRED",
+    };
+  }
+  if (lock.status === "REPRICE_REQUIRED") {
+    return {
+      evaluatedAt,
+      lock,
+      reasonCode: lock.reasonCode ?? "PROFIT_FLOOR_VIOLATION",
+      status: "REPRICE_REQUIRED",
+    };
+  }
+  if (lock.status === "BLOCKED" || lock.status === "INVALIDATED") {
+    return {
+      evaluatedAt,
+      lock,
+      reasonCode: lock.reasonCode ?? "LOCK_FINGERPRINT_CONFLICT",
+      status: "BLOCKED",
+    };
+  }
+  return {
+    evaluatedAt,
+    lock,
+    reasonCode: "LOCK_FINGERPRINT_CONFLICT",
+    status: "CONFLICT",
+  };
+};

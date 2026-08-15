@@ -17,9 +17,11 @@ import {
 import type { ProductId } from "../../packages/platform/src/contracts.js";
 import type {
   PriceLock,
+  PriceLockCreatePersistenceResult,
   PriceLockReasonCode,
   PriceLockRepository,
   PriceLockStatus,
+  PriceLockStatusUpdateResult,
 } from "../../packages/platform/src/pricing/price-locks.js";
 
 export class InMemoryPricingRepository
@@ -205,6 +207,27 @@ export class InMemoryPriceLockRepository implements PriceLockRepository {
     return lock;
   }
 
+  public async createIdempotently(
+    lock: PriceLock,
+  ): Promise<PriceLockCreatePersistenceResult> {
+    if (!lock.idempotencyKey) {
+      const created = await this.create(lock);
+      return { lock: created, status: "CREATED" };
+    }
+    const existingId = this.idempotencyIndex.get(lock.idempotencyKey);
+    if (existingId) {
+      const existing = this.locks.get(existingId);
+      if (existing) {
+        return existing.idempotencyFingerprint === lock.idempotencyFingerprint
+          ? { lock: existing, status: "EXISTING_SAME" }
+          : { lock: existing, status: "EXISTING_CONFLICT" };
+      }
+    }
+    this.idempotencyIndex.set(lock.idempotencyKey, lock.id);
+    this.locks.set(lock.id, lock);
+    return { lock, status: "CREATED" };
+  }
+
   public async findById(lockId: string): Promise<PriceLock | null> {
     return this.locks.get(lockId) ?? null;
   }
@@ -222,10 +245,10 @@ export class InMemoryPriceLockRepository implements PriceLockRepository {
     readonly status: PriceLockStatus;
     readonly reasonCode: PriceLockReasonCode;
     readonly now: Date;
-  }): Promise<PriceLock> {
+  }): Promise<PriceLockStatusUpdateResult> {
     const current = this.locks.get(input.lockId);
     if (!current || current.recordVersion !== input.expectedVersion) {
-      throw new Error("Price lock version conflict");
+      return { currentLock: current ?? null, status: "CONFLICT" };
     }
     const statusUpdate: {
       status: PriceLockStatus;
@@ -244,7 +267,7 @@ export class InMemoryPriceLockRepository implements PriceLockRepository {
     }
     const updated = nextLockVersion(current, statusUpdate);
     this.locks.set(input.lockId, updated);
-    return updated;
+    return { lock: updated, status: "UPDATED" };
   }
 
   public async consumeIfActive(input: {

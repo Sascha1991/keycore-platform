@@ -39,7 +39,16 @@ CREATE TABLE price_locks (
     AND (product_override_version IS NULL OR product_override_version > 0)
     AND (manual_price_version IS NULL OR manual_price_version > 0)
     AND expires_at > created_at
-    AND (idempotency_key IS NULL OR idempotency_fingerprint IS NOT NULL)
+    AND (
+      (
+        idempotency_key IS NULL
+        AND idempotency_fingerprint IS NULL
+      )
+      OR (
+        idempotency_key IS NOT NULL
+        AND idempotency_fingerprint IS NOT NULL
+      )
+    )
   )
 );
 

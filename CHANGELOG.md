@@ -7,6 +7,7 @@
   - added profitability revalidation against current hard minimum-profit and minimum sell-price safety floors;
   - added deterministic multi-offer rescue behavior before procurement starts;
   - added atomic single-use consumption foundation with optimistic record versions;
+  - hardened price-lock idempotent creation and status transitions for PostgreSQL concurrency races;
   - added reversible PostgreSQL `price_locks` persistence and 50,000-offer invariant coverage;
   - kept checkout, payments, orders, procurement, fulfillment, GAMIVO, live supplier purchase and live WooCommerce mutation out of scope.
 - Implemented `KS-06-01` pricing and margin foundation:

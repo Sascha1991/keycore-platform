@@ -6,9 +6,11 @@ import {
 } from "../../packages/platform/src/contracts.js";
 import type {
   PriceLock,
+  PriceLockCreatePersistenceResult,
   PriceLockReasonCode,
   PriceLockRepository,
   PriceLockStatus,
+  PriceLockStatusUpdateResult,
 } from "../../packages/platform/src/pricing/price-locks.js";
 import type { CorrelationId } from "../../packages/platform/src/domain/identifiers.js";
 import type { Queryable } from "./client.js";
@@ -90,6 +92,51 @@ export class PostgresPriceLockRepository implements PriceLockRepository {
     return lockFromRow(row);
   }
 
+  public async createIdempotently(
+    lock: PriceLock,
+  ): Promise<PriceLockCreatePersistenceResult> {
+    const inserted = await this.db.query<PriceLockRow>(
+      `
+        INSERT INTO price_locks(
+          id, product_id, currency, locked_sell_price_minor,
+          pricing_quote_fingerprint, source_fingerprint,
+          pricing_policy_version, pricing_policy_record_version,
+          product_override_version, manual_price_version, tax_policy_version,
+          fee_policy_version, fx_rate_version, status, record_version,
+          idempotency_key, idempotency_fingerprint, correlation_id,
+          created_at, expires_at, consumed_at, invalidated_at, reason_code
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+          $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+        )
+        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+        DO NOTHING
+        RETURNING ${priceLockReturning}
+      `,
+      priceLockValues(lock),
+    );
+    const insertedRow = inserted.rows[0];
+    if (insertedRow) {
+      return { lock: lockFromRow(insertedRow), status: "CREATED" };
+    }
+
+    if (!lock.idempotencyKey) {
+      const existing = await this.findById(lock.id);
+      if (existing) {
+        return { lock: existing, status: "EXISTING_CONFLICT" };
+      }
+      throw new Error("Price lock insert failed without idempotency conflict");
+    }
+    const existing = await this.findByIdempotencyKey(lock.idempotencyKey);
+    if (!existing) {
+      throw new Error("Price lock idempotency conflict row not found");
+    }
+    return existing.idempotencyFingerprint === lock.idempotencyFingerprint
+      ? { lock: existing, status: "EXISTING_SAME" }
+      : { lock: existing, status: "EXISTING_CONFLICT" };
+  }
+
   public async findById(lockId: string): Promise<PriceLock | null> {
     const result = await this.db.query<PriceLockRow>(
       `
@@ -124,9 +171,8 @@ export class PostgresPriceLockRepository implements PriceLockRepository {
     readonly status: PriceLockStatus;
     readonly reasonCode: PriceLockReasonCode;
     readonly now: Date;
-  }): Promise<PriceLock> {
-    const row = await queryOne<PriceLockRow>(
-      this.db,
+  }): Promise<PriceLockStatusUpdateResult> {
+    const result = await this.db.query<PriceLockRow>(
       `
         UPDATE price_locks
         SET status = $3,
@@ -148,7 +194,14 @@ export class PostgresPriceLockRepository implements PriceLockRepository {
         input.now,
       ],
     );
-    return lockFromRow(row);
+    const row = result.rows[0];
+    if (row) {
+      return { lock: lockFromRow(row), status: "UPDATED" };
+    }
+    return {
+      currentLock: await this.findById(input.lockId),
+      status: "CONFLICT",
+    };
   }
 
   public async consumeIfActive(input: {
@@ -185,6 +238,32 @@ const priceLockReturning = `
   idempotency_fingerprint, correlation_id, created_at, expires_at,
   consumed_at, invalidated_at, reason_code
 `;
+
+const priceLockValues = (lock: PriceLock): readonly unknown[] => [
+  lock.id,
+  lock.productId,
+  lock.currency,
+  lock.lockedSellPrice.amountMinor.toString(),
+  lock.pricingQuoteFingerprint,
+  lock.sourceOfferFingerprint,
+  lock.pricingPolicyVersion,
+  lock.pricingPolicyRecordVersion,
+  lock.productOverrideVersion ?? null,
+  lock.manualPriceVersion ?? null,
+  lock.taxPolicyVersion,
+  lock.feePolicyVersion,
+  lock.fxRateVersion ?? null,
+  lock.status,
+  lock.recordVersion,
+  lock.idempotencyKey ?? null,
+  lock.idempotencyFingerprint ?? null,
+  lock.correlationId,
+  lock.createdAt,
+  lock.expiresAt,
+  lock.consumedAt ?? null,
+  lock.invalidatedAt ?? null,
+  lock.reasonCode ?? null,
+];
 
 const lockFromRow = (row: PriceLockRow): PriceLock => ({
   correlationId: row.correlation_id as CorrelationId,

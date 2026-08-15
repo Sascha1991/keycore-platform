@@ -48,6 +48,7 @@ Included:
 - Unknown required fee, unknown tax, missing or stale FX, stale supplier price, pricing disablement, currency mismatch and consumed/expired locks fail closed.
 - Multi-offer revalidation remains deterministic and supplier-neutral.
 - Lock creation is idempotent; conflicting idempotency-key reuse returns conflict.
+- Concurrent lock creation with the same idempotency key is race-safe across application instances.
 - Consumption is atomic; two concurrent consumers cannot both consume the same active lock.
 - PostgreSQL migration is reversible and enforces positive locked price, valid state, positive versions, expiry ordering and idempotency uniqueness.
 - Audit metadata, queue payloads and customer-safe representation do not expose supplier cost, supplier identity, credentials, product keys or raw supplier payloads.
