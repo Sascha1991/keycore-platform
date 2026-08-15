@@ -14,6 +14,7 @@ export * from "./ports/core.js";
 export * from "./ports/supplier.js";
 export * from "./pricing/pricing-margin.js";
 export * from "./pricing/price-locks.js";
+export * from "./orders/order-orchestration.js";
 export * from "./queue/job.js";
 export * from "./queue/observability.js";
 export * from "./queue/retry.js";
