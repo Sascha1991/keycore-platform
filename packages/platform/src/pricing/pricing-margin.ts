@@ -206,6 +206,8 @@ export interface SellPriceQuote {
   readonly preRoundingPrice: Money;
   readonly sellPrice: Money;
   readonly expectedProfit: Money;
+  readonly hardMinimumProfit?: Money;
+  readonly hardMinimumSellPrice?: Money;
   readonly marginBasisPoints: bigint;
   readonly markupBasisPoints: bigint;
   readonly pricingPolicyVersion: typeof pricingPolicyVersion;
@@ -553,6 +555,8 @@ export class PricingService {
       calculatedAt,
       currency: input.policy.currency,
       expectedProfit,
+      hardMinimumProfit: effective.minimumProfit,
+      hardMinimumSellPrice: effective.minimumSellPrice,
       knownFees,
       offerId: input.cost.offerId,
       preRoundingPrice: formulaPrice,

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Implemented `KS-06-02` price locks and profitability safeguards:
+  - added explicit price-lock state model, idempotent creation and immutable locked customer price;
+  - added profitability revalidation against current hard minimum-profit and minimum sell-price safety floors;
+  - added deterministic multi-offer rescue behavior before procurement starts;
+  - added atomic single-use consumption foundation with optimistic record versions;
+  - added reversible PostgreSQL `price_locks` persistence and 50,000-offer invariant coverage;
+  - kept checkout, payments, orders, procurement, fulfillment, GAMIVO, live supplier purchase and live WooCommerce mutation out of scope.
 - Implemented `KS-06-01` pricing and margin foundation:
   - added supplier-neutral `pricing-policy-v1` pricing with integer minor-unit `Money` calculations;
   - added fee, tax and FX boundaries that fail closed for unknown or stale inputs;

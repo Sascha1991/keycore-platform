@@ -15,6 +15,12 @@ import {
   type SellPriceQuote,
 } from "../../packages/platform/src/pricing/pricing-margin.js";
 import type { ProductId } from "../../packages/platform/src/contracts.js";
+import type {
+  PriceLock,
+  PriceLockReasonCode,
+  PriceLockRepository,
+  PriceLockStatus,
+} from "../../packages/platform/src/pricing/price-locks.js";
 
 export class InMemoryPricingRepository
   implements
@@ -179,3 +185,116 @@ export class InMemoryPricingRepository
     return this.snapshots;
   }
 }
+
+export class InMemoryPriceLockRepository implements PriceLockRepository {
+  private readonly locks = new Map<string, PriceLock>();
+  private readonly idempotencyIndex = new Map<string, string>();
+
+  public async create(lock: PriceLock): Promise<PriceLock> {
+    if (lock.idempotencyKey) {
+      const existingId = this.idempotencyIndex.get(lock.idempotencyKey);
+      if (existingId) {
+        const existing = this.locks.get(existingId);
+        if (existing) {
+          return existing;
+        }
+      }
+      this.idempotencyIndex.set(lock.idempotencyKey, lock.id);
+    }
+    this.locks.set(lock.id, lock);
+    return lock;
+  }
+
+  public async findById(lockId: string): Promise<PriceLock | null> {
+    return this.locks.get(lockId) ?? null;
+  }
+
+  public async findByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<PriceLock | null> {
+    const id = this.idempotencyIndex.get(idempotencyKey);
+    return id ? (this.locks.get(id) ?? null) : null;
+  }
+
+  public async updateStatus(input: {
+    readonly lockId: string;
+    readonly expectedVersion: number;
+    readonly status: PriceLockStatus;
+    readonly reasonCode: PriceLockReasonCode;
+    readonly now: Date;
+  }): Promise<PriceLock> {
+    const current = this.locks.get(input.lockId);
+    if (!current || current.recordVersion !== input.expectedVersion) {
+      throw new Error("Price lock version conflict");
+    }
+    const statusUpdate: {
+      status: PriceLockStatus;
+      reasonCode: PriceLockReasonCode;
+      invalidatedAt?: Date | null;
+    } = {
+      reasonCode: input.reasonCode,
+      status: input.status,
+    };
+    if (
+      input.status === "INVALIDATED" ||
+      input.status === "REPRICE_REQUIRED" ||
+      input.status === "BLOCKED"
+    ) {
+      statusUpdate.invalidatedAt = input.now;
+    }
+    const updated = nextLockVersion(current, statusUpdate);
+    this.locks.set(input.lockId, updated);
+    return updated;
+  }
+
+  public async consumeIfActive(input: {
+    readonly lockId: string;
+    readonly expectedVersion: number;
+    readonly now: Date;
+  }): Promise<PriceLock | null> {
+    const current = this.locks.get(input.lockId);
+    if (
+      !current ||
+      current.status !== "ACTIVE" ||
+      current.recordVersion !== input.expectedVersion
+    ) {
+      return null;
+    }
+    const consumed = nextLockVersion(current, {
+      consumedAt: input.now,
+      reasonCode: "PRICE_LOCK_CONSUMED",
+      status: "CONSUMED",
+    });
+    this.locks.set(input.lockId, consumed);
+    return consumed;
+  }
+
+  public listLocks(): readonly PriceLock[] {
+    return [...this.locks.values()];
+  }
+}
+
+const nextLockVersion = (
+  lock: PriceLock,
+  update: {
+    readonly status: PriceLockStatus;
+    readonly reasonCode: PriceLockReasonCode;
+    readonly consumedAt?: Date | null;
+    readonly invalidatedAt?: Date | null;
+  },
+): PriceLock => ({
+  ...lock,
+  recordVersion: lock.recordVersion + 1,
+  reasonCode: update.reasonCode,
+  status: update.status,
+  ...(update.consumedAt !== undefined
+    ? { consumedAt: update.consumedAt }
+    : lock.consumedAt
+      ? { consumedAt: lock.consumedAt }
+      : {}),
+  ...(update.invalidatedAt !== undefined
+    ? { invalidatedAt: update.invalidatedAt }
+    : lock.invalidatedAt
+      ? { invalidatedAt: lock.invalidatedAt }
+      : {}),
+});
