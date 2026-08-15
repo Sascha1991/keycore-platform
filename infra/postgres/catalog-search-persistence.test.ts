@@ -141,12 +141,14 @@ describe.skipIf(!connectionString)("PostgresCatalogSearchRepository", () => {
       const repository = new PostgresCatalogSearchRepository(database);
       const ids = [
         await insertCanonicalProduct(database, {
+          id: productId("00000000-0000-4000-8000-000000000101"),
           title: "Reindex A",
           platform: "WINDOWS",
           edition: "STANDARD",
           active: true,
         }),
         await insertCanonicalProduct(database, {
+          id: productId("00000000-0000-4000-8000-000000000102"),
           title: "Reindex B",
           platform: "WINDOWS",
           edition: "STANDARD",
@@ -231,6 +233,7 @@ const initDatabase = async (): Promise<PostgresTestDatabase> =>
 const insertCanonicalProduct = async (
   database: PostgresTestDatabase,
   input: {
+    readonly id?: ReturnType<typeof productId>;
     readonly title: string;
     readonly platform: string;
     readonly edition: string;
@@ -240,13 +243,14 @@ const insertCanonicalProduct = async (
   const result = await database.query<{ readonly id: string }>(
     `
       INSERT INTO products(
-        product_type, title, platform, lifecycle, active,
+        id, product_type, title, platform, lifecycle, active,
         canonical_metadata_confidence, canonical_metadata
       )
-      VALUES ('GAME', $1, $2, 'IN_STOCK', $3, 'HIGH', $4::jsonb)
+      VALUES (COALESCE($1::uuid, gen_random_uuid()), 'GAME', $2, $3, 'IN_STOCK', $4, 'HIGH', $5::jsonb)
       RETURNING id::text
     `,
     [
+      input.id ?? null,
       input.title,
       input.platform,
       input.active,
