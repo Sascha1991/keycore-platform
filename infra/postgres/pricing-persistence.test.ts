@@ -218,6 +218,29 @@ describe.skipIf(!connectionString)("PostgresPricingRepository", () => {
           [canonicalProductId],
         ),
       ).rejects.toThrow();
+      await expect(
+        database.query(
+          `
+            INSERT INTO product_pricing_overrides(
+              product_id, record_version, enabled, manual_sell_price_minor,
+              manual_sell_price_currency
+            )
+            VALUES ($1, 1, true, 100, 'EUR')
+          `,
+          [canonicalProductId],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `
+            INSERT INTO product_pricing_overrides(
+              product_id, record_version, enabled, manual_price_version
+            )
+            VALUES ($1, 1, true, 1)
+          `,
+          [canonicalProductId],
+        ),
+      ).rejects.toThrow();
     } finally {
       await database.cleanup();
     }

@@ -66,11 +66,19 @@ CREATE TABLE product_pricing_overrides (
     AND ((minimum_sell_price_minor IS NULL AND minimum_sell_price_currency IS NULL) OR (minimum_sell_price_minor IS NOT NULL AND minimum_sell_price_currency IS NOT NULL))
     AND (quote_ttl_ms IS NULL OR quote_ttl_ms > 0)
     AND (
-      (manual_sell_price_minor IS NULL AND manual_sell_price_currency IS NULL)
-      OR (manual_sell_price_minor IS NOT NULL AND manual_sell_price_minor > 0 AND manual_sell_price_currency IS NOT NULL)
+      (
+        manual_sell_price_minor IS NULL
+        AND manual_sell_price_currency IS NULL
+        AND manual_price_version IS NULL
+      )
+      OR (
+        manual_sell_price_minor IS NOT NULL
+        AND manual_sell_price_minor > 0
+        AND manual_sell_price_currency IS NOT NULL
+        AND manual_price_version IS NOT NULL
+        AND manual_price_version > 0
+      )
     )
-    AND (manual_price_version IS NULL OR manual_price_version > 0)
-    AND (manual_sell_price_minor IS NOT NULL OR manual_price_version IS NULL)
   )
 );
 
