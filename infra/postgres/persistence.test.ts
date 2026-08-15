@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { Client, type QueryResult, type QueryResultRow } from "pg";
+import type { QueryResult, QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -13,46 +13,29 @@ import {
   type AuditEvent,
 } from "../../packages/platform/src/contracts.js";
 import { DevelopmentKeyManagementProvider } from "../key-management/development-provider.js";
-import { loadMigrations, migrationsDirectory } from "./migrations.js";
+import { migrationsDirectory } from "./migrations.js";
 import {
   PostgresAuditEventRepository,
   PostgresAuditQueryRepository,
   PostgresEncryptedKeyRepository,
 } from "./repositories.js";
+import { PostgresTestDatabase } from "./test-database.js";
 
 const databaseUrl = process.env.KEYCORE_TEST_DATABASE_URL;
 const describePostgres = databaseUrl ? describe : describe.skip;
 const schemaName = `ks_${randomUUID().replaceAll("-", "_")}`;
 
-let client: Client | undefined;
+let database: PostgresTestDatabase | undefined;
 
 const query = async <T extends QueryResultRow = QueryResultRow>(
   sql: string,
   values?: readonly unknown[],
 ): Promise<QueryResult<T>> => {
-  if (!client) {
+  if (!database) {
     throw new Error("PostgreSQL client is not initialized");
   }
 
-  return client.query<T>(sql, values ? [...values] : undefined);
-};
-
-const applyAllMigrations = async (): Promise<void> => {
-  const migrations = await loadMigrations();
-  for (const migration of migrations) {
-    await query(migration.upSql);
-    await query(
-      "INSERT INTO keycore_migrations(version, name) VALUES ($1, $2)",
-      [migration.version, migration.name],
-    );
-  }
-};
-
-const rollbackAllMigrations = async (): Promise<void> => {
-  const migrations = [...(await loadMigrations())].reverse();
-  for (const migration of migrations) {
-    await query(migration.downSql);
-  }
+  return database.query<T>(sql, values);
 };
 
 const insertFixtureGraph = async (): Promise<{
@@ -158,18 +141,14 @@ const auditEvent = (override: Partial<AuditEvent> = {}): AuditEvent => ({
 
 describePostgres("PostgreSQL persistence foundation", () => {
   beforeAll(async () => {
-    client = new Client({ connectionString: databaseUrl });
-    await client.connect();
-    await query(`CREATE SCHEMA ${schemaName}`);
-    await query(`SET search_path TO ${schemaName}, public`);
-    await applyAllMigrations();
+    database = await PostgresTestDatabase.initialize({
+      connectionString: databaseUrl,
+      schemaName,
+    });
   });
 
   afterAll(async () => {
-    if (client) {
-      await query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`);
-      await client.end();
-    }
+    await database?.cleanup();
   });
 
   it("applies migrations and creates required tables", async () => {
@@ -194,6 +173,7 @@ describePostgres("PostgreSQL persistence foundation", () => {
       "idempotency_records",
       "outbox_events",
       "reconciliation_records",
+      "storefront_publications",
     ];
 
     const result = await query<{ table_name: string }>(
@@ -320,12 +300,12 @@ describePostgres("PostgreSQL persistence foundation", () => {
   });
 
   it("stores only encrypted key material and persists key version metadata", async () => {
-    if (!client) {
+    if (!database) {
       throw new Error("PostgreSQL client is not initialized");
     }
 
     const fixture = await insertFixtureGraph();
-    const repository = new PostgresEncryptedKeyRepository(client);
+    const repository = new PostgresEncryptedKeyRepository(database);
     const provider = new DevelopmentKeyManagementProvider({
       environmentName: "test",
       masterKeyMaterialBase64: randomBytes(32).toString("base64"),
@@ -364,12 +344,12 @@ describePostgres("PostgreSQL persistence foundation", () => {
   });
 
   it("rejects duplicate encrypted key records for the same order line", async () => {
-    if (!client) {
+    if (!database) {
       throw new Error("PostgreSQL client is not initialized");
     }
 
     const fixture = await insertFixtureGraph();
-    const repository = new PostgresEncryptedKeyRepository(client);
+    const repository = new PostgresEncryptedKeyRepository(database);
     const provider = new DevelopmentKeyManagementProvider({
       environmentName: "test",
       masterKeyMaterialBase64: randomBytes(32).toString("base64"),
@@ -399,7 +379,7 @@ describePostgres("PostgreSQL persistence foundation", () => {
   });
 
   it("fails authenticated reveal when encrypted material is swapped between order lines", async () => {
-    if (!client) {
+    if (!database) {
       throw new Error("PostgreSQL client is not initialized");
     }
 
@@ -407,7 +387,7 @@ describePostgres("PostgreSQL persistence foundation", () => {
     const secondFixture = await insertFixtureGraph();
     const firstOrderLineId = orderLineId(firstFixture.orderLineId);
     const secondOrderLineId = orderLineId(secondFixture.orderLineId);
-    const repository = new PostgresEncryptedKeyRepository(client);
+    const repository = new PostgresEncryptedKeyRepository(database);
     const provider = new DevelopmentKeyManagementProvider({
       environmentName: "test",
       masterKeyMaterialBase64: randomBytes(32).toString("base64"),
@@ -490,11 +470,11 @@ describePostgres("PostgreSQL persistence foundation", () => {
   });
 
   it("persists audit events through the append-only repository", async () => {
-    if (!client) {
+    if (!database) {
       throw new Error("PostgreSQL client is not initialized");
     }
 
-    const repository = new PostgresAuditEventRepository(client);
+    const repository = new PostgresAuditEventRepository(database);
     const event = auditEvent({
       correlationId: correlationId("corr-audit-persist"),
       metadata: {
@@ -535,11 +515,11 @@ describePostgres("PostgreSQL persistence foundation", () => {
   });
 
   it("rejects unsafe audit metadata before persistence", async () => {
-    if (!client) {
+    if (!database) {
       throw new Error("PostgreSQL client is not initialized");
     }
 
-    const repository = new PostgresAuditEventRepository(client);
+    const repository = new PostgresAuditEventRepository(database);
     const event = auditEvent({
       metadata: {
         nested: {
@@ -558,12 +538,12 @@ describePostgres("PostgreSQL persistence foundation", () => {
   });
 
   it("queries audit events with bounded keyset pagination", async () => {
-    if (!client) {
+    if (!database) {
       throw new Error("PostgreSQL client is not initialized");
     }
 
-    const appendRepository = new PostgresAuditEventRepository(client);
-    const queryRepository = new PostgresAuditQueryRepository(client);
+    const appendRepository = new PostgresAuditEventRepository(database);
+    const queryRepository = new PostgresAuditQueryRepository(database);
     const sharedCorrelationId = correlationId(`corr-query-${randomUUID()}`);
     const entity = { id: randomUUID(), type: "ORDER_LINE" };
     const actor = { id: "auditor-system", type: "SYSTEM" } as const;
@@ -634,11 +614,11 @@ describePostgres("PostgreSQL persistence foundation", () => {
   });
 
   it("supports concurrent audit appends without UUID overwrite", async () => {
-    if (!client) {
+    if (!database) {
       throw new Error("PostgreSQL client is not initialized");
     }
 
-    const repository = new PostgresAuditEventRepository(client);
+    const repository = new PostgresAuditEventRepository(database);
     const sharedCorrelationId = correlationId(
       `corr-concurrent-${randomUUID()}`,
     );
@@ -690,11 +670,11 @@ describePostgres("PostgreSQL persistence foundation", () => {
   });
 
   it("exposes no update or delete API for normal audit appends", () => {
-    if (!client) {
+    if (!database) {
       throw new Error("PostgreSQL client is not initialized");
     }
 
-    const repository = new PostgresAuditEventRepository(client);
+    const repository = new PostgresAuditEventRepository(database);
 
     expect("append" in repository).toBe(true);
     expect("update" in repository).toBe(false);
@@ -709,7 +689,11 @@ describePostgres("PostgreSQL persistence foundation", () => {
   });
 
   it("rolls back migrations in an isolated test schema", async () => {
-    await rollbackAllMigrations();
+    if (!database) {
+      throw new Error("PostgreSQL client is not initialized");
+    }
+
+    await database.rollbackAppliedMigrations();
 
     const result = await query<{ to_regclass: string | null }>(
       "SELECT to_regclass($1)",
@@ -717,7 +701,7 @@ describePostgres("PostgreSQL persistence foundation", () => {
     );
 
     expect(result.rows[0]?.to_regclass).toBeNull();
-    await applyAllMigrations();
+    await database.applyAllMigrations();
   });
 
   it("creates durable outbox records and claims due work once", async () => {

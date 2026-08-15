@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Implemented `KS-05-03` WooCommerce storefront publication foundation:
+  - added supplier-neutral storefront publication state machine, eligibility evaluation and price boundary;
+  - added durable `ProductId + storefront -> remote Woo product ID` mapping with fail-closed conflict checks;
+  - added WooCommerce REST `wc/v3` adapter foundation for create, update, read and soft-unpublish without live credentials;
+  - hardened WooCommerce mutating transport uncertainty so ambiguous creates, updates and soft-unpublishes require reconciliation;
+  - injected storefront audit environment instead of hardcoding `CI`;
+  - added a shared PostgreSQL integration-test bootstrap with advisory-locked `pgcrypto` setup to remove parallel schema initialization races;
+  - added reversible PostgreSQL publication mapping migration and integration coverage;
+  - kept live WooCommerce, checkout, payment, procurement, GAMIVO and production publication out of scope.
 - Implemented `KS-05-02` canonical product grouping foundation:
   - added supplier-neutral canonical grouping policy `canonical-grouping-v1`;
   - added evidence, title normalization, edition safety, platform safety and mapping state models;

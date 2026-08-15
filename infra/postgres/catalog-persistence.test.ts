@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { Client, type QueryResult, type QueryResultRow } from "pg";
+import type { QueryResult, QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -16,60 +16,36 @@ import {
   MockSupplier,
   type MockOfferFixture,
 } from "../suppliers/mock/mock-supplier.js";
-import { loadMigrations } from "./migrations.js";
 import { PostgresCatalogSyncRepository } from "./catalog-repositories.js";
+import { PostgresTestDatabase } from "./test-database.js";
 
 const databaseUrl = process.env.KEYCORE_TEST_DATABASE_URL;
 const describePostgres = databaseUrl ? describe : describe.skip;
 const schemaName = `ks_catalog_${randomUUID().replaceAll("-", "_")}`;
 
-let client: Client | undefined;
+let database: PostgresTestDatabase | undefined;
 
 const query = async <T extends QueryResultRow = QueryResultRow>(
   sql: string,
   values?: readonly unknown[],
 ): Promise<QueryResult<T>> => {
-  if (!client) {
+  if (!database) {
     throw new Error("PostgreSQL client is not initialized");
   }
 
-  return client.query<T>(sql, values ? [...values] : undefined);
-};
-
-const applyAllMigrations = async (): Promise<void> => {
-  const migrations = await loadMigrations();
-  for (const migration of migrations) {
-    await query(migration.upSql);
-    await query(
-      "INSERT INTO keycore_migrations(version, name) VALUES ($1, $2)",
-      [migration.version, migration.name],
-    );
-  }
-};
-
-const rollbackAllMigrations = async (): Promise<void> => {
-  const migrations = [...(await loadMigrations())].reverse();
-  for (const migration of migrations) {
-    await query(migration.downSql);
-  }
+  return database.query<T>(sql, values);
 };
 
 describePostgres("PostgreSQL catalog synchronization persistence", () => {
   beforeAll(async () => {
-    client = new Client({ connectionString: databaseUrl });
-    await client.connect();
-    await query(`CREATE SCHEMA ${schemaName}`);
-    await query(`SET search_path TO ${schemaName}, public`);
-    await applyAllMigrations();
+    database = await PostgresTestDatabase.initialize({
+      connectionString: databaseUrl,
+      schemaName,
+    });
   });
 
   afterAll(async () => {
-    if (client) {
-      await query(`SET search_path TO ${schemaName}, public`);
-      await rollbackAllMigrations();
-      await query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`);
-      await client.end();
-    }
+    await database?.cleanup();
   });
 
   it("persists full sync runs, checkpoints, durable mappings and Germany decisions", async () => {
