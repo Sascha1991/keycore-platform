@@ -281,7 +281,7 @@ const insertAllowedOffer = async (
           supplier_id, supplier_product_id, product_id, title,
           lifecycle, active, first_seen_at, last_seen_at
         )
-        SELECT id, 'sp-' || $1::text, $1, 'Supplier Product',
+        SELECT id, 'sp-' || $1::text, $1::uuid, 'Supplier Product',
           'IN_STOCK', true, now(), now()
         FROM supplier
         RETURNING id, supplier_id
@@ -297,7 +297,7 @@ const insertAllowedOffer = async (
       ),
       offer AS (
         INSERT INTO offers(product_id, supplier_offer_id, availability)
-        SELECT $1, id, 'IN_STOCK'
+        SELECT $1::uuid, id, 'IN_STOCK'
         FROM supplier_offer
         RETURNING id
       ),
