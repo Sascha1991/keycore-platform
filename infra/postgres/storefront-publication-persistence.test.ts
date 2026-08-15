@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { Client, type QueryResult, type QueryResultRow } from "pg";
+import type { QueryResult, QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -11,8 +11,8 @@ import {
   type ProductId,
   type StorefrontPublicationSnapshot,
 } from "../../packages/platform/src/contracts.js";
-import { loadMigrations } from "./migrations.js";
 import { PostgresStorefrontPublicationRepository } from "./storefront-publication-repositories.js";
+import { PostgresTestDatabase } from "./test-database.js";
 
 const databaseUrl = process.env.KEYCORE_TEST_DATABASE_URL;
 const describePostgres = databaseUrl ? describe : describe.skip;
@@ -22,55 +22,31 @@ const storefront = storefrontChannel("KEYRANO_DE");
 const firstProductId = productId("11111111-1111-4111-8111-111111111111");
 const secondProductId = productId("22222222-2222-4222-8222-222222222222");
 
-let client: Client | undefined;
+let database: PostgresTestDatabase | undefined;
 
 const query = async <T extends QueryResultRow = QueryResultRow>(
   sql: string,
   values?: readonly unknown[],
 ): Promise<QueryResult<T>> => {
-  if (!client) {
+  if (!database) {
     throw new Error("PostgreSQL client is not initialized");
   }
 
-  return client.query<T>(sql, values ? [...values] : undefined);
-};
-
-const applyAllMigrations = async (): Promise<void> => {
-  const migrations = await loadMigrations();
-  for (const migration of migrations) {
-    await query(migration.upSql);
-    await query(
-      "INSERT INTO keycore_migrations(version, name) VALUES ($1, $2)",
-      [migration.version, migration.name],
-    );
-  }
-};
-
-const rollbackAllMigrations = async (): Promise<void> => {
-  const migrations = [...(await loadMigrations())].reverse();
-  for (const migration of migrations) {
-    await query(migration.downSql);
-  }
+  return database.query<T>(sql, values);
 };
 
 describePostgres("PostgreSQL storefront publication persistence", () => {
   beforeAll(async () => {
-    client = new Client({ connectionString: databaseUrl });
-    await client.connect();
-    await query(`CREATE SCHEMA ${schemaName}`);
-    await query(`SET search_path TO ${schemaName}, public`);
-    await applyAllMigrations();
+    database = await PostgresTestDatabase.initialize({
+      connectionString: databaseUrl,
+      schemaName,
+    });
     await insertProduct(firstProductId, "Cyberpunk 2077");
     await insertProduct(secondProductId, "The Witcher 3");
   });
 
   afterAll(async () => {
-    if (client) {
-      await query(`SET search_path TO ${schemaName}, public`);
-      await rollbackAllMigrations();
-      await query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`);
-      await client.end();
-    }
+    await database?.cleanup();
   });
 
   it("persists ProductId plus storefront to remote WooCommerce product mappings", async () => {
