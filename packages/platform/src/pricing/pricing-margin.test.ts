@@ -20,6 +20,7 @@ import {
   markupBasisPoints,
   minimumSafePrice,
   PricingConfigurationConflictError,
+  PricingConfigurationValidationError,
   PricingService,
   PricingStorefrontPriceProvider,
   pricingRecalculationJobPayload,
@@ -253,6 +254,89 @@ describe("pricing and margin foundation", () => {
       reasonCode: "PRICING_DISABLED",
       status: "BLOCKED",
     });
+  });
+
+  it("validates manual sell-price configuration before persistence or quoting", async () => {
+    const accepted = createHarness();
+    await expect(
+      accepted.service.updateProductOverride({
+        correlationId: correlationId("corr-manual-positive"),
+        update: {
+          actorRef: "admin-1",
+          manualSellPrice: money(1n, eur),
+          productId: product,
+          reason: "positive manual price",
+        },
+      }),
+    ).resolves.toMatchObject({
+      manualPriceVersion: 1,
+      manualSellPrice: money(1n, eur),
+    });
+
+    const zero = createHarness();
+    await expect(
+      zero.service.updateProductOverride({
+        correlationId: correlationId("corr-manual-zero"),
+        update: {
+          actorRef: "admin-1",
+          manualSellPrice: money(0n, eur),
+          productId: product,
+          reason: "zero manual price",
+        },
+      }),
+    ).rejects.toThrow("Manual sell price must be greater than zero");
+
+    const negative = createHarness();
+    await expect(
+      negative.service.updateProductOverride({
+        correlationId: correlationId("corr-manual-negative"),
+        update: {
+          actorRef: "admin-1",
+          manualSellPrice: {
+            amountMinor: -1n,
+            currency: eur,
+          },
+          productId: product,
+          reason: "negative manual price",
+        },
+      }),
+    ).rejects.toBeInstanceOf(PricingConfigurationValidationError);
+
+    const noManualPrice = createHarness();
+    const override = await noManualPrice.service.updateProductOverride({
+      correlationId: correlationId("corr-no-manual-price"),
+      update: {
+        actorRef: "admin-1",
+        markupBasisPoints: 1_500n,
+        productId: product,
+        reason: "no manual price",
+      },
+    });
+    expect(override.manualSellPrice).toBeUndefined();
+    expect(override.manualPriceVersion).toBeUndefined();
+
+    await noManualPrice.service.updateProductOverride({
+      correlationId: correlationId("corr-clear-manual-price"),
+      update: {
+        actorRef: "admin-1",
+        expectedVersion: 1,
+        manualSellPrice: money(1_999n, eur),
+        productId: product,
+        reason: "set before clear",
+      },
+    });
+    const cleared = await noManualPrice.service.updateProductOverride({
+      correlationId: correlationId("corr-clear-manual-price-2"),
+      update: {
+        actorRef: "admin-1",
+        expectedVersion: 2,
+        manualSellPrice: null,
+        productId: product,
+        reason: "clear manual price",
+      },
+    });
+    expect(cleared.manualSellPrice).toBeNull();
+    expect(cleared.manualPriceVersion).toBeNull();
   });
 
   it("does not let manual prices bypass fee, tax, currency or hard-floor safety", async () => {

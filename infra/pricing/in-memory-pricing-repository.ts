@@ -1,6 +1,10 @@
 import {
   PricingConfigurationConflictError,
   pricingPolicyVersion,
+  validatePricingPolicy,
+  validatePricingPolicyUpdate,
+  validateProductPricingOverride,
+  validateProductPricingOverrideUpdate,
   type PriceSnapshotRepository,
   type PricingPolicy,
   type PricingPolicyRepository,
@@ -33,6 +37,7 @@ export class InMemoryPricingRepository
   public async updateActivePolicy(
     update: PricingPolicyUpdate,
   ): Promise<PricingPolicy> {
+    validatePricingPolicyUpdate(update);
     const current = this.activePolicy;
     if (!current) {
       throw new Error("No active pricing policy configured");
@@ -68,8 +73,8 @@ export class InMemoryPricingRepository
           ? { targetMarginBasisPoints: current.targetMarginBasisPoints }
           : {}),
     };
-    this.activePolicy = updated;
-    return updated;
+    this.activePolicy = validatePricingPolicy(updated);
+    return this.activePolicy;
   }
 
   public async getOverride(
@@ -81,6 +86,7 @@ export class InMemoryPricingRepository
   public async updateOverride(
     update: ProductPricingOverrideUpdate,
   ): Promise<ProductPricingOverride> {
+    validateProductPricingOverrideUpdate(update);
     const current = this.overrides.get(update.productId);
     if (
       update.expectedVersion !== undefined &&
@@ -149,8 +155,9 @@ export class InMemoryPricingRepository
           ? { targetMarginBasisPoints: current.targetMarginBasisPoints }
           : {}),
     };
-    this.overrides.set(update.productId, updated);
-    return updated;
+    const validated = validateProductPricingOverride(updated);
+    this.overrides.set(update.productId, validated);
+    return validated;
   }
 
   public async clearOverride(input: {

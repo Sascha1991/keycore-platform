@@ -19,7 +19,8 @@ CREATE TABLE pricing_policies (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT pricing_policies_version_check CHECK (policy_version = 'pricing-policy-v1'),
   CONSTRAINT pricing_policies_money_check CHECK (
-    markup_basis_points >= 0
+    record_version > 0
+    AND markup_basis_points >= 0
     AND (target_margin_basis_points IS NULL OR (target_margin_basis_points > 0 AND target_margin_basis_points < 10000))
     AND fixed_markup_minor >= 0
     AND minimum_profit_minor >= 0
@@ -54,7 +55,8 @@ CREATE TABLE product_pricing_overrides (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT product_pricing_overrides_money_check CHECK (
-    (markup_basis_points IS NULL OR markup_basis_points >= 0)
+    record_version > 0
+    AND (markup_basis_points IS NULL OR markup_basis_points >= 0)
     AND (target_margin_basis_points IS NULL OR (target_margin_basis_points > 0 AND target_margin_basis_points < 10000))
     AND (fixed_markup_minor IS NULL OR fixed_markup_minor >= 0)
     AND ((fixed_markup_minor IS NULL AND fixed_markup_currency IS NULL) OR (fixed_markup_minor IS NOT NULL AND fixed_markup_currency IS NOT NULL))
@@ -65,8 +67,10 @@ CREATE TABLE product_pricing_overrides (
     AND (quote_ttl_ms IS NULL OR quote_ttl_ms > 0)
     AND (
       (manual_sell_price_minor IS NULL AND manual_sell_price_currency IS NULL)
-      OR (manual_sell_price_minor >= 0 AND manual_sell_price_currency IS NOT NULL)
+      OR (manual_sell_price_minor > 0 AND manual_sell_price_currency IS NOT NULL)
     )
+    AND (manual_price_version IS NULL OR manual_price_version > 0)
+    AND (manual_sell_price_minor IS NOT NULL OR manual_price_version IS NULL)
   )
 );
 
@@ -87,7 +91,12 @@ CREATE TABLE product_price_snapshots (
   valid_until TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT product_price_snapshots_status_check CHECK (status IN ('QUOTED', 'BLOCKED', 'REVIEW_REQUIRED')),
-  CONSTRAINT product_price_snapshots_money_check CHECK (sell_price_minor >= 0)
+  CONSTRAINT product_price_snapshots_money_check CHECK (
+    sell_price_minor >= 0
+    AND pricing_policy_record_version > 0
+    AND (product_override_version IS NULL OR product_override_version > 0)
+    AND (manual_price_version IS NULL OR manual_price_version > 0)
+  )
 );
 
 CREATE UNIQUE INDEX product_price_snapshots_fingerprint_idx

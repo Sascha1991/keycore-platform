@@ -1,5 +1,9 @@
 import {
   PricingConfigurationConflictError,
+  validatePricingPolicy,
+  validatePricingPolicyUpdate,
+  validateProductPricingOverride,
+  validateProductPricingOverrideUpdate,
   type PriceSnapshotRepository,
   type PricingPolicy,
   type PricingPolicyRepository,
@@ -86,6 +90,7 @@ export class PostgresPricingPolicyRepository implements PricingPolicyRepository 
   public async updateActivePolicy(
     update: PricingPolicyUpdate,
   ): Promise<PricingPolicy> {
+    validatePricingPolicyUpdate(update);
     const current = await this.getActivePolicy();
     if (!current) {
       throw new Error("No active pricing policy configured");
@@ -181,6 +186,7 @@ export class PostgresProductPricingOverrideRepository implements ProductPricingO
   public async updateOverride(
     update: ProductPricingOverrideUpdate,
   ): Promise<ProductPricingOverride> {
+    validateProductPricingOverrideUpdate(update);
     const current = await this.getOverride(update.productId);
     if (
       update.expectedVersion !== undefined &&
@@ -385,6 +391,7 @@ export const insertInitialPricingPolicy = async (
   db: Queryable,
   policy: PricingPolicy,
 ): Promise<void> => {
+  validatePricingPolicy(policy);
   await db.query(
     `
       INSERT INTO pricing_policies(
@@ -417,82 +424,107 @@ export const insertInitialPricingPolicy = async (
   );
 };
 
-const policyFromRow = (row: PricingPolicyRow): PricingPolicy => ({
-  createdAt: row.created_at,
-  currency: currency(row.currency),
-  effectiveAt: row.effective_at,
-  enabled: row.enabled,
-  fixedMarkup: moneyFrom(row.fixed_markup_minor, row.currency),
-  markupBasisPoints: BigInt(row.markup_basis_points),
-  minimumProfit: moneyFrom(row.minimum_profit_minor, row.currency),
-  minimumSellPrice: moneyFrom(row.minimum_sell_price_minor, row.currency),
-  policyId: row.id,
-  policyVersion: row.policy_version,
-  rounding: roundingFromJson(row.rounding),
-  updatedAt: row.updated_at,
-  version: row.record_version,
-  ...(row.actor_ref ? { actorRef: row.actor_ref } : {}),
-  ...(row.reason ? { reason: row.reason } : {}),
-  ...(row.quote_ttl_ms ? { quoteTtlMs: row.quote_ttl_ms } : {}),
-  ...(row.target_margin_basis_points
-    ? { targetMarginBasisPoints: BigInt(row.target_margin_basis_points) }
-    : {}),
-});
+const policyFromRow = (row: PricingPolicyRow): PricingPolicy =>
+  validatePricingPolicy({
+    createdAt: row.created_at,
+    currency: currency(row.currency),
+    effectiveAt: row.effective_at,
+    enabled: row.enabled,
+    fixedMarkup: moneyFrom(row.fixed_markup_minor, row.currency),
+    markupBasisPoints: BigInt(row.markup_basis_points),
+    minimumProfit: moneyFrom(row.minimum_profit_minor, row.currency),
+    minimumSellPrice: moneyFrom(row.minimum_sell_price_minor, row.currency),
+    policyId: row.id,
+    policyVersion: row.policy_version,
+    rounding: roundingFromJson(row.rounding),
+    updatedAt: row.updated_at,
+    version: row.record_version,
+    ...(row.actor_ref ? { actorRef: row.actor_ref } : {}),
+    ...(row.reason ? { reason: row.reason } : {}),
+    ...(row.quote_ttl_ms ? { quoteTtlMs: row.quote_ttl_ms } : {}),
+    ...(row.target_margin_basis_points
+      ? { targetMarginBasisPoints: BigInt(row.target_margin_basis_points) }
+      : {}),
+  });
 
-const overrideFromRow = (
+export const hydrateProductPricingOverrideRow = (
   row: ProductPricingOverrideRow,
-): ProductPricingOverride => ({
-  createdAt: row.created_at,
-  enabled: row.enabled,
-  productId: productId(row.product_id),
-  updatedAt: row.updated_at,
-  version: row.record_version,
-  ...(row.actor_ref ? { actorRef: row.actor_ref } : {}),
-  ...(row.fixed_markup_minor
-    ? {
-        fixedMarkup: moneyFrom(
-          row.fixed_markup_minor,
-          row.fixed_markup_currency ?? "",
-        ),
-      }
-    : {}),
-  ...(row.manual_sell_price_minor && row.manual_sell_price_currency
-    ? {
-        manualPriceVersion: row.manual_price_version,
-        manualSellPrice: moneyFrom(
-          row.manual_sell_price_minor,
-          row.manual_sell_price_currency,
-        ),
-      }
-    : row.manual_price_version === null
-      ? {}
-      : { manualPriceVersion: row.manual_price_version }),
-  ...(row.markup_basis_points
-    ? { markupBasisPoints: BigInt(row.markup_basis_points) }
-    : {}),
-  ...(row.minimum_profit_minor
-    ? {
-        minimumProfit: moneyFrom(
-          row.minimum_profit_minor,
-          row.minimum_profit_currency ?? "",
-        ),
-      }
-    : {}),
-  ...(row.minimum_sell_price_minor
-    ? {
-        minimumSellPrice: moneyFrom(
-          row.minimum_sell_price_minor,
-          row.minimum_sell_price_currency ?? "",
-        ),
-      }
-    : {}),
-  ...(row.quote_ttl_ms ? { quoteTtlMs: row.quote_ttl_ms } : {}),
-  ...(row.reason ? { reason: row.reason } : {}),
-  ...(row.rounding ? { rounding: roundingFromJson(row.rounding) } : {}),
-  ...(row.target_margin_basis_points
-    ? { targetMarginBasisPoints: BigInt(row.target_margin_basis_points) }
-    : {}),
-});
+): ProductPricingOverride => {
+  assertPairedMoneyColumns(
+    row.manual_sell_price_minor,
+    row.manual_sell_price_currency,
+    "Manual sell price",
+  );
+  assertPairedMoneyColumns(
+    row.fixed_markup_minor,
+    row.fixed_markup_currency,
+    "Fixed markup override",
+  );
+  assertPairedMoneyColumns(
+    row.minimum_profit_minor,
+    row.minimum_profit_currency,
+    "Minimum profit override",
+  );
+  assertPairedMoneyColumns(
+    row.minimum_sell_price_minor,
+    row.minimum_sell_price_currency,
+    "Minimum sell price override",
+  );
+  return validateProductPricingOverride({
+    createdAt: row.created_at,
+    enabled: row.enabled,
+    productId: productId(row.product_id),
+    updatedAt: row.updated_at,
+    version: row.record_version,
+    ...(row.actor_ref ? { actorRef: row.actor_ref } : {}),
+    ...(row.fixed_markup_minor && row.fixed_markup_currency
+      ? {
+          fixedMarkup: moneyFrom(
+            row.fixed_markup_minor,
+            row.fixed_markup_currency,
+          ),
+        }
+      : {}),
+    ...(row.manual_sell_price_minor && row.manual_sell_price_currency
+      ? {
+          manualPriceVersion: row.manual_price_version,
+          manualSellPrice: moneyFrom(
+            row.manual_sell_price_minor,
+            row.manual_sell_price_currency,
+          ),
+        }
+      : row.manual_price_version === null
+        ? {}
+        : { manualPriceVersion: row.manual_price_version }),
+    ...(row.markup_basis_points
+      ? { markupBasisPoints: BigInt(row.markup_basis_points) }
+      : {}),
+    ...(row.minimum_profit_minor && row.minimum_profit_currency
+      ? {
+          minimumProfit: moneyFrom(
+            row.minimum_profit_minor,
+            row.minimum_profit_currency,
+          ),
+        }
+      : {}),
+    ...(row.minimum_sell_price_minor && row.minimum_sell_price_currency
+      ? {
+          minimumSellPrice: moneyFrom(
+            row.minimum_sell_price_minor,
+            row.minimum_sell_price_currency,
+          ),
+        }
+      : {}),
+    ...(row.quote_ttl_ms ? { quoteTtlMs: row.quote_ttl_ms } : {}),
+    ...(row.reason ? { reason: row.reason } : {}),
+    ...(row.rounding ? { rounding: roundingFromJson(row.rounding) } : {}),
+    ...(row.target_margin_basis_points
+      ? { targetMarginBasisPoints: BigInt(row.target_margin_basis_points) }
+      : {}),
+  });
+};
+
+const overrideFromRow = hydrateProductPricingOverrideRow;
 
 const optionalBigInt = (
   update: bigint | null | undefined,
@@ -532,6 +564,19 @@ const optionalRounding = (
 
 const moneyFrom = (amountMinor: string, moneyCurrency: string): Money =>
   money(BigInt(amountMinor), currency(moneyCurrency));
+
+const assertPairedMoneyColumns = (
+  amountMinor: string | null,
+  moneyCurrency: string | null,
+  label: string,
+): void => {
+  if (
+    (amountMinor === null && moneyCurrency !== null) ||
+    (amountMinor !== null && moneyCurrency === null)
+  ) {
+    throw new Error(`${label} amount and currency must be stored together`);
+  }
+};
 
 const roundingToJson = (rounding: RoundingPolicy): Record<string, string> =>
   rounding.mode === "MINOR_UNIT_UP"

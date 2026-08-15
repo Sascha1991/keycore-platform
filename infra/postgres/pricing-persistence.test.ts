@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   createPricingPolicy,
   PricingConfigurationConflictError,
+  PricingConfigurationValidationError,
 } from "../../packages/platform/src/pricing/pricing-margin.js";
 import {
   currency,
@@ -15,6 +16,7 @@ import {
   type ProductId,
 } from "../../packages/platform/src/contracts.js";
 import {
+  hydrateProductPricingOverrideRow,
   insertInitialPricingPolicy,
   PostgresPricingRepository,
 } from "./pricing-repositories.js";
@@ -175,6 +177,101 @@ describe.skipIf(!connectionString)("PostgresPricingRepository", () => {
       await database.cleanup();
     }
   });
+
+  it("rejects invalid manual sell-price persistence shapes", async () => {
+    const database = await initDatabase();
+    try {
+      const { canonicalProductId } = await insertFixtureOffer(database);
+
+      await expect(
+        database.query(
+          `
+            INSERT INTO product_pricing_overrides(
+              product_id, record_version, enabled, manual_sell_price_minor,
+              manual_sell_price_currency, manual_price_version
+            )
+            VALUES ($1, 1, true, 0, 'EUR', 1)
+          `,
+          [canonicalProductId],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `
+            INSERT INTO product_pricing_overrides(
+              product_id, record_version, enabled, manual_sell_price_minor,
+              manual_price_version
+            )
+            VALUES ($1, 1, true, 100, 1)
+          `,
+          [canonicalProductId],
+        ),
+      ).rejects.toThrow();
+      await expect(
+        database.query(
+          `
+            INSERT INTO product_pricing_overrides(
+              product_id, record_version, enabled, manual_sell_price_currency
+            )
+            VALUES ($1, 1, true, 'EUR')
+          `,
+          [canonicalProductId],
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await database.cleanup();
+    }
+  });
+});
+
+describe("pricing persistence hydration", () => {
+  it("rejects invalid hydrated manual sell-price rows", () => {
+    const row = overrideRow({
+      manual_price_version: 1,
+      manual_sell_price_currency: "EUR",
+      manual_sell_price_minor: "0",
+    });
+
+    expect(() => hydrateProductPricingOverrideRow(row)).toThrow(
+      "Manual sell price must be greater than zero",
+    );
+  });
+
+  it("rejects amount/currency mismatches while allowing no manual price", () => {
+    expect(() =>
+      hydrateProductPricingOverrideRow(
+        overrideRow({
+          manual_price_version: 1,
+          manual_sell_price_currency: null,
+          manual_sell_price_minor: "100",
+        }),
+      ),
+    ).toThrow("Manual sell price amount and currency must be stored together");
+    expect(() =>
+      hydrateProductPricingOverrideRow(
+        overrideRow({
+          manual_sell_price_currency: "EUR",
+          manual_sell_price_minor: null,
+        }),
+      ),
+    ).toThrow("Manual sell price amount and currency must be stored together");
+    expect(hydrateProductPricingOverrideRow(overrideRow())).toMatchObject({
+      productId: productId("00000000-0000-4000-8000-000000000777"),
+      version: 1,
+    });
+  });
+
+  it("rejects invalid hydrated manual price versions", () => {
+    expect(() =>
+      hydrateProductPricingOverrideRow(
+        overrideRow({
+          manual_price_version: null,
+          manual_sell_price_currency: "EUR",
+          manual_sell_price_minor: "100",
+        }),
+      ),
+    ).toThrow(PricingConfigurationValidationError);
+  });
 });
 
 const initDatabase = async (): Promise<PostgresTestDatabase> =>
@@ -256,3 +353,31 @@ const snapshotCount = async (
   );
   return Number.parseInt(result.rows[0]?.count ?? "0", 10);
 };
+
+const overrideRow = (
+  overrides: Partial<
+    Parameters<typeof hydrateProductPricingOverrideRow>[0]
+  > = {},
+): Parameters<typeof hydrateProductPricingOverrideRow>[0] => ({
+  actor_ref: null,
+  created_at: new Date("2026-08-15T00:00:00.000Z"),
+  enabled: true,
+  fixed_markup_currency: null,
+  fixed_markup_minor: null,
+  manual_price_version: null,
+  manual_sell_price_currency: null,
+  manual_sell_price_minor: null,
+  markup_basis_points: null,
+  minimum_profit_currency: null,
+  minimum_profit_minor: null,
+  minimum_sell_price_currency: null,
+  minimum_sell_price_minor: null,
+  product_id: "00000000-0000-4000-8000-000000000777",
+  quote_ttl_ms: null,
+  reason: null,
+  record_version: 1,
+  rounding: null,
+  target_margin_basis_points: null,
+  updated_at: new Date("2026-08-15T00:00:00.000Z"),
+  ...overrides,
+});

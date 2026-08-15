@@ -250,6 +250,13 @@ export class PricingConfigurationConflictError extends Error {
   }
 }
 
+export class PricingConfigurationValidationError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "PricingConfigurationValidationError";
+  }
+}
+
 export class PricingService {
   private readonly now: () => Date;
   private readonly environment: AuditEvent["environment"];
@@ -309,6 +316,7 @@ export class PricingService {
     readonly update: PricingPolicyUpdate;
     readonly correlationId: CorrelationId;
   }): Promise<PricingPolicy> {
+    validatePricingPolicyUpdate(input.update);
     const policy = await this.options.policyRepository.updateActivePolicy(
       input.update,
     );
@@ -330,6 +338,7 @@ export class PricingService {
     readonly update: ProductPricingOverrideUpdate;
     readonly correlationId: CorrelationId;
   }): Promise<ProductPricingOverride> {
+    validateProductPricingOverrideUpdate(input.update);
     const override = await this.options.overrideRepository.updateOverride(
       input.update,
     );
@@ -737,25 +746,28 @@ export const createPricingPolicy = (input: {
   readonly quoteTtlMs?: number;
   readonly now: Date;
   readonly targetMarginBasisPoints?: bigint;
-}): PricingPolicy => ({
-  createdAt: input.now,
-  currency: input.currency,
-  effectiveAt: input.now,
-  enabled: input.enabled ?? true,
-  fixedMarkup: input.fixedMarkup,
-  markupBasisPoints: input.markupBasisPoints,
-  minimumProfit: input.minimumProfit,
-  minimumSellPrice: input.minimumSellPrice,
-  policyId: input.policyId,
-  policyVersion: pricingPolicyVersion,
-  rounding: input.rounding ?? { mode: "MINOR_UNIT_UP" },
-  updatedAt: input.now,
-  version: input.version ?? 1,
-  ...(input.quoteTtlMs !== undefined ? { quoteTtlMs: input.quoteTtlMs } : {}),
-  ...(input.targetMarginBasisPoints !== undefined
-    ? { targetMarginBasisPoints: input.targetMarginBasisPoints }
-    : {}),
-});
+}): PricingPolicy => {
+  const policy: PricingPolicy = {
+    createdAt: input.now,
+    currency: input.currency,
+    effectiveAt: input.now,
+    enabled: input.enabled ?? true,
+    fixedMarkup: input.fixedMarkup,
+    markupBasisPoints: input.markupBasisPoints,
+    minimumProfit: input.minimumProfit,
+    minimumSellPrice: input.minimumSellPrice,
+    policyId: input.policyId,
+    policyVersion: pricingPolicyVersion,
+    rounding: input.rounding ?? { mode: "MINOR_UNIT_UP" },
+    updatedAt: input.now,
+    version: input.version ?? 1,
+    ...(input.quoteTtlMs !== undefined ? { quoteTtlMs: input.quoteTtlMs } : {}),
+    ...(input.targetMarginBasisPoints !== undefined
+      ? { targetMarginBasisPoints: input.targetMarginBasisPoints }
+      : {}),
+  };
+  return validatePricingPolicy(policy);
+};
 
 export const markupBasisPoints = (input: {
   readonly cost: Money;
@@ -958,3 +970,193 @@ const changedOverrideFields = (
         !["productId", "expectedVersion", "actorRef", "reason"].includes(key),
     )
     .sort();
+
+export const validatePricingPolicy = (policy: PricingPolicy): PricingPolicy => {
+  assertPositiveInteger(policy.version, "Pricing policy version");
+  assertNonNegativeBasisPoints(
+    policy.markupBasisPoints,
+    "Pricing markup basis points",
+  );
+  assertTargetMargin(policy.targetMarginBasisPoints);
+  assertNonNegativeMoney(policy.fixedMarkup, "Fixed markup");
+  assertNonNegativeMoney(policy.minimumProfit, "Minimum profit");
+  assertNonNegativeMoney(policy.minimumSellPrice, "Minimum sell price");
+  assertRoundingPolicy(policy.rounding);
+  assertPositiveTtl(policy.quoteTtlMs);
+  return policy;
+};
+
+export const validatePricingPolicyUpdate = (
+  update: PricingPolicyUpdate,
+): PricingPolicyUpdate => {
+  assertPositiveInteger(
+    update.expectedVersion,
+    "Expected pricing policy version",
+  );
+  if (update.markupBasisPoints !== undefined) {
+    assertNonNegativeBasisPoints(
+      update.markupBasisPoints,
+      "Pricing markup basis points",
+    );
+  }
+  assertTargetMargin(update.targetMarginBasisPoints);
+  if (update.fixedMarkup) {
+    assertNonNegativeMoney(update.fixedMarkup, "Fixed markup");
+  }
+  if (update.minimumProfit) {
+    assertNonNegativeMoney(update.minimumProfit, "Minimum profit");
+  }
+  if (update.minimumSellPrice) {
+    assertNonNegativeMoney(update.minimumSellPrice, "Minimum sell price");
+  }
+  if (update.rounding) {
+    assertRoundingPolicy(update.rounding);
+  }
+  assertPositiveTtl(update.quoteTtlMs);
+  return update;
+};
+
+export const validateProductPricingOverride = (
+  override: ProductPricingOverride,
+): ProductPricingOverride => {
+  assertPositiveInteger(override.version, "Product pricing override version");
+  assertOptionalNonNegativeBasisPoints(
+    override.markupBasisPoints,
+    "Product markup basis points",
+  );
+  assertTargetMargin(override.targetMarginBasisPoints);
+  assertOptionalNonNegativeMoney(override.fixedMarkup, "Fixed markup override");
+  assertOptionalNonNegativeMoney(
+    override.minimumProfit,
+    "Minimum profit override",
+  );
+  assertOptionalNonNegativeMoney(
+    override.minimumSellPrice,
+    "Minimum sell price override",
+  );
+  if (override.rounding) {
+    assertRoundingPolicy(override.rounding);
+  }
+  assertPositiveTtl(override.quoteTtlMs);
+  assertManualSellPrice(override.manualSellPrice);
+  if (
+    override.manualSellPrice &&
+    (!override.manualPriceVersion || override.manualPriceVersion <= 0)
+  ) {
+    throw new PricingConfigurationValidationError(
+      "Manual price version must be greater than zero when manual price exists",
+    );
+  }
+  return override;
+};
+
+export const validateProductPricingOverrideUpdate = (
+  update: ProductPricingOverrideUpdate,
+): ProductPricingOverrideUpdate => {
+  assertOptionalNonNegativeBasisPoints(
+    update.markupBasisPoints,
+    "Product markup basis points",
+  );
+  assertTargetMargin(update.targetMarginBasisPoints);
+  assertOptionalNonNegativeMoney(update.fixedMarkup, "Fixed markup override");
+  assertOptionalNonNegativeMoney(
+    update.minimumProfit,
+    "Minimum profit override",
+  );
+  assertOptionalNonNegativeMoney(
+    update.minimumSellPrice,
+    "Minimum sell price override",
+  );
+  if (update.rounding) {
+    assertRoundingPolicy(update.rounding);
+  }
+  assertPositiveTtl(update.quoteTtlMs);
+  assertManualSellPrice(update.manualSellPrice);
+  return update;
+};
+
+const assertManualSellPrice = (value: Money | null | undefined): void => {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (value.amountMinor <= 0n) {
+    throw new PricingConfigurationValidationError(
+      "Manual sell price must be greater than zero",
+    );
+  }
+};
+
+const assertOptionalNonNegativeMoney = (
+  value: Money | null | undefined,
+  label: string,
+): void => {
+  if (value !== undefined && value !== null) {
+    assertNonNegativeMoney(value, label);
+  }
+};
+
+const assertNonNegativeMoney = (value: Money, label: string): void => {
+  if (value.amountMinor < 0n) {
+    throw new PricingConfigurationValidationError(
+      `${label} must not be negative`,
+    );
+  }
+};
+
+const assertOptionalNonNegativeBasisPoints = (
+  value: bigint | null | undefined,
+  label: string,
+): void => {
+  if (value !== undefined && value !== null) {
+    assertNonNegativeBasisPoints(value, label);
+  }
+};
+
+const assertNonNegativeBasisPoints = (value: bigint, label: string): void => {
+  if (value < 0n) {
+    throw new PricingConfigurationValidationError(
+      `${label} must not be negative`,
+    );
+  }
+};
+
+const assertTargetMargin = (value: bigint | null | undefined): void => {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (value <= 0n || value >= 10_000n) {
+    throw new PricingConfigurationValidationError(
+      "Target margin basis points must be greater than zero and less than 10000",
+    );
+  }
+};
+
+const assertPositiveTtl = (value: number | null | undefined): void => {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new PricingConfigurationValidationError(
+      "Quote TTL must be a positive integer when configured",
+    );
+  }
+};
+
+const assertPositiveInteger = (value: number, label: string): void => {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new PricingConfigurationValidationError(
+      `${label} must be a positive integer`,
+    );
+  }
+};
+
+const assertRoundingPolicy = (rounding: RoundingPolicy): void => {
+  if (rounding.mode === "MINOR_UNIT_UP") {
+    return;
+  }
+  if (rounding.endingMinor < 0n || rounding.endingMinor > 99n) {
+    throw new PricingConfigurationValidationError(
+      "Psychological ending must be within minor unit cents",
+    );
+  }
+};

@@ -38,6 +38,8 @@ Product overrides are durable per `ProductId` and selectively override global fi
 
 Manual sell price is separate from markup/margin policy. It overrides the target formula but remains subject to known cost, known fees, known tax, currency validity, minimum profit and minimum sell price.
 
+A configured manual sell price must be greater than zero. `0.00` is invalid configuration, not a valid quote that merely fails minimum-profit checks. Clearing a manual price stores no amount and no currency.
+
 ## Precedence
 
 Pricing applies deterministic precedence:
