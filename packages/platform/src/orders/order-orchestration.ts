@@ -886,7 +886,13 @@ const validatePriceLockCommercialMatch = (
 const allowedTransitions: Readonly<
   Record<OrderStatus, readonly OrderStatus[]>
 > = {
-  AWAITING_PAYMENT: ["PAYMENT_AUTHORIZED", "CANCELLED", "FAILED"],
+  AWAITING_PAYMENT: [
+    "PAYMENT_AUTHORIZED",
+    "PAYMENT_CAPTURED",
+    "CANCELLED",
+    "FAILED",
+    "MANUAL_REVIEW",
+  ],
   CANCELLED: [],
   COMPLETED: ["REFUND_PENDING"],
   CREATED: ["AWAITING_PAYMENT", "MANUAL_REVIEW"],
