@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Implemented `KS-05-04` catalog search and incremental operations foundation:
+  - added PostgreSQL-native, supplier-neutral search projections with `catalog-search-v1`;
+  - added deterministic ranking, bounded cursor pagination and safe filter support;
+  - added restartable reindex and targeted refresh operations with durable checkpoints;
+  - added safe catalog-change, webhook refresh-signal and storefront re-evaluation payloads;
+  - kept live WooCommerce, live Kinguin bulk crawl, GAMIVO, checkout, procurement and Phase 06 out of scope.
 - Implemented `KS-05-03` WooCommerce storefront publication foundation:
   - added supplier-neutral storefront publication state machine, eligibility evaluation and price boundary;
   - added durable `ProductId + storefront -> remote Woo product ID` mapping with fail-closed conflict checks;
