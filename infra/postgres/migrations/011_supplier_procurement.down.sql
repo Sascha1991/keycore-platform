@@ -1,0 +1,6 @@
+DROP INDEX IF EXISTS procurement_operations_execution_recovery_idx;
+DROP INDEX IF EXISTS procurement_operations_order_status_idx;
+DROP INDEX IF EXISTS procurement_operations_external_supplier_order_idx;
+DROP INDEX IF EXISTS procurement_operations_one_success_per_order_idx;
+DROP INDEX IF EXISTS procurement_operations_order_generation_idx;
+DROP TABLE IF EXISTS procurement_operations;
