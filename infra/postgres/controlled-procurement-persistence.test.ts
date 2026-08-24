@@ -38,7 +38,7 @@ describe.skipIf(!connectionString)(
           (repository) => repository.findById(approval.approvalId),
         );
         expect(reloaded?.tokenHash).toBe(hashExecutionToken(proofPhrase));
-        expect(JSON.stringify(reloaded)).not.toContain(proofPhrase);
+        expect(safeStringify(reloaded)).not.toContain(proofPhrase);
 
         const claim = await withRepository(database.schemaName, (repository) =>
           repository.claim({
@@ -142,7 +142,7 @@ describe.skipIf(!connectionString)(
     it("rejects expired and consumed approvals without raw unique errors", async () => {
       await withDatabase(async (database) => {
         const expired = approvalFixture({
-          expiresAt: new Date(now.getTime() - 1_000),
+          expiresAt: new Date(now.getTime() + 1_000),
         });
         await withRepository(database.schemaName, (repository) =>
           repository.create(expired),
@@ -151,7 +151,7 @@ describe.skipIf(!connectionString)(
           withRepository(database.schemaName, (repository) =>
             repository.claim({
               approvalId: expired.approvalId,
-              now,
+              now: new Date(now.getTime() + 2_000),
               tokenHash: expired.tokenHash,
             }),
           ),
@@ -291,3 +291,8 @@ class ClientBoundary implements TransactionalQueryable {
     }
   }
 }
+
+const safeStringify = (value: unknown): string =>
+  JSON.stringify(value, (_key, current) =>
+    typeof current === "bigint" ? current.toString() : current,
+  );
