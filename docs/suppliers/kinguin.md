@@ -109,6 +109,13 @@ The adapter enforces documented limits before transport:
 
 `orderExternalId` is used as a supplier-side reference, but the adapter does not claim Kinguin provides full idempotency guarantees. A timeout after `POST /v2/order` is treated as `AMBIGUOUS` and must be reconciled before any cross-supplier fallback.
 
+KS-07-03c adds a controlled `CONTROLLED_VERIFICATION` live-order path for one
+explicitly approved Kinguin order. The path uses a separate approval manifest,
+hashed one-time execution token, price-bound request fingerprint and controlled
+transport that permits only `POST /v2/order`. It does not enable normal
+customer procurement, does not retry a dispatched POST and does not retrieve
+keys.
+
 ## Key Retrieval And KeyVault Boundary
 
 Implemented documented key endpoint:

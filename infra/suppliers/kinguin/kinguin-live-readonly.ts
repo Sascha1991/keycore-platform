@@ -65,6 +65,7 @@ export class KinguinLiveReadonlyGuardedTransport implements KinguinHttpTransport
       readonly enabled: boolean;
       readonly baseUrl: string;
       readonly delegate: KinguinHttpTransport;
+      readonly allowOrderStatusLookup?: boolean;
     },
   ) {}
 
@@ -101,7 +102,13 @@ export class KinguinLiveReadonlyGuardedTransport implements KinguinHttpTransport
       this.reject("liveReadonlyHost");
     }
     const apiPath = this.apiPath(url, baseUrl);
-    if (/\/order(?:\/|$)/iu.test(apiPath) || /\/keys(?:\/|$)/iu.test(apiPath)) {
+    const safeOrderLookup =
+      Boolean(this.options.allowOrderStatusLookup) &&
+      /^\/v1\/order\/[^/]+$/u.test(apiPath);
+    if (
+      (/\/order(?:\/|$)/iu.test(apiPath) && !safeOrderLookup) ||
+      /\/keys(?:\/|$)/iu.test(apiPath)
+    ) {
       this.forbiddenRequestCount += 1;
       if (/\/keys(?:\/|$)/iu.test(apiPath)) {
         this.keyRetrievalRequestCount += 1;
@@ -137,6 +144,8 @@ export class KinguinLiveReadonlyGuardedTransport implements KinguinHttpTransport
     return (
       path === "/v1/products" ||
       /^\/v2\/products\/[^/]+$/u.test(path) ||
+      (Boolean(this.options.allowOrderStatusLookup) &&
+        /^\/v1\/order\/[^/]+$/u.test(path)) ||
       path === "/v1/regions" ||
       path === "/v1/platforms" ||
       path === "/v1/genres"

@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS controlled_procurement_status_expiry_idx;
+DROP INDEX IF EXISTS controlled_procurement_one_active_identity_idx;
+DROP INDEX IF EXISTS controlled_procurement_order_external_id_idx;
+DROP TABLE IF EXISTS controlled_procurement_approvals;
