@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added KS-07-03c controlled first live Kinguin procurement foundation with a
+  one-time approval manifest, hashed execution token, atomic PostgreSQL claim,
+  price-bound request fingerprint, dispatch-before-HTTP evidence, no retry,
+  read-only reconciliation, and no key retrieval.
 - Added KS-07-03b controlled Kinguin procurement dry-run verification with a technically read-only live transport, bounded real product sampling, Germany eligibility, synthetic verification-only pricing, deterministic purchase request fingerprinting and no supplier mutation.
 - Added KS-07-03 supplier procurement orchestration with durable operations, execution leases, dispatch-state crash safety, dry-run mode, fake-supplier execution tests and PostgreSQL persistence constraints while keeping real supplier procurement disabled.
 - Hardened KS-07-03 PostgreSQL procurement concurrency so attempt creation uses order-scoped advisory locking, lease acquisition uses an atomic conditional update, and tests use separate PostgreSQL clients for concurrent actors.

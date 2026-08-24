@@ -85,6 +85,30 @@ and must not be used to approve live sales or real procurement.
 `keycore-dryrun-`. That reference is non-production evidence and must not be
 reused for a real purchase.
 
+## Controlled First Live Kinguin Procurement
+
+KS-07-03c adds a separate `CONTROLLED_VERIFICATION` path for one explicitly
+approved Kinguin live order. It does not weaken normal customer procurement
+gates and does not fake paid customer order evidence.
+
+Preparation and candidate-list commands are read-only. They require explicit
+Kinguin product and offer identifiers, validate current availability and Germany
+eligibility, build the exact `POST /v2/order` payload locally, generate a
+`keycore-liveverify-<uuid>` `orderExternalId`, compute a deterministic request
+fingerprint and persist a short-lived approval manifest.
+
+Execution requires both approval ID and a high-entropy one-time token. Only the
+token hash is persisted. Claiming is atomic and consumes the approval before
+dispatch, so a crash or ambiguous supplier outcome cannot authorize a second
+POST. The controlled mutation transport allows only `POST /v2/order`, uses a
+finite timeout, does not follow POST redirects, performs no automatic retry and
+has no key retrieval capability.
+
+For the first live verification, price is part of the request fingerprint. Any
+price change requires a new approval; the maximum acquisition amount remains an
+additional fail-closed check. Reconciliation is read-only and never retrieves
+keys.
+
 ## Reconciliation And Webhooks
 
 Known external supplier order IDs can be reconciled through the supplier port. Unknown outcomes use only documented supplier references. KeyCore does not guess by price, product or timestamp. Kinguin webhooks remain authenticated by documented `X-Event-Name` and `X-Event-Secret` behavior; unknown supplier orders require reconciliation/manual review and are not blindly attached to customer orders.
