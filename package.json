@@ -22,6 +22,7 @@
     "db:status": "node --import tsx infra/postgres/migrate.ts status",
     "format:check": "prettier --check \"{apps,docs,decisions,infra,packages,scripts,tasks,.github}/**/*.{md,json,yml,yaml,ts,js,cjs,mjs}\" \"*.md\" \"*.json\"",
     "format": "prettier --write \"{apps,docs,decisions,infra,packages,scripts,tasks,.github}/**/*.{md,json,yml,yaml,ts,js,cjs,mjs}\" \"*.md\" \"*.json\"",
+    "kinguin:verify-procurement-dryrun": "node --import tsx scripts/kinguin-procurement-dryrun-verify.ts",
     "kinguin:verify-readonly": "node --import tsx scripts/kinguin-readonly-verify.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

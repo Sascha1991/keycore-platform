@@ -66,7 +66,7 @@ export interface KinguinConfig {
 }
 
 export interface KinguinHttpRequest {
-  readonly method: "GET" | "POST";
+  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly path: string;
   readonly query?: Readonly<Record<string, string | number | boolean>>;
   readonly body?: unknown;

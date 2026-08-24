@@ -1083,13 +1083,10 @@ describe("Kinguin live read-only guard", () => {
       });
   });
 
-  it("does not let redirects bypass the safety policy", async () => {
-    const response = await guarded(true, new RedirectingTransport()).send(
-      allowedRequest(),
-    );
-
-    expect(response.status).toBe(302);
-    expect(response.headers.location).toBe("https://evil.example/v1/products");
+  it("blocks redirects to endpoints outside the safety policy", async () => {
+    await expect(
+      guarded(true, new RedirectingTransport()).send(allowedRequest()),
+    ).rejects.toMatchObject({ category: "REJECTED" });
   });
 });
 

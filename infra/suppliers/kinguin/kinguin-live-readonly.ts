@@ -33,6 +33,9 @@ export interface KinguinReadonlyVerificationResult {
   readonly offerResolution: "SUCCEEDED" | "FAILED" | "SKIPPED";
   readonly referenceData: "SUCCEEDED" | "FAILED" | "SKIPPED";
   readonly updatedSince: "SUCCEEDED" | "FAILED" | "SKIPPED";
+  readonly forbiddenRequestCount: number;
+  readonly keyRetrievalRequestCount: number;
+  readonly mutationRequestCount: number;
   readonly differences: readonly string[];
   readonly parserFixesMade: readonly string[];
   readonly requests: readonly {
@@ -53,6 +56,9 @@ export class EnvSecretProvider implements SecretProvider {
 
 export class KinguinLiveReadonlyGuardedTransport implements KinguinHttpTransport {
   public readonly requests: { method: string; path: string }[] = [];
+  public forbiddenRequestCount = 0;
+  public keyRetrievalRequestCount = 0;
+  public mutationRequestCount = 0;
 
   public constructor(
     private readonly options: {
@@ -68,7 +74,9 @@ export class KinguinLiveReadonlyGuardedTransport implements KinguinHttpTransport
       method: request.method,
       path: this.safePath(request.path),
     });
-    return this.options.delegate.send(request);
+    const response = await this.options.delegate.send(request);
+    this.assertSafeRedirect(response);
+    return response;
   }
 
   public assertAllowed(
@@ -78,6 +86,7 @@ export class KinguinLiveReadonlyGuardedTransport implements KinguinHttpTransport
       this.reject("liveReadonlyDisabled");
     }
     if (request.method !== "GET") {
+      this.mutationRequestCount += 1;
       this.reject("liveReadonlyMethod");
     }
     const url = this.parseUrl(request.path, "liveReadonlyUrl");
@@ -93,6 +102,10 @@ export class KinguinLiveReadonlyGuardedTransport implements KinguinHttpTransport
     }
     const apiPath = this.apiPath(url, baseUrl);
     if (/\/order(?:\/|$)/iu.test(apiPath) || /\/keys(?:\/|$)/iu.test(apiPath)) {
+      this.forbiddenRequestCount += 1;
+      if (/\/keys(?:\/|$)/iu.test(apiPath)) {
+        this.keyRetrievalRequestCount += 1;
+      }
       this.reject("liveReadonlyForbiddenPath");
     }
     if (!this.isAllowedPath(apiPath)) {
@@ -133,6 +146,21 @@ export class KinguinLiveReadonlyGuardedTransport implements KinguinHttpTransport
   private safePath(value: string): string {
     const url = new URL(value);
     return `${url.pathname}${url.search}`;
+  }
+
+  private assertSafeRedirect(response: KinguinHttpResponse): void {
+    if (response.status < 300 || response.status >= 400) {
+      return;
+    }
+    const location = response.headers.location ?? response.headers.Location;
+    if (!location) {
+      return;
+    }
+    try {
+      this.assertAllowed({ method: "GET", path: location });
+    } catch {
+      this.reject("liveReadonlyRedirect");
+    }
   }
 
   private reject(operation: string): never {
@@ -200,7 +228,10 @@ export const runKinguinReadonlyVerification = async (
       differences: [summarizeDifference("Live read-only opt-in is disabled.")],
       endpointsTested: [],
       environment: config.environment,
+      forbiddenRequestCount: 0,
       inspectedProductRecords: 0,
+      keyRetrievalRequestCount: 0,
+      mutationRequestCount: 0,
       normalization: "SKIPPED",
       offerResolution: "SKIPPED",
       pagination: "SKIPPED",
@@ -290,7 +321,10 @@ export const runKinguinReadonlyVerification = async (
     differences,
     endpointsTested: [...endpoints],
     environment: config.environment,
+    forbiddenRequestCount: transport.forbiddenRequestCount,
     inspectedProductRecords: inspected,
+    keyRetrievalRequestCount: transport.keyRetrievalRequestCount,
+    mutationRequestCount: transport.mutationRequestCount,
     normalization: "SUCCEEDED",
     offerResolution,
     pagination: "SUCCEEDED",
