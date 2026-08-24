@@ -6,7 +6,7 @@ import {
 
 const main = async (): Promise<void> => {
   const env = loadLocalEnv();
-  const { pool, service } = await serviceFromEnv(env);
+  const { pool, service } = await serviceFromEnv(env, "READ_ONLY");
   try {
     const result = await service.listCandidates({ limit: 10 });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

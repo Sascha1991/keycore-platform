@@ -86,9 +86,12 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
     readonly approvalId: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      status: "CANCELLED",
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      { status: "CANCELLED" },
+      "status IN ('PENDING_APPROVAL', 'APPROVED') AND dispatch_state = 'NOT_DISPATCHED'",
+    );
   }
 
   public async claim(input: {
@@ -140,28 +143,41 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
     readonly approvalId: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      dispatchStartedAt: input.now,
-      dispatchState: "DISPATCH_STARTED",
-      status: "CONSUMED",
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        dispatchStartedAt: input.now,
+        dispatchState: "DISPATCH_STARTED",
+        status: "CONSUMED",
+      },
+      "status = 'CONSUMED' AND dispatch_state = 'CLAIMED'",
+    );
   }
 
   public async markConfirmed(input: {
     readonly approvalId: string;
     readonly externalSupplierOrderId: string;
+    readonly source?: "RECONCILIATION";
     readonly supplierStatus: string;
     readonly responseFingerprint: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      completedAt: input.now,
-      dispatchState: "DISPATCH_CONFIRMED",
-      externalSupplierOrderId: input.externalSupplierOrderId,
-      responseFingerprint: input.responseFingerprint,
-      status: "PROCUREMENT_CONFIRMED",
-      supplierStatus: input.supplierStatus,
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        completedAt: input.now,
+        dispatchState: "DISPATCH_CONFIRMED",
+        externalSupplierOrderId: input.externalSupplierOrderId,
+        responseFingerprint: input.responseFingerprint,
+        status: "PROCUREMENT_CONFIRMED",
+        supplierStatus: input.supplierStatus,
+      },
+      input.source === "RECONCILIATION"
+        ? "status = 'AMBIGUOUS' AND dispatch_state = 'DISPATCH_AMBIGUOUS'"
+        : "status = 'CONSUMED' AND dispatch_state = 'DISPATCH_STARTED'",
+    );
   }
 
   public async markRejected(input: {
@@ -170,13 +186,18 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
     readonly responseFingerprint?: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      completedAt: input.now,
-      dispatchState: "DISPATCH_REJECTED",
-      failureReasonCode: input.reasonCode,
-      responseFingerprint: input.responseFingerprint ?? null,
-      status: "PROCUREMENT_REJECTED",
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        completedAt: input.now,
+        dispatchState: "DISPATCH_REJECTED",
+        failureReasonCode: input.reasonCode,
+        responseFingerprint: input.responseFingerprint ?? null,
+        status: "PROCUREMENT_REJECTED",
+      },
+      "status = 'CONSUMED' AND dispatch_state = 'DISPATCH_STARTED'",
+    );
   }
 
   public async markAmbiguous(input: {
@@ -186,13 +207,18 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
     readonly responseFingerprint?: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      dispatchState: "DISPATCH_AMBIGUOUS",
-      externalSupplierOrderId: input.externalSupplierOrderId ?? null,
-      failureReasonCode: input.reasonCode,
-      responseFingerprint: input.responseFingerprint ?? null,
-      status: "AMBIGUOUS",
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        dispatchState: "DISPATCH_AMBIGUOUS",
+        externalSupplierOrderId: input.externalSupplierOrderId ?? null,
+        failureReasonCode: input.reasonCode,
+        responseFingerprint: input.responseFingerprint ?? null,
+        status: "AMBIGUOUS",
+      },
+      "status = 'CONSUMED' AND dispatch_state = 'DISPATCH_STARTED'",
+    );
   }
 
   public async markManualReview(input: {
@@ -200,16 +226,22 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
     readonly reasonCode: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      failureReasonCode: input.reasonCode,
-      status: "MANUAL_REVIEW_REQUIRED",
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        failureReasonCode: input.reasonCode,
+        status: "MANUAL_REVIEW_REQUIRED",
+      },
+      "status NOT IN ('PROCUREMENT_CONFIRMED', 'PROCUREMENT_REJECTED', 'AMBIGUOUS')",
+    );
   }
 
-  private async patch(
+  private async transition(
     approvalId: string,
     now: Date,
     patch: Partial<ControlledProcurementApproval>,
+    predicateSql: string,
   ): Promise<ControlledProcurementApproval | null> {
     const current = await findById(this.db, approvalId);
     if (!current) {
@@ -237,6 +269,8 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
           record_version = record_version + 1,
           updated_at = $12
         WHERE id = $1
+          AND record_version = $13
+          AND ${predicateSql}
         RETURNING ${returning}
       `,
       [
@@ -252,9 +286,23 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
         next.dispatchStartedAt ?? null,
         next.completedAt ?? null,
         now,
+        current.recordVersion,
       ],
     );
     return result.rows[0] ? fromRow(result.rows[0]) : null;
+  }
+
+  private async patch(
+    approvalId: string,
+    now: Date,
+    patch: Partial<ControlledProcurementApproval>,
+  ): Promise<ControlledProcurementApproval | null> {
+    return this.transition(
+      approvalId,
+      now,
+      patch,
+      "record_version = record_version",
+    );
   }
 }
 

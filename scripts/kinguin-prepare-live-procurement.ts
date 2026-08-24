@@ -24,7 +24,7 @@ const main = async (): Promise<void> => {
     );
   }
   const parsedMax = BigInt(maxMinor);
-  const { pool, service } = await serviceFromEnv(env);
+  const { pool, service } = await serviceFromEnv(env, "READ_ONLY");
   try {
     const result = await service.prepare({
       correlationId: correlationId("controlled-live-prepare"),

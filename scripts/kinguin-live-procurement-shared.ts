@@ -35,6 +35,7 @@ export const loadLocalEnv = (): Readonly<
 
 export const serviceFromEnv = async (
   env: Readonly<Record<string, string | undefined>>,
+  mode: "READ_ONLY" | "CONTROLLED_MUTATION",
 ) => {
   const connectionString = env.KEYCORE_DATABASE_URL;
   if (!connectionString) {
@@ -44,7 +45,11 @@ export const serviceFromEnv = async (
   const repository = new PostgresControlledProcurementApprovalRepository(
     new PostgresTransactionBoundary(pool),
   );
-  const service = createControlledLiveServiceFromEnv({ env, repository });
+  const service = createControlledLiveServiceFromEnv({
+    env,
+    mode,
+    repository,
+  });
   return { pool, service };
 };
 

@@ -16,6 +16,7 @@ import {
 import {
   buildControlledPurchaseRequest,
   controlledLiveConfigFromEnv,
+  createControlledLiveServiceFromEnv,
   generateExecutionToken,
   hashExecutionToken,
   InMemoryControlledProcurementApprovalRepository,
@@ -460,6 +461,141 @@ describe("controlled Kinguin live procurement", () => {
         KEYCORE_KINGUIN_CONTROLLED_MUTATION_MODE: undefined,
       }),
     ).toThrow(SupplierError);
+  });
+
+  it("enforces real execution composition validators before controlled POST capability", () => {
+    for (const unsafeEnv of [
+      { ...env, KINGUIN_API_BASE_URL: "https://example.com/esa/api" },
+      { ...env, KINGUIN_API_BASE_URL: "http://gateway.kinguin.net/esa/api" },
+      { ...env, KINGUIN_ENVIRONMENT: "SANDBOX" },
+      { ...env, KINGUIN_API_KEY: "" },
+      { ...env, KINGUIN_API_BASE_URL: "https://gateway.kinguin.net/api" },
+    ]) {
+      expect(() =>
+        createControlledLiveServiceFromEnv({
+          env: unsafeEnv,
+          mode: "CONTROLLED_MUTATION",
+          repository: new InMemoryControlledProcurementApprovalRepository(),
+        }),
+      ).toThrow(SupplierError);
+    }
+
+    expect(() =>
+      createControlledLiveServiceFromEnv({
+        env,
+        mode: "CONTROLLED_MUTATION",
+        repository: new InMemoryControlledProcurementApprovalRepository(),
+      }),
+    ).not.toThrow();
+  });
+
+  it("enforces real readonly command composition and keeps it without POST capability", async () => {
+    expect(() =>
+      createControlledLiveServiceFromEnv({
+        env: { ...env, KEYCORE_ALLOW_KINGUIN_LIVE_READONLY: "false" },
+        mode: "READ_ONLY",
+        repository: new InMemoryControlledProcurementApprovalRepository(),
+      }),
+    ).toThrow(SupplierError);
+    expect(() =>
+      createControlledLiveServiceFromEnv({
+        env: { ...env, KINGUIN_API_BASE_URL: "https://example.com/esa/api" },
+        mode: "READ_ONLY",
+        repository: new InMemoryControlledProcurementApprovalRepository(),
+      }),
+    ).toThrow(SupplierError);
+
+    const repository = new InMemoryControlledProcurementApprovalRepository();
+    const transport = new FakeTransport();
+    const service = createControlledLiveServiceFromEnv({
+      env,
+      mode: "READ_ONLY",
+      readOnlyTransport: transport,
+      repository,
+    });
+    const prepared = await service.prepare(prepareInput());
+    const execute = await service.execute({
+      approvalId: prepared.approvalId,
+      correlationId: correlationId("readonly-execute"),
+      executionToken: prepared.oneTimeExecutionToken,
+    });
+
+    expect(execute).toMatchObject({
+      reasonCode: "CONTROLLED_MUTATION_MODE_REQUIRED",
+      status: "BLOCKED",
+    });
+    expect(
+      transport.requests.every((request) => request.method === "GET"),
+    ).toBe(true);
+  });
+
+  it("uses guarded readonly reconciliation instead of a generic mutating transport", async () => {
+    const repository = new InMemoryControlledProcurementApprovalRepository();
+    const transport = new FakeTransport({
+      orderLookupResponse: {
+        orderExternalId: "keycore-liveverify-fixed",
+        orderId: "KNG-ORDER-1",
+        status: "completed",
+      },
+    });
+    const service = createControlledLiveServiceFromEnv({
+      env,
+      mode: "READ_ONLY",
+      readOnlyTransport: transport,
+      repository,
+    });
+    const prepared = await service.prepare(prepareInput());
+    const claim = await repository.claim({
+      approvalId: prepared.approvalId,
+      now,
+      tokenHash: hashExecutionToken(prepared.oneTimeExecutionToken),
+    });
+    expect(claim.status).toBe("CLAIMED");
+    await repository.markDispatchStarted({
+      approvalId: prepared.approvalId,
+      now,
+    });
+    await repository.markAmbiguous({
+      approvalId: prepared.approvalId,
+      externalSupplierOrderId: "KNG-ORDER-1",
+      now,
+      reasonCode: "SUPPLIER_MUTATION_OUTCOME_AMBIGUOUS",
+    });
+
+    await service.reconcile({ approvalId: prepared.approvalId });
+
+    expect(transport.requests.map((request) => request.method)).toEqual([
+      "GET",
+      "GET",
+      "GET",
+    ]);
+    expect(
+      transport.requests.some((request) => request.path.includes("/keys")),
+    ).toBe(false);
+  });
+
+  it("pins controlled mutation transport to the production Kinguin order endpoint", async () => {
+    await expect(
+      new KinguinControlledOrderTransport({
+        baseUrl: "https://example.com/esa/api",
+        delegate: new FakeTransport(),
+      }).createOrder(request("POST", "/v2/order")),
+    ).rejects.toHaveProperty(
+      "context.operation",
+      "CONTROLLED_ORDER_ENDPOINT_BLOCKED",
+    );
+    await expect(
+      new KinguinControlledOrderTransport({
+        baseUrl: env.KINGUIN_API_BASE_URL,
+        delegate: new FakeTransport(),
+      }).createOrder({
+        ...request("POST", "/v2/order"),
+        path: "https://gateway.kinguin.net/esa/api/v2/order?replay=true",
+      }),
+    ).rejects.toHaveProperty(
+      "context.operation",
+      "CONTROLLED_ORDER_ENDPOINT_BLOCKED",
+    );
   });
 });
 

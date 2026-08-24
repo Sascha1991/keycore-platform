@@ -15,7 +15,7 @@ const main = async (): Promise<void> => {
       "Usage: npm run kinguin:execute-approved-procurement -- <approvalId> <executionToken>",
     );
   }
-  const { pool, service } = await serviceFromEnv(env);
+  const { pool, service } = await serviceFromEnv(env, "CONTROLLED_MUTATION");
   try {
     const result = await service.execute({
       approvalId,

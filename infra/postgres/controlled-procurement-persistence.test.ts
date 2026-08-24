@@ -105,6 +105,20 @@ describe.skipIf(!connectionString)(
         await expect(
           approvalStatus(database, ambiguous.approvalId),
         ).resolves.toBe("AMBIGUOUS:DISPATCH_AMBIGUOUS");
+
+        const reconciled = await withRepository(
+          database.schemaName,
+          (repository) =>
+            repository.markConfirmed({
+              approvalId: ambiguous.approvalId,
+              externalSupplierOrderId: "KNG-RECONCILED",
+              now,
+              responseFingerprint: "1".repeat(64),
+              source: "RECONCILIATION",
+              supplierStatus: "completed",
+            }),
+        );
+        expect(reconciled?.status).toBe("PROCUREMENT_CONFIRMED");
       });
     });
 
@@ -180,6 +194,147 @@ describe.skipIf(!connectionString)(
             }),
           ),
         ).resolves.toMatchObject({ status: "APPROVAL_ALREADY_CONSUMED" });
+      });
+    });
+
+    it("enforces conditional lifecycle transitions without raw database errors", async () => {
+      await withDatabase(async (database) => {
+        const unclaimed = approvalFixture();
+        await withRepository(database.schemaName, (repository) =>
+          repository.create(unclaimed),
+        );
+        await expect(
+          withRepository(database.schemaName, (repository) =>
+            repository.markDispatchStarted({
+              approvalId: unclaimed.approvalId,
+              now,
+            }),
+          ),
+        ).resolves.toBeNull();
+
+        await withRepository(database.schemaName, (repository) =>
+          repository.cancel({ approvalId: unclaimed.approvalId, now }),
+        );
+        await expect(
+          withRepository(database.schemaName, (repository) =>
+            repository.markDispatchStarted({
+              approvalId: unclaimed.approvalId,
+              now,
+            }),
+          ),
+        ).resolves.toBeNull();
+
+        const confirmed = await createClaimedAndDispatched(database);
+        const firstConfirm = await withRepository(
+          database.schemaName,
+          (repository) =>
+            repository.markConfirmed({
+              approvalId: confirmed.approvalId,
+              externalSupplierOrderId: "KNG-CONFIRMED",
+              now,
+              responseFingerprint: "d".repeat(64),
+              supplierStatus: "processing",
+            }),
+        );
+        expect(firstConfirm?.status).toBe("PROCUREMENT_CONFIRMED");
+        await expect(
+          withRepository(database.schemaName, (repository) =>
+            repository.cancel({ approvalId: confirmed.approvalId, now }),
+          ),
+        ).resolves.toBeNull();
+        await expect(
+          withRepository(database.schemaName, (repository) =>
+            repository.markAmbiguous({
+              approvalId: confirmed.approvalId,
+              now,
+              reasonCode: "STALE_AMBIGUOUS",
+            }),
+          ),
+        ).resolves.toBeNull();
+        await expect(
+          approvalStatus(database, confirmed.approvalId),
+        ).resolves.toBe("PROCUREMENT_CONFIRMED:DISPATCH_CONFIRMED");
+
+        const ambiguous = await createClaimedAndDispatched(database);
+        await withRepository(database.schemaName, (repository) =>
+          repository.markAmbiguous({
+            approvalId: ambiguous.approvalId,
+            now,
+            reasonCode: "SUPPLIER_MUTATION_OUTCOME_AMBIGUOUS",
+          }),
+        );
+        await expect(
+          withRepository(database.schemaName, (repository) =>
+            repository.markConfirmed({
+              approvalId: ambiguous.approvalId,
+              externalSupplierOrderId: "KNG-LATE",
+              now,
+              responseFingerprint: "e".repeat(64),
+              supplierStatus: "completed",
+            }),
+          ),
+        ).resolves.toBeNull();
+        await expect(
+          approvalStatus(database, ambiguous.approvalId),
+        ).resolves.toBe("AMBIGUOUS:DISPATCH_AMBIGUOUS");
+      });
+    });
+
+    it("allows dispatch exactly once and prevents stale competing result writers", async () => {
+      await withDatabase(async (database) => {
+        const approval = approvalFixture({
+          tokenHash: hashExecutionToken("race-proof"),
+        });
+        await withRepository(database.schemaName, (repository) =>
+          repository.create(approval),
+        );
+        await withRepository(database.schemaName, (repository) =>
+          repository.claim({
+            approvalId: approval.approvalId,
+            now,
+            tokenHash: hashExecutionToken("race-proof"),
+          }),
+        );
+
+        const dispatches = await Promise.all(
+          Array.from({ length: 2 }, () =>
+            withRepository(database.schemaName, (repository) =>
+              repository.markDispatchStarted({
+                approvalId: approval.approvalId,
+                now,
+              }),
+            ),
+          ),
+        );
+        expect(dispatches.filter(Boolean)).toHaveLength(1);
+        await expect(
+          approvalStatus(database, approval.approvalId),
+        ).resolves.toBe("CONSUMED:DISPATCH_STARTED");
+
+        const results = await Promise.all([
+          withRepository(database.schemaName, (repository) =>
+            repository.markConfirmed({
+              approvalId: approval.approvalId,
+              externalSupplierOrderId: "KNG-RACE",
+              now,
+              responseFingerprint: "f".repeat(64),
+              supplierStatus: "processing",
+            }),
+          ),
+          withRepository(database.schemaName, (repository) =>
+            repository.markRejected({
+              approvalId: approval.approvalId,
+              now,
+              reasonCode: "STALE_REJECTION",
+              responseFingerprint: "0".repeat(64),
+            }),
+          ),
+        ]);
+        expect(results.filter(Boolean)).toHaveLength(1);
+        expect([
+          "PROCUREMENT_CONFIRMED:DISPATCH_CONFIRMED",
+          "PROCUREMENT_REJECTED:DISPATCH_REJECTED",
+        ]).toContain(await approvalStatus(database, approval.approvalId));
       });
     });
   },
@@ -265,6 +420,34 @@ const withDatabase = async (
   } finally {
     await database.cleanup();
   }
+};
+
+const createClaimedAndDispatched = async (
+  database: PostgresTestDatabase,
+): Promise<ControlledProcurementApproval> => {
+  const approval = approvalFixture({
+    approvalId: randomUUID(),
+    orderExternalId: `keycore-liveverify-${randomUUID()}`,
+  });
+  await withRepository(database.schemaName, (repository) =>
+    repository.create(approval),
+  );
+  const claim = await withRepository(database.schemaName, (repository) =>
+    repository.claim({
+      approvalId: approval.approvalId,
+      now,
+      tokenHash: approval.tokenHash,
+    }),
+  );
+  expect(claim.status).toBe("CLAIMED");
+  const dispatch = await withRepository(database.schemaName, (repository) =>
+    repository.markDispatchStarted({
+      approvalId: approval.approvalId,
+      now,
+    }),
+  );
+  expect(dispatch?.dispatchState).toBe("DISPATCH_STARTED");
+  return approval;
 };
 
 class ClientBoundary implements TransactionalQueryable {

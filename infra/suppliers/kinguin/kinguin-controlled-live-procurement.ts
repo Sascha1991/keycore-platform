@@ -26,6 +26,7 @@ import {
   type SupplierProductId,
 } from "../../../packages/platform/src/contracts.js";
 import { EnvSecretProvider } from "./kinguin-live-readonly.js";
+import { KinguinLiveReadonlyGuardedTransport } from "./kinguin-live-readonly.js";
 import {
   FetchKinguinHttpTransport,
   InMemoryKinguinOfferProductIndex,
@@ -141,6 +142,7 @@ export interface ControlledProcurementApprovalRepository {
   markConfirmed(input: {
     readonly approvalId: string;
     readonly externalSupplierOrderId: string;
+    readonly source?: "RECONCILIATION";
     readonly supplierStatus: string;
     readonly responseFingerprint: string;
     readonly now: Date;
@@ -245,6 +247,9 @@ export interface ControlledReconcileResult {
 
 const supplier = supplierId("kinguin");
 const allowedProductionBaseUrl = "https://gateway.kinguin.net/esa/api";
+const allowedProductionProtocol = "https:";
+const allowedProductionHost = "gateway.kinguin.net";
+const allowedProductionBasePath = "/esa/api";
 const operationVersion = "KINGUIN_CONTROLLED_LIVE_ORDER_V1";
 const defaultApprovalTtlMs = 5 * 60 * 1_000;
 const defaultOrderTimeoutMs = 10_000;
@@ -326,12 +331,21 @@ export class KinguinControlledOrderTransport {
     const url = new URL(request.path);
     const base = new URL(this.options.baseUrl);
     const basePath = base.pathname.replace(/\/$/u, "");
-    const apiPath = url.pathname.slice(basePath.length) || "/";
+    const apiPath =
+      url.pathname === basePath
+        ? "/"
+        : url.pathname.startsWith(`${basePath}/`)
+          ? url.pathname.slice(basePath.length)
+          : "";
     if (
       request.method !== "POST" ||
-      url.protocol !== "https:" ||
-      url.hostname !== base.hostname ||
-      apiPath !== "/v2/order"
+      base.protocol !== allowedProductionProtocol ||
+      base.hostname !== allowedProductionHost ||
+      basePath !== allowedProductionBasePath ||
+      url.protocol !== allowedProductionProtocol ||
+      url.hostname !== allowedProductionHost ||
+      apiPath !== "/v2/order" ||
+      url.search !== ""
     ) {
       this.forbiddenRequestCount += 1;
       throw controlledError("CONTROLLED_ORDER_ENDPOINT_BLOCKED");
@@ -689,6 +703,7 @@ export class ControlledLiveProcurementService {
             reference: approval.externalSupplierOrderId,
             version: operationVersion,
           }),
+          source: "RECONCILIATION",
           supplierStatus: "confirmed-by-reconciliation",
         });
         return {
@@ -784,7 +799,7 @@ export class ControlledLiveProcurementService {
     const mapped = await this.options.offerIndex.resolveProductForOffer(
       input.supplierOfferId,
     );
-    if (mapped !== input.supplierProductId) {
+    if (mapped && mapped !== input.supplierProductId) {
       throw controlledError("OFFER_MAPPING_CHANGED");
     }
     const product = await this.options.readOnlySupplier.getProduct(
@@ -923,9 +938,17 @@ export class InMemoryControlledProcurementApprovalRepository implements Controll
     readonly approvalId: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      status: "CANCELLED",
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        status: "CANCELLED",
+      },
+      (current) =>
+        (current.status === "PENDING_APPROVAL" ||
+          current.status === "APPROVED") &&
+        current.dispatchState === "NOT_DISPATCHED",
+    );
   }
 
   public async claim(input: {
@@ -968,28 +991,45 @@ export class InMemoryControlledProcurementApprovalRepository implements Controll
     readonly approvalId: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      dispatchStartedAt: input.now,
-      dispatchState: "DISPATCH_STARTED",
-      status: "CONSUMED",
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        dispatchStartedAt: input.now,
+        dispatchState: "DISPATCH_STARTED",
+        status: "CONSUMED",
+      },
+      (current) =>
+        current.status === "CONSUMED" && current.dispatchState === "CLAIMED",
+    );
   }
 
   public async markConfirmed(input: {
     readonly approvalId: string;
     readonly externalSupplierOrderId: string;
+    readonly source?: "RECONCILIATION";
     readonly supplierStatus: string;
     readonly responseFingerprint: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      completedAt: input.now,
-      dispatchState: "DISPATCH_CONFIRMED",
-      externalSupplierOrderId: input.externalSupplierOrderId,
-      responseFingerprint: input.responseFingerprint,
-      status: "PROCUREMENT_CONFIRMED",
-      supplierStatus: input.supplierStatus,
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        completedAt: input.now,
+        dispatchState: "DISPATCH_CONFIRMED",
+        externalSupplierOrderId: input.externalSupplierOrderId,
+        responseFingerprint: input.responseFingerprint,
+        status: "PROCUREMENT_CONFIRMED",
+        supplierStatus: input.supplierStatus,
+      },
+      (current) =>
+        (current.status === "CONSUMED" &&
+          current.dispatchState === "DISPATCH_STARTED") ||
+        (input.source === "RECONCILIATION" &&
+          current.status === "AMBIGUOUS" &&
+          current.dispatchState === "DISPATCH_AMBIGUOUS"),
+    );
   }
 
   public async markRejected(input: {
@@ -998,13 +1038,20 @@ export class InMemoryControlledProcurementApprovalRepository implements Controll
     readonly responseFingerprint?: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      completedAt: input.now,
-      dispatchState: "DISPATCH_REJECTED",
-      failureReasonCode: input.reasonCode,
-      responseFingerprint: input.responseFingerprint ?? null,
-      status: "PROCUREMENT_REJECTED",
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        completedAt: input.now,
+        dispatchState: "DISPATCH_REJECTED",
+        failureReasonCode: input.reasonCode,
+        responseFingerprint: input.responseFingerprint ?? null,
+        status: "PROCUREMENT_REJECTED",
+      },
+      (current) =>
+        current.status === "CONSUMED" &&
+        current.dispatchState === "DISPATCH_STARTED",
+    );
   }
 
   public async markAmbiguous(input: {
@@ -1014,13 +1061,20 @@ export class InMemoryControlledProcurementApprovalRepository implements Controll
     readonly responseFingerprint?: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      dispatchState: "DISPATCH_AMBIGUOUS",
-      externalSupplierOrderId: input.externalSupplierOrderId ?? null,
-      failureReasonCode: input.reasonCode,
-      responseFingerprint: input.responseFingerprint ?? null,
-      status: "AMBIGUOUS",
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        dispatchState: "DISPATCH_AMBIGUOUS",
+        externalSupplierOrderId: input.externalSupplierOrderId ?? null,
+        failureReasonCode: input.reasonCode,
+        responseFingerprint: input.responseFingerprint ?? null,
+        status: "AMBIGUOUS",
+      },
+      (current) =>
+        current.status === "CONSUMED" &&
+        current.dispatchState === "DISPATCH_STARTED",
+    );
   }
 
   public async markManualReview(input: {
@@ -1028,10 +1082,33 @@ export class InMemoryControlledProcurementApprovalRepository implements Controll
     readonly reasonCode: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
-    return this.patch(input.approvalId, input.now, {
-      failureReasonCode: input.reasonCode,
-      status: "MANUAL_REVIEW_REQUIRED",
-    });
+    return this.transition(
+      input.approvalId,
+      input.now,
+      {
+        failureReasonCode: input.reasonCode,
+        status: "MANUAL_REVIEW_REQUIRED",
+      },
+      (current) =>
+        ![
+          "PROCUREMENT_CONFIRMED",
+          "PROCUREMENT_REJECTED",
+          "AMBIGUOUS",
+        ].includes(current.status),
+    );
+  }
+
+  private async transition(
+    approvalId: string,
+    now: Date,
+    patch: Partial<ControlledProcurementApproval>,
+    canTransition: (current: ControlledProcurementApproval) => boolean,
+  ): Promise<ControlledProcurementApproval | null> {
+    const current = this.approvals.get(approvalId);
+    if (!current || !canTransition(current)) {
+      return null;
+    }
+    return this.patch(approvalId, now, patch);
   }
 
   private async patch(
@@ -1101,31 +1178,50 @@ export const createControlledLiveServiceFromEnv = (input: {
   readonly repository: ControlledProcurementApprovalRepository;
   readonly mutationTransport?: KinguinHttpTransport;
   readonly readOnlyTransport?: KinguinHttpTransport;
+  readonly mode: "READ_ONLY" | "CONTROLLED_MUTATION";
 }): ControlledLiveProcurementService => {
-  const config = createKinguinConfigFromEnv(input.env);
-  const controlled = controlledLiveConfigFromEnv(input.env);
+  const config =
+    input.mode === "CONTROLLED_MUTATION"
+      ? validateControlledMutationConfig(input.env)
+      : validateControlledReadOnlyConfig(input.env);
+  const controlledFromEnv = controlledLiveConfigFromEnv(input.env);
+  const controlled =
+    input.mode === "READ_ONLY"
+      ? { ...controlledFromEnv, productionPurchasingEnabled: false }
+      : controlledFromEnv;
   const offerIndex = new InMemoryKinguinOfferProductIndex();
+  const readOnlyGuard = new KinguinLiveReadonlyGuardedTransport({
+    allowOrderStatusLookup: true,
+    baseUrl: config.baseUrl,
+    delegate: input.readOnlyTransport ?? new FetchKinguinHttpTransport(),
+    enabled: true,
+  });
   const readOnlyClient = new KinguinHttpClient(
     config,
     new EnvSecretProvider(input.env),
-    input.readOnlyTransport ?? new FetchKinguinHttpTransport(),
+    readOnlyGuard,
   );
-  const orderGuard = new KinguinControlledOrderTransport({
-    baseUrl: config.baseUrl,
-    delegate: input.mutationTransport ?? new FetchKinguinHttpTransport(),
-  });
-  const orderClient = new KinguinHttpClient(
-    { ...config, timeoutMs: controlled.orderTimeoutMs },
-    new EnvSecretProvider(input.env),
-    { send: (request) => orderGuard.createOrder(request) },
-  );
+  const orderGuard =
+    input.mode === "CONTROLLED_MUTATION"
+      ? new KinguinControlledOrderTransport({
+          baseUrl: config.baseUrl,
+          delegate: input.mutationTransport ?? new FetchKinguinHttpTransport(),
+        })
+      : undefined;
+  const orderClient = orderGuard
+    ? new KinguinHttpClient(
+        { ...config, timeoutMs: controlled.orderTimeoutMs },
+        new EnvSecretProvider(input.env),
+        { send: (request) => orderGuard.createOrder(request) },
+      )
+    : undefined;
   return new ControlledLiveProcurementService({
     config: controlled,
     offerIndex,
-    orderClient,
-    orderTransport: orderGuard,
     readOnlySupplier: new KinguinSupplier(readOnlyClient, offerIndex),
     repository: input.repository,
+    ...(orderClient ? { orderClient } : {}),
+    ...(orderGuard ? { orderTransport: orderGuard } : {}),
   });
 };
 

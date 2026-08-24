@@ -11,7 +11,20 @@ Real Kinguin procurement remains disabled by default. A Kinguin API key or
 `KEYCORE_ALLOW_KINGUIN_LIVE_READONLY=true` never enables mutation. The live
 execution command additionally requires
 `KEYCORE_KINGUIN_CONTROLLED_MUTATION_MODE=CONTROLLED_VERIFICATION_ONE_TIME`,
-a durable approval ID and the matching one-time execution token.
+a durable approval ID and the matching one-time execution token. Because
+execution performs a final live read-only preflight immediately before
+purchase, the execution path also requires
+`KEYCORE_ALLOW_KINGUIN_LIVE_READONLY=true`.
+
+The real CLI composition path validates the exact production boundary before
+building the controlled mutation client:
+
+- `KINGUIN_ENVIRONMENT=PRODUCTION`;
+- `KINGUIN_API_BASE_URL=https://gateway.kinguin.net/esa/api`;
+- HTTPS;
+- API key present;
+- read-only opt-in present;
+- controlled one-time mutation mode present.
 
 The normal customer procurement gates remain unchanged: customer procurement
 still requires captured payment, approved risk, safe profitability, supplier
@@ -78,11 +91,31 @@ sends `POST /v2/order`.
 No PostgreSQL transaction is held across HTTP. If a crash happens after claim,
 the approval is not reusable automatically. If a crash or network ambiguity
 happens after dispatch, the state is `AMBIGUOUS` and must reconcile.
+`DISPATCH_STARTED` is conditional on the current state being `CONSUMED` and
+`CLAIMED`; if that write cannot prove ownership, no supplier POST is sent.
+
+Lifecycle writes are fail-closed:
+
+- `cancel` only applies before claim while approval is
+  `PENDING_APPROVAL`/`APPROVED` and `NOT_DISPATCHED`;
+- `markDispatchStarted` only applies from `CONSUMED` and `CLAIMED`;
+- supplier response confirmation/rejection/ambiguity only applies from
+  `CONSUMED` and `DISPATCH_STARTED`;
+- reconciliation confirmation must be explicitly marked as reconciliation and
+  only applies from `AMBIGUOUS` and `DISPATCH_AMBIGUOUS`;
+- terminal states are not overwritten by stale writers.
 
 ## Transport
 
-Read-only preparation and reconciliation use GET-only Kinguin access. The
-controlled mutation transport exposes only the exact order-create operation:
+Read-only candidate listing, preparation and reconciliation use a guarded
+GET-only Kinguin transport. It allows product/reference endpoints and the
+narrow reconciliation order-status lookup, blocks non-GET methods, blocks key
+paths, blocks order mutation and rejects unsafe redirects.
+
+The controlled mutation transport independently pins the production boundary
+instead of trusting arbitrary configuration. It requires scheme `https`, host
+`gateway.kinguin.net`, base path `/esa/api`, no query string and exposes only
+the exact order-create operation:
 
 `POST /v2/order`
 
