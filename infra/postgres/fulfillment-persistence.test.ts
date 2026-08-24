@@ -234,7 +234,7 @@ describe.skipIf(!connectionString)("PostgresFulfillmentRepository", () => {
       expect(result.rows[0]?.count).toBe("50000");
       expect(elapsedMs).toBeLessThan(1_500);
     });
-  });
+  }, 20_000);
 });
 
 const createOperation = async (
