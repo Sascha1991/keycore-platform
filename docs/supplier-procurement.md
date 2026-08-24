@@ -51,6 +51,40 @@ Execution modes are:
 
 Real Kinguin procurement remains disabled in KS-07-03. No controlled live-purchase flag is added.
 
+## Controlled Real-Data Dry-Run Verification
+
+KS-07-03b adds `npm run kinguin:verify-procurement-dryrun` as a local,
+manual verification command for current Kinguin production read-only data. The
+command is not used by CI and refuses to run unless
+`KEYCORE_ALLOW_KINGUIN_LIVE_READONLY=true`,
+`KINGUIN_ENVIRONMENT=PRODUCTION`,
+`KINGUIN_API_BASE_URL=https://gateway.kinguin.net/esa/api`, and a local
+`KINGUIN_API_KEY` are present.
+
+The verification transport is technically read-only. It allows only explicitly
+allowlisted `GET` requests for product and reference data and blocks `POST`,
+`PUT`, `PATCH`, `DELETE`, `/order`, `/keys`, `/keys/return`, non-HTTPS URLs,
+unexpected hosts, unexpected base paths and unsafe redirects. The final result
+asserts zero mutation, forbidden-path and key-retrieval attempts.
+
+The flow reads a bounded product sample, normalizes Kinguin product/offer data,
+resolves `SupplierOfferId -> SupplierProductId` through the existing mapping
+boundary, evaluates Germany eligibility with the current DE policy engine,
+exercises the pricing boundary with a policy clearly marked
+`SYNTHETIC_VERIFICATION_ONLY`, and builds the Kinguin `POST /v2/order` payload
+locally through the existing request builder. The payload is never sent.
+
+The expected successful dry-run outcome is
+`PURCHASE_REQUEST_READY_BUT_NOT_SENT` represented as
+`purchaseMutation: "NOT_SENT"` plus a deterministic non-secret request
+fingerprint. Real Kinguin supplier cost data is used only as read-only input.
+Synthetic tax/fee/pricing assumptions are not production-valid margin evidence
+and must not be used to approve live sales or real procurement.
+
+`orderExternalId` uses a deterministic dry-run-only reference beginning with
+`keycore-dryrun-`. That reference is non-production evidence and must not be
+reused for a real purchase.
+
 ## Reconciliation And Webhooks
 
 Known external supplier order IDs can be reconciled through the supplier port. Unknown outcomes use only documented supplier references. KeyCore does not guess by price, product or timestamp. Kinguin webhooks remain authenticated by documented `X-Event-Name` and `X-Event-Secret` behavior; unknown supplier orders require reconciliation/manual review and are not blindly attached to customer orders.

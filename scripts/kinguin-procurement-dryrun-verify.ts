@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { SupplierError } from "../packages/platform/src/contracts.js";
-import { runKinguinReadonlyVerification } from "../infra/suppliers/kinguin/kinguin-live-readonly.js";
+import { runKinguinProcurementDryRunVerification } from "../infra/suppliers/kinguin/kinguin-procurement-dryrun.js";
 
 const parseDotEnvLine = (
   line: string,
@@ -48,31 +48,10 @@ const loadLocalEnv = async (): Promise<Record<string, string | undefined>> => {
 };
 
 const main = async (): Promise<void> => {
-  const env = await loadLocalEnv();
-  const result = await runKinguinReadonlyVerification(env);
-
-  console.log(
-    JSON.stringify(
-      {
-        authentication: result.authentication,
-        differences: result.differences,
-        endpointsTested: result.endpointsTested,
-        environment: result.environment,
-        forbiddenRequestCount: result.forbiddenRequestCount,
-        inspectedProductRecords: result.inspectedProductRecords,
-        keyRetrievalRequestCount: result.keyRetrievalRequestCount,
-        mutationRequestCount: result.mutationRequestCount,
-        normalization: result.normalization,
-        offerResolution: result.offerResolution,
-        pagination: result.pagination,
-        parserFixesMade: result.parserFixesMade,
-        referenceData: result.referenceData,
-        updatedSince: result.updatedSince,
-      },
-      null,
-      2,
-    ),
+  const result = await runKinguinProcurementDryRunVerification(
+    await loadLocalEnv(),
   );
+  console.log(JSON.stringify(result, null, 2));
 };
 
 main().catch((error: unknown) => {
@@ -87,6 +66,6 @@ main().catch((error: unknown) => {
     process.exitCode = 1;
     return;
   }
-  console.error("Kinguin read-only verification failed.");
+  console.error("Kinguin procurement dry-run verification failed.");
   process.exitCode = 1;
 });
