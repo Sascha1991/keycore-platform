@@ -153,6 +153,98 @@ describe.skipIf(!connectionString)(
       });
     });
 
+    it("persists safe rejection diagnostics and keeps historical rejections nullable", async () => {
+      await withDatabase(async (database) => {
+        const rejected = await createClaimedAndDispatched(database);
+        await withRepository(database.schemaName, (repository) =>
+          repository.markRejected({
+            approvalId: rejected.approvalId,
+            diagnostic: {
+              safeReasonCode: "KINGUIN_INSUFFICIENT_BALANCE",
+              supplier: "Kinguin",
+              supplierErrorCategory: "INSUFFICIENT_BALANCE",
+              supplierErrorCode: "InsufficientBalance",
+              supplierHttpStatus: 400,
+            },
+            now,
+            reasonCode: "KINGUIN_INSUFFICIENT_BALANCE",
+            responseFingerprint: "9".repeat(64),
+          }),
+        );
+
+        const reloaded = await withRepository(
+          database.schemaName,
+          (repository) => repository.findById(rejected.approvalId),
+        );
+        expect(reloaded?.rejectionDiagnostic).toEqual({
+          safeReasonCode: "KINGUIN_INSUFFICIENT_BALANCE",
+          supplier: "Kinguin",
+          supplierErrorCategory: "INSUFFICIENT_BALANCE",
+          supplierErrorCode: "InsufficientBalance",
+          supplierHttpStatus: 400,
+        });
+        expect(safeStringify(reloaded)).not.toContain("debug");
+
+        const historical = await createClaimedAndDispatched(database);
+        await withRepository(database.schemaName, (repository) =>
+          repository.markRejected({
+            approvalId: historical.approvalId,
+            now,
+            reasonCode: "controlledPlaceOrder",
+          }),
+        );
+        await expect(
+          withRepository(database.schemaName, (repository) =>
+            repository.findById(historical.approvalId),
+          ),
+        ).resolves.toMatchObject({ rejectionDiagnostic: null });
+
+        const columns = await database.query<{ readonly column_name: string }>(
+          `
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'controlled_procurement_approvals'
+          `,
+        );
+        expect(columns.rows.map((row) => row.column_name)).not.toEqual(
+          expect.arrayContaining([
+            "raw_response",
+            "response_body",
+            "supplier_message",
+            "headers",
+          ]),
+        );
+      });
+    });
+
+    it("rejects unsafe rejection diagnostic values at the PostgreSQL boundary", async () => {
+      await withDatabase(async (database) => {
+        const unsafeCode = ["api", "key"].join("-");
+        const unsafeReason = ["API", "KEY"].join("_");
+        for (const [assignment, value] of [
+          ["supplier_http_status = $2", 99],
+          ["supplier_error_code = $2", unsafeCode],
+          ["supplier_error_category = $2", "RAW_RESPONSE"],
+          ["safe_rejection_reason_code = $2", unsafeReason],
+        ] as const) {
+          const approval = approvalFixture({
+            approvalId: randomUUID(),
+            orderExternalId: `keycore-liveverify-${randomUUID()}`,
+          });
+          await withRepository(database.schemaName, (repository) =>
+            repository.create(approval),
+          );
+          await expect(
+            database.query(
+              `UPDATE controlled_procurement_approvals SET ${assignment} WHERE id = $1`,
+              [approval.approvalId, value],
+            ),
+          ).rejects.toThrow();
+        }
+      });
+    });
+
     it("rejects expired and consumed approvals without raw unique errors", async () => {
       await withDatabase(async (database) => {
         const expired = approvalFixture({

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added KS-07-03e safe Kinguin procurement rejection diagnostics with sanitized
+  supplier HTTP status, documented machine error code, normalized category,
+  safe reason code, durable approval persistence, reconciliation output and a
+  local database inspect command while preserving ambiguous no-retry semantics.
 - Added KS-07-03c controlled first live Kinguin procurement foundation with a
   one-time approval manifest, hashed execution token, atomic PostgreSQL claim,
   price-bound request fingerprint, dispatch-before-HTTP evidence, no retry,

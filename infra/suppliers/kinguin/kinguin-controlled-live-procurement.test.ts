@@ -10,6 +10,7 @@ import {
   supplierOfferId,
   supplierProductId,
   type Money,
+  type AuditEvent,
   type NormalizedSupplierOffer,
   type NormalizedSupplierProduct,
 } from "../../../packages/platform/src/contracts.js";
@@ -44,6 +45,9 @@ import {
 } from "./kinguin-supplier.js";
 
 const fixtureCredential = "readonly-fixture-credential";
+const canaryApiKey = ["SUPER", "SECRET"].join("_");
+const canaryExecutionToken = ["EXECUTION", "SECRET"].join("_");
+const canaryProductKey = ["PRODUCT", "KEY", "ABCDE-12345"].join("_");
 const env = {
   KEYCORE_ALLOW_KINGUIN_LIVE_READONLY: "true",
   KEYCORE_KINGUIN_CONTROLLED_MUTATION_MODE: "CONTROLLED_VERIFICATION_ONE_TIME",
@@ -613,6 +617,217 @@ describe("controlled Kinguin live procurement", () => {
     }
   });
 
+  it("persists and returns safe normalized diagnostics for definitive Kinguin 4xx rejections", async () => {
+    const repository = new InMemoryControlledProcurementApprovalRepository();
+    const audit = new CapturingAudit();
+    const prepared = await serviceFixture({ repository }).prepare(
+      prepareInput(),
+    );
+    const result = await serviceFixture({
+      audit,
+      mutationTransport: new FakeTransport({
+        orderRawBody: JSON.stringify({
+          detail: `api-key=${canaryApiKey} token=${canaryExecutionToken}`,
+          kind: "InsufficientBalance",
+          status: 400,
+        }),
+        status: 400,
+      }),
+      repository,
+    }).execute({
+      approvalId: prepared.approvalId,
+      correlationId: correlationId("execute"),
+      executionToken: prepared.oneTimeExecutionToken,
+    });
+    const persisted = await repository.findById(prepared.approvalId);
+
+    expect(result).toMatchObject({
+      reasonCode: "KINGUIN_INSUFFICIENT_BALANCE",
+      safeReasonCode: "KINGUIN_INSUFFICIENT_BALANCE",
+      status: "PROCUREMENT_REJECTED",
+      supplierErrorCategory: "INSUFFICIENT_BALANCE",
+      supplierErrorCode: "InsufficientBalance",
+      supplierHttpStatus: 400,
+    });
+    expect(persisted?.rejectionDiagnostic).toEqual({
+      safeReasonCode: "KINGUIN_INSUFFICIENT_BALANCE",
+      supplier: "Kinguin",
+      supplierErrorCategory: "INSUFFICIENT_BALANCE",
+      supplierErrorCode: "InsufficientBalance",
+      supplierHttpStatus: 400,
+    });
+    expect(JSON.stringify(result)).not.toContain(canaryApiKey);
+    expect(safeStringify(persisted)).not.toContain(canaryExecutionToken);
+    expect(JSON.stringify(audit.events)).not.toContain(canaryApiKey);
+  });
+
+  it("maps documented and status-based Kinguin rejection diagnostics safely", async () => {
+    const cases = [
+      [401, { kind: "Authorization", status: 401 }, "AUTHENTICATION"],
+      [403, { kind: "Authorization", status: 403 }, "AUTHORIZATION"],
+      [400, { kind: "ConstraintViolation", status: 400 }, "VALIDATION"],
+      [422, { kind: "ConstraintViolation", status: 422 }, "VALIDATION"],
+      [404, { kind: "ProductUnavailable", status: 404 }, "PRODUCT_UNAVAILABLE"],
+      [409, { kind: "ResourceLock", status: 409 }, "SUPPLIER_REJECTION"],
+      [429, { kind: "Http", status: 429 }, "RATE_LIMIT"],
+      [
+        418,
+        { kind: "UnexpectedDocumentedKind", status: 418 },
+        "SUPPLIER_REJECTION",
+      ],
+    ] as const;
+    for (const [status, body, category] of cases) {
+      const repository = new InMemoryControlledProcurementApprovalRepository();
+      const prepared = await serviceFixture({ repository }).prepare(
+        prepareInput(),
+      );
+      const result = await serviceFixture({
+        mutationTransport: new FakeTransport({
+          orderRawBody: JSON.stringify(body),
+          status,
+        }),
+        repository,
+      }).execute({
+        approvalId: prepared.approvalId,
+        correlationId: correlationId(`execute-${status}`),
+        executionToken: prepared.oneTimeExecutionToken,
+      });
+
+      expect(result.status).toBe("PROCUREMENT_REJECTED");
+      expect(result.supplierHttpStatus).toBe(status);
+      expect(result.supplierErrorCategory).toBe(category);
+      expect(result.supplierErrorCode).toBe(body.kind);
+    }
+  });
+
+  it("does not persist arbitrary messages, HTML, huge bodies or unsafe machine codes", async () => {
+    for (const orderRawBody of [
+      JSON.stringify({
+        debug: canaryProductKey,
+        kind: `api-key=${canaryApiKey}`,
+        message: `api-key=${canaryApiKey} token=${canaryExecutionToken}`,
+        status: 400,
+      }),
+      `<html>api-key=${canaryApiKey} token=${canaryExecutionToken}</html>`,
+      `${"x".repeat(20_000)}${canaryProductKey}`,
+    ]) {
+      const repository = new InMemoryControlledProcurementApprovalRepository();
+      const prepared = await serviceFixture({ repository }).prepare(
+        prepareInput(),
+      );
+      const result = await serviceFixture({
+        mutationTransport: new FakeTransport({ orderRawBody, status: 400 }),
+        repository,
+      }).execute({
+        approvalId: prepared.approvalId,
+        correlationId: correlationId("execute-unsafe-body"),
+        executionToken: prepared.oneTimeExecutionToken,
+      });
+      const persisted = await repository.findById(prepared.approvalId);
+      const serialized = safeStringify({ persisted, result });
+
+      expect(result.status).toBe("PROCUREMENT_REJECTED");
+      expect(result.supplierErrorCode).toBeNull();
+      expect(serialized).not.toContain(canaryApiKey);
+      expect(serialized).not.toContain(canaryExecutionToken);
+      expect(serialized).not.toContain(canaryProductKey);
+      expect(serialized).not.toContain("<html>");
+      expect(serialized).not.toContain("message");
+    }
+  });
+
+  it("keeps 5xx, timeouts and malformed possible-success responses ambiguous without retry", async () => {
+    for (const transport of [
+      new FakeTransport({ orderRawBody: "{}", status: 500 }),
+      new ThrowingTransport(),
+      new FakeTransport({ orderResponse: { malformed: true } }),
+    ]) {
+      const repository = new InMemoryControlledProcurementApprovalRepository();
+      const prepared = await serviceFixture({ repository }).prepare(
+        prepareInput(),
+      );
+      const result = await serviceFixture({
+        mutationTransport: transport,
+        repository,
+      }).execute({
+        approvalId: prepared.approvalId,
+        correlationId: correlationId("execute-ambiguous"),
+        executionToken: prepared.oneTimeExecutionToken,
+      });
+
+      expect(result.status).toBe("AMBIGUOUS");
+      expect(
+        transport.requests.filter((request) => request.method === "POST"),
+      ).toHaveLength(1);
+    }
+  });
+
+  it("returns persisted safe rejection diagnostics from reconciliation", async () => {
+    const repository = new InMemoryControlledProcurementApprovalRepository();
+    const prepared = await serviceFixture({ repository }).prepare(
+      prepareInput(),
+    );
+    const result = await serviceFixture({
+      mutationTransport: new FakeTransport({
+        orderRawBody: JSON.stringify({
+          kind: "ProductUnavailable",
+          status: 404,
+        }),
+        status: 404,
+      }),
+      repository,
+    }).execute({
+      approvalId: prepared.approvalId,
+      correlationId: correlationId("execute-rejected"),
+      executionToken: prepared.oneTimeExecutionToken,
+    });
+    expect(result.status).toBe("PROCUREMENT_REJECTED");
+
+    const reconciliation = await serviceFixture({ repository }).reconcile({
+      approvalId: prepared.approvalId,
+    });
+
+    expect(reconciliation).toMatchObject({
+      safeReasonCode: "KINGUIN_PRODUCT_UNAVAILABLE",
+      status: "CONFIRMED_REJECTION",
+      supplierErrorCategory: "PRODUCT_UNAVAILABLE",
+      supplierErrorCode: "ProductUnavailable",
+      supplierHttpStatus: 404,
+    });
+  });
+
+  it("keeps historical rejected approvals without diagnostics as unknown/null", async () => {
+    const repository = new InMemoryControlledProcurementApprovalRepository();
+    const prepared = await serviceFixture({ repository }).prepare(
+      prepareInput(),
+    );
+    const claim = await repository.claim({
+      approvalId: prepared.approvalId,
+      now,
+      tokenHash: hashExecutionToken(prepared.oneTimeExecutionToken),
+    });
+    expect(claim.status).toBe("CLAIMED");
+    await repository.markDispatchStarted({
+      approvalId: prepared.approvalId,
+      now,
+    });
+    await repository.markRejected({
+      approvalId: prepared.approvalId,
+      now,
+      reasonCode: "controlledPlaceOrder",
+    });
+
+    const reconciliation = await serviceFixture({ repository }).reconcile({
+      approvalId: prepared.approvalId,
+    });
+
+    expect(reconciliation).toMatchObject({
+      status: "CONFIRMED_REJECTION",
+    });
+    expect(reconciliation.safeReasonCode).toBeUndefined();
+    expect(reconciliation.supplierHttpStatus).toBeUndefined();
+  });
+
   it("blocks non-order paths and POST redirects in controlled mutation transport", async () => {
     const guard = new KinguinControlledOrderTransport({
       baseUrl: env.KINGUIN_API_BASE_URL,
@@ -894,6 +1109,7 @@ const prepareInput = (
 
 const serviceFixture = (
   options: {
+    readonly audit?: CapturingAudit;
     readonly config?: ReturnType<typeof controlledLiveConfigFromEnv>;
     readonly allowOrderLookup?: boolean;
     readonly mutationTransport?: KinguinHttpTransport;
@@ -936,6 +1152,7 @@ const serviceFixture = (
     config: options.config ?? controlledLiveConfigFromEnv(env),
     offerIndex,
     orderClient,
+    ...(options.audit ? { audit: options.audit } : {}),
     readOnlySupplier: new KinguinSupplier(readOnlyClient, offerIndex),
     repository:
       options.repository ??
@@ -1094,6 +1311,7 @@ class FakeTransport implements KinguinHttpTransport {
   public constructor(
     private readonly options: {
       readonly orderLookupResponse?: unknown;
+      readonly orderRawBody?: string;
       readonly orderResponse?: unknown;
       readonly product?: KinguinProduct;
       readonly productPages?: readonly (readonly KinguinProduct[])[];
@@ -1110,14 +1328,16 @@ class FakeTransport implements KinguinHttpTransport {
     const path = url.pathname.replace("/esa/api", "");
     if (requestInput.method === "POST") {
       return {
-        body: JSON.stringify(
-          this.options.orderResponse ?? {
-            createdAt: now.toISOString(),
-            orderId: "KNG-ORDER-1",
-            status: "processing",
-          },
-        ),
-        headers: {},
+        body:
+          this.options.orderRawBody ??
+          JSON.stringify(
+            this.options.orderResponse ?? {
+              createdAt: now.toISOString(),
+              orderId: "KNG-ORDER-1",
+              status: "processing",
+            },
+          ),
+        headers: { "x-debug-secret": `api-key=${canaryApiKey}` },
         status: this.options.status ?? 201,
       };
     }
@@ -1192,6 +1412,14 @@ class ThrowingTransport implements KinguinHttpTransport {
   ): Promise<KinguinHttpResponse> {
     this.requests.push(requestInput);
     throw new Error("network timeout after dispatch");
+  }
+}
+
+class CapturingAudit {
+  public readonly events: AuditEvent[] = [];
+
+  public async append(event: AuditEvent): Promise<void> {
+    this.events.push(event);
   }
 }
 
