@@ -34,6 +34,30 @@ Stripe receives:
 
 The Stripe `client_secret` may be returned to the caller of initialization, but it is not persisted in PostgreSQL, outbox payloads or audit-safe metadata.
 
+## Create Recovery Lease
+
+PaymentIntent creation is split into a local reservation and a bounded local creation lease:
+
+1. reserve or load the local `order_payments` row;
+2. atomically claim `create_attempt_token` and `create_attempt_started_at`;
+3. call Stripe outside any PostgreSQL transaction with the deterministic idempotency key;
+4. persist the returned PaymentIntent only if the caller still owns the lease.
+
+Only payments in `CREATION_PENDING` or `CREATE_OUTCOME_UNKNOWN` with no `external_payment_id` are eligible for create retry. A fresh lease returns `PAYMENT_CREATE_IN_FLIGHT`; another caller may recover only after the configured stale threshold. The threshold is supplied by application configuration, represented in local examples as `STRIPE_CREATE_LEASE_STALE_AFTER_MS`.
+
+If Stripe creation is ambiguous before KeyCore stores the external ID, the local status becomes `CREATE_OUTCOME_UNKNOWN`. Recovery repeats the same Stripe create call with the same deterministic idempotency key. It does not search Stripe by amount, customer, email or timestamp.
+
+If Stripe definitively rejects creation, the local payment becomes `FAILED` and is not automatically retried.
+
+Recovered PaymentIntent responses are validated before being persisted as authoritative:
+
+- amount matches the immutable KeyCore order amount;
+- currency matches the immutable KeyCore order currency;
+- `metadata.keycore_order_id` matches the `OrderId`;
+- `metadata.keycore_payment_version` matches the local payment operation version.
+
+Unexpected recovered identity fails closed to reconciliation/manual review and is never captured automatically.
+
 ## Local Payment Mapping
 
 `order_payments` stores the KeyCore payment mapping:
@@ -47,6 +71,7 @@ The Stripe `client_secret` may be returned to the caller of initialization, but 
 - deterministic Stripe idempotency key
 - provider fingerprint
 - reconciliation flag
+- create attempt token and start timestamp
 
 `order_id + provider`, `provider + external_payment_id` and the Stripe idempotency key are unique. Order identity, provider, amount, currency, operation version and idempotency key are immutable after insert.
 
@@ -69,8 +94,11 @@ Before marking an order captured, KeyCore verifies:
 - amount matches the immutable order amount;
 - currency matches the immutable order currency;
 - Stripe metadata references the same `OrderId`.
+- Stripe metadata references the expected payment operation version.
 
 Mismatch requires reconciliation and moves the order to manual review when the state machine permits it.
+
+If a signed webhook arrives before the local Stripe create response is persisted, KeyCore records the external event receipt when metadata safely identifies the order, but it does not mark the order captured from metadata alone. A later create recovery establishes the authoritative payment mapping through the deterministic Stripe create response.
 
 ## Safety
 

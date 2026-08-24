@@ -71,6 +71,84 @@ describePostgres("PostgresPaymentRepository", () => {
     }
   });
 
+  it("allows only one concurrent create lease claimant without globally serializing unrelated orders", async () => {
+    const database = await initDatabase();
+    try {
+      const order = await insertFixtureOrder(database);
+      const reserved = await withPaymentRepository(
+        database.schemaName,
+        (repository) =>
+          repository.reserveForOrder({
+            now: new Date("2026-08-15T00:01:00.000Z"),
+            order,
+            stripeIdempotencyKey: stripePaymentIntentIdempotencyKey(
+              order.id,
+              1,
+            ),
+          }),
+      );
+      const results = await Promise.all(
+        Array.from({ length: 10 }, (_value, index) =>
+          withPaymentRepository(database.schemaName, (repository) =>
+            repository.acquireCreateLease({
+              leaseToken: `lease-${index}`,
+              now: new Date("2026-08-15T00:01:01.000Z"),
+              paymentId: reserved.payment.id,
+              staleAfter: new Date("2026-08-15T00:00:00.000Z"),
+            }),
+          ),
+        ),
+      );
+
+      expect(
+        results.filter((result) => result.status === "ACQUIRED"),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "IN_FLIGHT"),
+      ).toHaveLength(9);
+
+      const unrelatedA = await insertFixtureOrder(database);
+      const unrelatedB = await insertFixtureOrder(database);
+      const [reservedA, reservedB] = await Promise.all(
+        [unrelatedA, unrelatedB].map((nextOrder) =>
+          withPaymentRepository(database.schemaName, (repository) =>
+            repository.reserveForOrder({
+              now: new Date("2026-08-15T00:01:02.000Z"),
+              order: nextOrder,
+              stripeIdempotencyKey: stripePaymentIntentIdempotencyKey(
+                nextOrder.id,
+                1,
+              ),
+            }),
+          ),
+        ),
+      );
+      const unrelatedLeaseResults = await Promise.all([
+        withPaymentRepository(database.schemaName, (repository) =>
+          repository.acquireCreateLease({
+            leaseToken: "lease-unrelated-a",
+            now: new Date("2026-08-15T00:01:03.000Z"),
+            paymentId: required(reservedA).payment.id,
+            staleAfter: new Date("2026-08-15T00:00:00.000Z"),
+          }),
+        ),
+        withPaymentRepository(database.schemaName, (repository) =>
+          repository.acquireCreateLease({
+            leaseToken: "lease-unrelated-b",
+            now: new Date("2026-08-15T00:01:03.000Z"),
+            paymentId: required(reservedB).payment.id,
+            staleAfter: new Date("2026-08-15T00:00:00.000Z"),
+          }),
+        ),
+      ]);
+      expect(
+        unrelatedLeaseResults.every((result) => result.status === "ACQUIRED"),
+      ).toBe(true);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("persists provider creation, rejects external ID reuse and prevents captured regression", async () => {
     const database = await initDatabase();
     try {
@@ -100,16 +178,26 @@ describePostgres("PostgresPaymentRepository", () => {
       };
       const created = await withPaymentRepository(
         database.schemaName,
-        (repository) =>
-          repository.markProviderCreated({
-            expectedVersion: reserved.payment.recordVersion,
+        async (repository) => {
+          const lease = await repository.acquireCreateLease({
+            leaseToken: "lease-created",
+            now: new Date("2026-08-15T00:01:01.000Z"),
+            paymentId: reserved.payment.id,
+            staleAfter: new Date("2026-08-15T00:00:00.000Z"),
+          });
+          if (lease.status !== "ACQUIRED") {
+            throw new Error("Expected payment create lease");
+          }
+          return repository.markProviderCreated({
             externalPaymentId: intent.id,
             lastProviderEventAt: intent.createdAt,
+            leaseToken: lease.leaseToken,
             now: new Date("2026-08-15T00:01:02.000Z"),
             paymentId: reserved.payment.id,
             providerFingerprint: stripePaymentIntentFingerprint(intent),
             status: "CAPTURED",
-          }),
+          });
+        },
       );
 
       expect(created).toMatchObject({
@@ -149,17 +237,26 @@ describePostgres("PostgresPaymentRepository", () => {
           }),
       );
       await expect(
-        withPaymentRepository(database.schemaName, (repository) =>
-          repository.markProviderCreated({
-            expectedVersion: otherReservation.payment.recordVersion,
+        withPaymentRepository(database.schemaName, async (repository) => {
+          const lease = await repository.acquireCreateLease({
+            leaseToken: "lease-duplicate",
+            now: new Date("2026-08-15T00:01:04.000Z"),
+            paymentId: otherReservation.payment.id,
+            staleAfter: new Date("2026-08-15T00:00:00.000Z"),
+          });
+          if (lease.status !== "ACQUIRED") {
+            throw new Error("Expected duplicate payment create lease");
+          }
+          return repository.markProviderCreated({
             externalPaymentId: "pi_pg_fixture_1",
             lastProviderEventAt: new Date("2026-08-15T00:01:05.000Z"),
+            leaseToken: lease.leaseToken,
             now: new Date("2026-08-15T00:01:05.000Z"),
             paymentId: otherReservation.payment.id,
             providerFingerprint: "duplicate-external",
             status: "REQUIRES_PAYMENT_METHOD",
-          }),
-        ),
+          });
+        }),
       ).rejects.toThrow();
     } finally {
       await database.cleanup();

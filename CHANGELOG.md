@@ -6,6 +6,7 @@
   - added Stripe PaymentIntent initialization behind a payment port with deterministic server-side idempotency keys;
   - added local `order_payments` persistence with atomic order/provider reservation, optimistic updates and no stored client secrets;
   - added raw-body Stripe webhook verification and idempotent handling for succeeded, failed, processing and canceled PaymentIntent events;
+  - hardened Stripe PaymentIntent creation with a durable bounded create lease so crashed or unknown create outcomes retry safely with the same Stripe idempotency key;
   - added fail-closed amount, currency, order metadata and external mapping checks before marking orders captured;
   - added test-mode configuration guards, reversible migration and Stripe payment documentation;
   - kept live Stripe keys, live charges, supplier procurement, key retrieval, fulfillment and KS-07-03 out of scope.

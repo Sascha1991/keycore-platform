@@ -14,6 +14,8 @@ CREATE TABLE order_payments (
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   last_provider_event_at TIMESTAMPTZ,
+  create_attempt_token TEXT,
+  create_attempt_started_at TIMESTAMPTZ,
   CONSTRAINT order_payments_provider_check CHECK (provider = 'STRIPE'),
   CONSTRAINT order_payments_amount_currency_version_check CHECK (
     amount_minor > 0
@@ -25,6 +27,7 @@ CREATE TABLE order_payments (
   CONSTRAINT order_payments_status_check CHECK (
     status IN (
       'CREATION_PENDING',
+      'CREATE_OUTCOME_UNKNOWN',
       'REQUIRES_PAYMENT_METHOD',
       'REQUIRES_CUSTOMER_ACTION',
       'PROCESSING',
@@ -41,7 +44,18 @@ CREATE TABLE order_payments (
   ),
   CONSTRAINT order_payments_reconciliation_status_check CHECK (
     reconciliation_required = false
-    OR status = 'RECONCILIATION_REQUIRED'
+    OR status IN ('RECONCILIATION_REQUIRED', 'CREATE_OUTCOME_UNKNOWN')
+  ),
+  CONSTRAINT order_payments_create_attempt_pair_check CHECK (
+    (
+      create_attempt_token IS NULL
+      AND create_attempt_started_at IS NULL
+    )
+    OR (
+      create_attempt_token IS NOT NULL
+      AND create_attempt_started_at IS NOT NULL
+      AND length(trim(create_attempt_token)) > 0
+    )
   )
 );
 
@@ -57,6 +71,10 @@ CREATE UNIQUE INDEX order_payments_stripe_idempotency_key_idx
 
 CREATE INDEX order_payments_status_updated_idx
   ON order_payments(status, updated_at);
+
+CREATE INDEX order_payments_create_attempt_idx
+  ON order_payments(status, create_attempt_started_at)
+  WHERE external_payment_id IS NULL;
 
 CREATE FUNCTION prevent_order_payment_commercial_update()
 RETURNS trigger

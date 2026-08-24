@@ -17,6 +17,7 @@ export type PaymentProvider = "STRIPE";
 export type PaymentStatus =
   | "NOT_CREATED"
   | "CREATION_PENDING"
+  | "CREATE_OUTCOME_UNKNOWN"
   | "REQUIRES_PAYMENT_METHOD"
   | "REQUIRES_CUSTOMER_ACTION"
   | "PROCESSING"
@@ -31,6 +32,8 @@ export const paymentReasonCodes = [
   "PAYMENT_INTENT_CREATED",
   "PAYMENT_IDEMPOTENT_REPLAY",
   "PAYMENT_RECONCILIATION_REQUIRED",
+  "PAYMENT_CREATE_IN_FLIGHT",
+  "PAYMENT_CREATE_LEASE_STALE",
   "PAYMENT_PROVIDER_REJECTED",
   "PAYMENT_PROVIDER_CONFLICT",
   "PAYMENT_WEBHOOK_VERIFIED",
@@ -65,6 +68,8 @@ export interface PaymentRecord {
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly lastProviderEventAt?: Date | null;
+  readonly createAttemptToken?: string | null;
+  readonly createAttemptStartedAt?: Date | null;
 }
 
 export interface PaymentInitializationResponse {
@@ -148,6 +153,17 @@ export type PaymentReservationResult =
   | { readonly status: "CREATED"; readonly payment: PaymentRecord }
   | { readonly status: "EXISTING"; readonly payment: PaymentRecord };
 
+export type PaymentCreationLeaseResult =
+  | {
+      readonly status: "ACQUIRED";
+      readonly payment: PaymentRecord;
+      readonly leaseToken: string;
+    }
+  | {
+      readonly status: "IN_FLIGHT" | "NOT_ELIGIBLE";
+      readonly payment: PaymentRecord;
+    };
+
 export type PaymentUpdateResult =
   | { readonly status: "UPDATED"; readonly payment: PaymentRecord }
   | { readonly status: "NOOP"; readonly payment: PaymentRecord }
@@ -167,9 +183,15 @@ export interface PaymentRepository {
     readonly provider: PaymentProvider;
     readonly externalPaymentId: string;
   }): Promise<PaymentRecord | null>;
+  acquireCreateLease(input: {
+    readonly paymentId: string;
+    readonly leaseToken: string;
+    readonly staleAfter: Date;
+    readonly now: Date;
+  }): Promise<PaymentCreationLeaseResult>;
   markProviderCreated(input: {
     readonly paymentId: string;
-    readonly expectedVersion: number;
+    readonly leaseToken: string;
     readonly externalPaymentId: string;
     readonly providerFingerprint: string;
     readonly status: PaymentStatus;
@@ -183,6 +205,17 @@ export interface PaymentRepository {
     readonly status: PaymentStatus;
     readonly lastProviderEventAt: Date;
     readonly reconciliationRequired: boolean;
+    readonly now: Date;
+  }): Promise<PaymentUpdateResult>;
+  markCreateOutcomeUnknown(input: {
+    readonly paymentId: string;
+    readonly leaseToken: string;
+    readonly now: Date;
+  }): Promise<PaymentUpdateResult>;
+  markCreateRejected(input: {
+    readonly paymentId: string;
+    readonly leaseToken: string;
+    readonly providerFingerprint: string;
     readonly now: Date;
   }): Promise<PaymentUpdateResult>;
   markReconciliationRequired(input: {
@@ -202,6 +235,7 @@ export interface StripePaymentServiceOptions {
   readonly audit?: AuditEventPort;
   readonly environment?: AuditEvent["environment"];
   readonly now?: () => Date;
+  readonly createLeaseStaleAfterMs: number;
 }
 
 export class StripePaymentService {
@@ -211,6 +245,9 @@ export class StripePaymentService {
   public constructor(private readonly options: StripePaymentServiceOptions) {
     this.now = options.now ?? (() => new Date());
     this.environment = options.environment ?? "LOCAL";
+    if (options.createLeaseStaleAfterMs <= 0) {
+      throw new Error("Stripe create lease stale policy must be positive");
+    }
   }
 
   public async initializePayment(input: {
@@ -230,7 +267,10 @@ export class StripePaymentService {
       order,
       stripeIdempotencyKey,
     });
-    if (reserved.status === "EXISTING") {
+    if (
+      reserved.status === "EXISTING" &&
+      !createRetryablePaymentStatuses.has(reserved.payment.status)
+    ) {
       return {
         payment: reserved.payment,
         reasonCode: "PAYMENT_IDEMPOTENT_REPLAY",
@@ -249,8 +289,27 @@ export class StripePaymentService {
       });
     }
 
+    const lease = await this.options.repository.acquireCreateLease({
+      leaseToken: randomUUID(),
+      now: this.now(),
+      paymentId: reserved.payment.id,
+      staleAfter: new Date(
+        this.now().getTime() - this.options.createLeaseStaleAfterMs,
+      ),
+    });
+    if (lease.status !== "ACQUIRED") {
+      return {
+        payment: lease.payment,
+        reasonCode:
+          lease.status === "IN_FLIGHT"
+            ? "PAYMENT_CREATE_IN_FLIGHT"
+            : "PAYMENT_IDEMPOTENT_REPLAY",
+        status: "IDEMPOTENT",
+      };
+    }
+
     await this.audit(
-      reserved.payment,
+      lease.payment,
       "PAYMENT_INITIALIZATION_REQUESTED",
       "SUCCEEDED",
       "PAYMENT_INITIALIZATION_REQUESTED",
@@ -259,32 +318,29 @@ export class StripePaymentService {
     const providerResult = await this.options.stripe.createPaymentIntent({
       idempotencyKey: stripeIdempotencyKey,
       order,
-      payment: reserved.payment,
+      payment: lease.payment,
     });
     if (providerResult.status === "AMBIGUOUS") {
-      const marked = await this.options.repository.markReconciliationRequired({
-        expectedVersion: reserved.payment.recordVersion,
+      const marked = await this.options.repository.markCreateOutcomeUnknown({
+        leaseToken: lease.leaseToken,
         now: this.now(),
-        paymentId: reserved.payment.id,
+        paymentId: lease.payment.id,
       });
       return {
-        payment: marked.payment ?? reserved.payment,
+        payment: marked.payment ?? lease.payment,
         reasonCode: "PAYMENT_RECONCILIATION_REQUIRED",
         status: "RECONCILIATION_REQUIRED",
       };
     }
     if (providerResult.status === "REJECTED") {
-      const updated = await this.options.repository.updateFromProvider({
-        expectedVersion: reserved.payment.recordVersion,
-        lastProviderEventAt: this.now(),
+      const updated = await this.options.repository.markCreateRejected({
         now: this.now(),
-        paymentId: reserved.payment.id,
+        paymentId: lease.payment.id,
         providerFingerprint: "provider-rejected",
-        reconciliationRequired: false,
-        status: "FAILED",
+        leaseToken: lease.leaseToken,
       });
       return {
-        payment: updated.payment ?? reserved.payment,
+        payment: updated.payment ?? lease.payment,
         reasonCode: providerResult.reasonCode,
         status: "BLOCKED",
       };
@@ -293,12 +349,39 @@ export class StripePaymentService {
     const normalizedStatus = normalizeStripePaymentStatus(
       providerResult.paymentIntent.status,
     );
+    const mismatch = validateProviderEvidence(
+      order,
+      lease.payment,
+      providerResult.paymentIntent,
+    );
+    if (mismatch) {
+      const marked = await this.options.repository.markReconciliationRequired({
+        expectedVersion: lease.payment.recordVersion,
+        now: this.now(),
+        paymentId: lease.payment.id,
+        providerFingerprint: stripePaymentIntentFingerprint(
+          providerResult.paymentIntent,
+        ),
+      });
+      await this.options.orders.markManualReview({
+        correlationId: input.correlationId,
+        expectedVersion:
+          (await this.options.orders.getOrder(order.id))?.recordVersion ??
+          order.recordVersion,
+        orderId: order.id,
+      });
+      return {
+        payment: marked.payment ?? lease.payment,
+        reasonCode: mismatch,
+        status: "RECONCILIATION_REQUIRED",
+      };
+    }
     const persisted = await this.options.repository.markProviderCreated({
-      expectedVersion: reserved.payment.recordVersion,
       externalPaymentId: providerResult.paymentIntent.id,
       lastProviderEventAt: providerResult.paymentIntent.createdAt,
+      leaseToken: lease.leaseToken,
       now: this.now(),
-      paymentId: reserved.payment.id,
+      paymentId: lease.payment.id,
       providerFingerprint: stripePaymentIntentFingerprint(
         providerResult.paymentIntent,
       ),
@@ -306,12 +389,12 @@ export class StripePaymentService {
     });
     if (persisted.status === "CONFLICT" || !persisted.payment) {
       const marked = await this.options.repository.markReconciliationRequired({
-        expectedVersion: reserved.payment.recordVersion,
+        expectedVersion: lease.payment.recordVersion,
         now: this.now(),
-        paymentId: reserved.payment.id,
+        paymentId: lease.payment.id,
       });
       return {
-        payment: marked.payment ?? reserved.payment,
+        payment: marked.payment ?? lease.payment,
         reasonCode: "PAYMENT_RECONCILIATION_REQUIRED",
         status: "RECONCILIATION_REQUIRED",
       };
@@ -323,6 +406,11 @@ export class StripePaymentService {
       "PAYMENT_INTENT_CREATED",
       input.correlationId,
     );
+    await this.transitionOrderFromPaymentStatus({
+      correlationId: input.correlationId,
+      normalizedStatus,
+      orderId: order.id,
+    });
     return {
       payment: persisted.payment,
       reasonCode: "PAYMENT_INTENT_CREATED",
@@ -438,43 +526,11 @@ export class StripePaymentService {
       };
     }
 
-    if (normalizedStatus === "CAPTURED" && order.paymentStatus !== "CAPTURED") {
-      const latest = await this.options.orders.getOrder(order.id);
-      if (latest && latest.paymentStatus !== "CAPTURED") {
-        await this.options.orders.transitionPayment({
-          correlationId: input.correlationId,
-          expectedVersion: latest.recordVersion,
-          orderId: order.id,
-          paymentStatus: "CAPTURED",
-        });
-      }
-    } else if (
-      normalizedStatus === "FAILED" &&
-      order.paymentStatus !== "CAPTURED"
-    ) {
-      const latest = await this.options.orders.getOrder(order.id);
-      if (latest && latest.status === "AWAITING_PAYMENT") {
-        await this.options.orders.transitionPayment({
-          correlationId: input.correlationId,
-          expectedVersion: latest.recordVersion,
-          orderId: order.id,
-          paymentStatus: "FAILED",
-        });
-      }
-    } else if (
-      normalizedStatus === "CANCELLED" &&
-      order.paymentStatus !== "CAPTURED"
-    ) {
-      const latest = await this.options.orders.getOrder(order.id);
-      if (latest && latest.status === "AWAITING_PAYMENT") {
-        await this.options.orders.transitionPayment({
-          correlationId: input.correlationId,
-          expectedVersion: latest.recordVersion,
-          orderId: order.id,
-          paymentStatus: "CANCELLED",
-        });
-      }
-    }
+    await this.transitionOrderFromPaymentStatus({
+      correlationId: input.correlationId,
+      normalizedStatus,
+      orderId: order.id,
+    });
 
     return {
       payment: currentPayment,
@@ -563,6 +619,11 @@ export class StripePaymentService {
       reconciliationRequired: normalizedStatus === "RECONCILIATION_REQUIRED",
       status: normalizedStatus,
     });
+    await this.transitionOrderFromPaymentStatus({
+      correlationId: input.correlationId,
+      normalizedStatus,
+      orderId: order.id,
+    });
     return {
       payment: updated.payment ?? payment,
       reasonCode: reasonForStatus(normalizedStatus),
@@ -600,11 +661,59 @@ export class StripePaymentService {
       uuid: randomUUID(),
     });
   }
+
+  private async transitionOrderFromPaymentStatus(input: {
+    readonly orderId: OrderId;
+    readonly normalizedStatus: PaymentStatus;
+    readonly correlationId: CorrelationId;
+  }): Promise<void> {
+    const latest = await this.options.orders.getOrder(input.orderId);
+    if (!latest || latest.paymentStatus === "CAPTURED") {
+      return;
+    }
+    if (input.normalizedStatus === "CAPTURED") {
+      await this.options.orders.transitionPayment({
+        correlationId: input.correlationId,
+        expectedVersion: latest.recordVersion,
+        orderId: latest.id,
+        paymentStatus: "CAPTURED",
+      });
+      return;
+    }
+    if (
+      input.normalizedStatus === "FAILED" &&
+      latest.status === "AWAITING_PAYMENT"
+    ) {
+      await this.options.orders.transitionPayment({
+        correlationId: input.correlationId,
+        expectedVersion: latest.recordVersion,
+        orderId: latest.id,
+        paymentStatus: "FAILED",
+      });
+      return;
+    }
+    if (
+      input.normalizedStatus === "CANCELLED" &&
+      latest.status === "AWAITING_PAYMENT"
+    ) {
+      await this.options.orders.transitionPayment({
+        correlationId: input.correlationId,
+        expectedVersion: latest.recordVersion,
+        orderId: latest.id,
+        paymentStatus: "CANCELLED",
+      });
+    }
+  }
 }
 
 const paymentInitializableOrderStates = new Set<KeyCoreOrder["status"]>([
   "CREATED",
   "AWAITING_PAYMENT",
+]);
+
+const createRetryablePaymentStatuses = new Set<PaymentStatus>([
+  "CREATION_PENDING",
+  "CREATE_OUTCOME_UNKNOWN",
 ]);
 
 export const stripePaymentIntentIdempotencyKey = (
@@ -714,6 +823,12 @@ const validateProviderEvidence = (
   if (intent.metadata.keycore_order_id !== order.id) {
     return "PAYMENT_ORDER_MISMATCH";
   }
+  if (
+    intent.metadata.keycore_payment_version !==
+    payment.operationVersion.toString()
+  ) {
+    return "PAYMENT_ORDER_MISMATCH";
+  }
   return null;
 };
 
@@ -728,6 +843,7 @@ const reasonForStatus = (status: PaymentStatus): PaymentReasonCode => {
     case "PROCESSING":
       return "PAYMENT_PROCESSING";
     case "RECONCILIATION_REQUIRED":
+    case "CREATE_OUTCOME_UNKNOWN":
       return "PAYMENT_RECONCILIATION_REQUIRED";
     case "AUTHORIZED":
       return "PAYMENT_WEBHOOK_VERIFIED";
