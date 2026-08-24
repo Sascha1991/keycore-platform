@@ -244,10 +244,12 @@ describe.skipIf(!connectionString)(
           throw new Error("Expected lease A");
         }
         const leaseAToken = leaseA.operation.executionToken;
+        const unrelatedToken = randomUUID();
+        const recoveredToken = randomUUID();
         expect(
           await withProcurementRepository(database.schemaName, (repository) =>
             repository.markDispatchStarted({
-              executionToken: "old-token",
+              executionToken: unrelatedToken,
               now,
               operationId: operationA.id,
             }),
@@ -257,13 +259,17 @@ describe.skipIf(!connectionString)(
           database.schemaName,
           (repository) =>
             repository.acquireExecutionLease({
-              executionToken: "recovered-token",
+              executionToken: recoveredToken,
               now: new Date(now.getTime() + 120_000),
               operationId: operationA.id,
               staleStartedBefore: new Date(now.getTime() + 60_000),
             }),
         );
         expect(recovered.status).toBe("ACQUIRED");
+        if (recovered.status !== "ACQUIRED") {
+          throw new Error("Expected recovered lease");
+        }
+        expect(recovered.operation.executionToken).toBe(recoveredToken);
         expect(
           await withProcurementRepository(database.schemaName, (repository) =>
             repository.markSucceeded({
@@ -283,6 +289,7 @@ describe.skipIf(!connectionString)(
     it("allows generation 2 after terminal failure and blocks after ambiguous or succeeded attempts", async () => {
       await withDatabase(async (database) => {
         const order = await insertOrderFixture(database);
+        const terminalToken = randomUUID();
         const first = await withProcurementRepository(
           database.schemaName,
           (repository) =>
@@ -296,7 +303,7 @@ describe.skipIf(!connectionString)(
           database.schemaName,
           (repository) =>
             repository.acquireExecutionLease({
-              executionToken: "terminal-token",
+              executionToken: terminalToken,
               now,
               operationId: firstOperation.id,
               staleStartedBefore: new Date(now.getTime() - 60_000),
@@ -307,7 +314,7 @@ describe.skipIf(!connectionString)(
         }
         await withProcurementRepository(database.schemaName, (repository) =>
           repository.markFailed({
-            executionToken: "terminal-token",
+            executionToken: terminalToken,
             now,
             operationId: firstOperation.id,
             reasonCode: "SUPPLIER_REJECTED",
