@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { Client, type QueryResult, type QueryResultRow } from "pg";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -15,7 +16,7 @@ import {
 } from "../../packages/platform/src/contracts.js";
 import type { ProcurementOperation } from "../../packages/platform/src/procurement/supplier-procurement.js";
 import { PostgresProcurementOperationRepository } from "./procurement-repositories.js";
-import { PostgresTestDatabase } from "./test-database.js";
+import { PostgresTestDatabase, quoteIdentifier } from "./test-database.js";
 import type { Queryable, TransactionalQueryable } from "./client.js";
 
 const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
@@ -25,16 +26,15 @@ describe.skipIf(!connectionString)(
   () => {
     it("creates one logical operation for 10 concurrent starts without raw unique errors", async () => {
       await withDatabase(async (database) => {
-        const repository = new PostgresProcurementOperationRepository(
-          transactional(database),
-        );
         const order = await insertOrderFixture(database);
         const attempts = await Promise.all(
           Array.from({ length: 10 }, () =>
-            repository.createNextAttempt({
-              now,
-              operation: operationFixture(order),
-            }),
+            withProcurementRepository(database.schemaName, (repository) =>
+              repository.createNextAttempt({
+                now,
+                operation: operationFixture(order),
+              }),
+            ),
           ),
         );
 
@@ -44,29 +44,37 @@ describe.skipIf(!connectionString)(
         expect(
           attempts.filter((attempt) => attempt.status === "EXISTING"),
         ).toHaveLength(9);
-        expect(await repository.listByOrder(order)).toHaveLength(1);
+        await expect(operationCount(database, order)).resolves.toBe(1);
+        expect(
+          new Set(
+            attempts.map((attempt) => requireOperation(attempt.operation).id),
+          ).size,
+        ).toBe(1);
       });
     });
 
     it("allows one active execution owner and treats stale post-dispatch as ambiguous", async () => {
       await withDatabase(async (database) => {
-        const repository = new PostgresProcurementOperationRepository(
-          transactional(database),
-        );
         const order = await insertOrderFixture(database);
-        const created = await repository.createNextAttempt({
-          now,
-          operation: operationFixture(order),
-        });
+        const created = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.createNextAttempt({
+              now,
+              operation: operationFixture(order),
+            }),
+        );
         const createdOperation = requireOperation(created.operation);
         const leases = await Promise.all(
           Array.from({ length: 10 }, () =>
-            repository.acquireExecutionLease({
-              executionToken: randomUUID(),
-              now,
-              operationId: createdOperation.id,
-              staleStartedBefore: new Date(now.getTime() - 60_000),
-            }),
+            withProcurementRepository(database.schemaName, (repository) =>
+              repository.acquireExecutionLease({
+                executionToken: randomUUID(),
+                now,
+                operationId: createdOperation.id,
+                staleStartedBefore: new Date(now.getTime() - 60_000),
+              }),
+            ),
           ),
         );
         const acquired = leases.find((lease) => lease.status === "ACQUIRED");
@@ -84,62 +92,95 @@ describe.skipIf(!connectionString)(
         expect(
           leases.filter((lease) => lease.status === "IN_FLIGHT"),
         ).toHaveLength(9);
-        await repository.markDispatchStarted({
-          executionToken: acquiredToken,
-          now,
-          operationId: createdOperation.id,
-        });
-        const stale = await repository.acquireExecutionLease({
-          executionToken: randomUUID(),
-          now: new Date(now.getTime() + 120_000),
-          operationId: createdOperation.id,
-          staleStartedBefore: new Date(now.getTime() + 60_000),
-        });
+        await withProcurementRepository(database.schemaName, (repository) =>
+          repository.markDispatchStarted({
+            executionToken: acquiredToken,
+            now,
+            operationId: createdOperation.id,
+          }),
+        );
+        const stale = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.acquireExecutionLease({
+              executionToken: randomUUID(),
+              now: new Date(now.getTime() + 120_000),
+              operationId: createdOperation.id,
+              staleStartedBefore: new Date(now.getTime() + 60_000),
+            }),
+        );
 
         expect(stale.status).toBe("STALE_DISPATCH_STARTED");
+        await withProcurementRepository(database.schemaName, (repository) =>
+          repository.markReconciliation({
+            now: new Date(now.getTime() + 120_000),
+            operationId: createdOperation.id,
+            reasonCode: "STALE_DISPATCH_REQUIRES_RECONCILIATION",
+            status: "AMBIGUOUS",
+          }),
+        );
+        await expect(
+          operationStatus(database, createdOperation.id),
+        ).resolves.toBe("AMBIGUOUS");
       });
     });
 
     it("enforces one successful procurement per order and stores no product key", async () => {
       await withDatabase(async (database) => {
-        const repository = new PostgresProcurementOperationRepository(
-          transactional(database),
-        );
         const order = await insertOrderFixture(database);
-        const created = await repository.createNextAttempt({
-          now,
-          operation: operationFixture(order),
-        });
+        const created = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.createNextAttempt({
+              now,
+              operation: operationFixture(order),
+            }),
+        );
         const createdOperation = requireOperation(created.operation);
-        const lease = await repository.acquireExecutionLease({
-          executionToken: randomUUID(),
-          now,
-          operationId: createdOperation.id,
-          staleStartedBefore: new Date(now.getTime() - 60_000),
-        });
+        const lease = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.acquireExecutionLease({
+              executionToken: randomUUID(),
+              now,
+              operationId: createdOperation.id,
+              staleStartedBefore: new Date(now.getTime() - 60_000),
+            }),
+        );
         if (lease.status !== "ACQUIRED" || !lease.operation.executionToken) {
           throw new Error("Expected acquired procurement lease");
         }
-        await repository.markDispatchStarted({
-          executionToken: lease.operation.executionToken,
-          now,
-          operationId: createdOperation.id,
-        });
-        const succeeded = await repository.markSucceeded({
-          acquisitionAmount: money(1_000n, currency("EUR")),
-          executionToken: lease.operation.executionToken,
-          externalSupplierOrderId: "supplier-order-alpha",
-          normalizedSupplierStatus: "FULFILLED",
-          now,
-          operationId: createdOperation.id,
-          responseFingerprint: "safe-fingerprint",
-        });
+        const leaseToken = lease.operation.executionToken;
+        await withProcurementRepository(database.schemaName, (repository) =>
+          repository.markDispatchStarted({
+            executionToken: leaseToken,
+            now,
+            operationId: createdOperation.id,
+          }),
+        );
+        const succeeded = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.markSucceeded({
+              acquisitionAmount: money(1_000n, currency("EUR")),
+              executionToken: leaseToken,
+              externalSupplierOrderId: "supplier-order-alpha",
+              normalizedSupplierStatus: "FULFILLED",
+              now,
+              operationId: createdOperation.id,
+              responseFingerprint: "safe-fingerprint",
+            }),
+        );
         expect(succeeded?.status).toBe("SUCCEEDED");
 
-        const blocked = await repository.createNextAttempt({
-          now,
-          operation: operationFixture(order),
-        });
+        const blocked = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.createNextAttempt({
+              now,
+              operation: operationFixture(order),
+            }),
+        );
         expect(blocked.status).toBe("BLOCKED");
 
         await expect(
@@ -161,25 +202,181 @@ describe.skipIf(!connectionString)(
         ).rejects.toThrow();
       });
     });
+
+    it("recovers stale not-dispatched leases, keeps unrelated operations independent and enforces ownership", async () => {
+      await withDatabase(async (database) => {
+        const [orderA, orderB] = await Promise.all([
+          insertOrderFixture(database),
+          insertOrderFixture(database),
+        ]);
+        const createdResults = await Promise.all(
+          [orderA, orderB].map((order) =>
+            withProcurementRepository(database.schemaName, (repository) =>
+              repository.createNextAttempt({
+                now,
+                operation: operationFixture(order),
+              }),
+            ),
+          ),
+        );
+        const [createdA, createdB] = requirePair(createdResults);
+        const operationA = requireOperation(createdA.operation);
+        const operationB = requireOperation(createdB.operation);
+        const leaseResults = await Promise.all(
+          [operationA, operationB].map((operation) =>
+            withProcurementRepository(database.schemaName, (repository) =>
+              repository.acquireExecutionLease({
+                executionToken: randomUUID(),
+                now,
+                operationId: operation.id,
+                staleStartedBefore: new Date(now.getTime() - 60_000),
+              }),
+            ),
+          ),
+        );
+        const [leaseA, leaseB] = requirePair(leaseResults);
+
+        expect([leaseA.status, leaseB.status]).toEqual([
+          "ACQUIRED",
+          "ACQUIRED",
+        ]);
+        if (leaseA.status !== "ACQUIRED" || !leaseA.operation.executionToken) {
+          throw new Error("Expected lease A");
+        }
+        const leaseAToken = leaseA.operation.executionToken;
+        expect(
+          await withProcurementRepository(database.schemaName, (repository) =>
+            repository.markDispatchStarted({
+              executionToken: "old-token",
+              now,
+              operationId: operationA.id,
+            }),
+          ),
+        ).toBeNull();
+        const recovered = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.acquireExecutionLease({
+              executionToken: "recovered-token",
+              now: new Date(now.getTime() + 120_000),
+              operationId: operationA.id,
+              staleStartedBefore: new Date(now.getTime() + 60_000),
+            }),
+        );
+        expect(recovered.status).toBe("ACQUIRED");
+        expect(
+          await withProcurementRepository(database.schemaName, (repository) =>
+            repository.markSucceeded({
+              acquisitionAmount: money(1_000n, currency("EUR")),
+              executionToken: leaseAToken,
+              externalSupplierOrderId: "supplier-order-old-token",
+              normalizedSupplierStatus: "FULFILLED",
+              now,
+              operationId: operationA.id,
+              responseFingerprint: "old-token-digest",
+            }),
+          ),
+        ).toBeNull();
+      });
+    });
+
+    it("allows generation 2 after terminal failure and blocks after ambiguous or succeeded attempts", async () => {
+      await withDatabase(async (database) => {
+        const order = await insertOrderFixture(database);
+        const first = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.createNextAttempt({
+              now,
+              operation: operationFixture(order),
+            }),
+        );
+        const firstOperation = requireOperation(first.operation);
+        const lease = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.acquireExecutionLease({
+              executionToken: "terminal-token",
+              now,
+              operationId: firstOperation.id,
+              staleStartedBefore: new Date(now.getTime() - 60_000),
+            }),
+        );
+        if (lease.status !== "ACQUIRED") {
+          throw new Error("Expected terminal test lease");
+        }
+        await withProcurementRepository(database.schemaName, (repository) =>
+          repository.markFailed({
+            executionToken: "terminal-token",
+            now,
+            operationId: firstOperation.id,
+            reasonCode: "SUPPLIER_REJECTED",
+            status: "FAILED_TERMINAL",
+          }),
+        );
+        const second = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.createNextAttempt({
+              now,
+              operation: {
+                ...operationFixture(order),
+                supplierOfferId: supplierOfferId("so-beta"),
+                supplierProductId: supplierProductId("sp-beta"),
+              },
+            }),
+        );
+        expect(second).toMatchObject({
+          operation: { attemptGeneration: 2 },
+          status: "CREATED",
+        });
+
+        await withProcurementRepository(database.schemaName, (repository) =>
+          repository.markReconciliation({
+            now,
+            operationId: requireOperation(second.operation).id,
+            reasonCode: "SUPPLIER_NETWORK_AMBIGUOUS",
+            status: "AMBIGUOUS",
+          }),
+        );
+        const blocked = await withProcurementRepository(
+          database.schemaName,
+          (repository) =>
+            repository.createNextAttempt({
+              now,
+              operation: operationFixture(order),
+            }),
+        );
+        expect(blocked.status).toBe("EXISTING");
+      });
+    });
   },
 );
 
 const now = new Date("2026-08-24T12:00:00.000Z");
 
-const transactional = (database: Queryable): TransactionalQueryable => ({
-  query: (sql, values) => database.query(sql, values),
-  transaction: async (callback) => {
-    await database.query("BEGIN");
-    try {
-      const result = await callback(database);
-      await database.query("COMMIT");
-      return result;
-    } catch (error) {
-      await database.query("ROLLBACK");
-      throw error;
-    }
-  },
-});
+const withProcurementRepository = async <TResult>(
+  schemaName: string,
+  action: (
+    repository: PostgresProcurementOperationRepository,
+  ) => Promise<TResult>,
+): Promise<TResult> => {
+  if (!connectionString) {
+    throw new Error("KEYCORE_TEST_DATABASE_URL is required");
+  }
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    await client.query(
+      `SET search_path TO ${quoteIdentifier(schemaName)}, public`,
+    );
+    return await action(
+      new PostgresProcurementOperationRepository(new ClientBoundary(client)),
+    );
+  } finally {
+    await client.end();
+  }
+};
 
 const withDatabase = async (
   action: (database: PostgresTestDatabase) => Promise<void>,
@@ -260,6 +457,28 @@ const operationFixture = (fixtureOrderId: OrderId): ProcurementOperation => ({
   updatedAt: now,
 });
 
+const operationCount = async (
+  database: Queryable,
+  requestedOrderId: OrderId,
+): Promise<number> => {
+  const result = await database.query<{ readonly count: string }>(
+    "SELECT count(*)::text AS count FROM procurement_operations WHERE order_id = $1",
+    [requestedOrderId],
+  );
+  return Number.parseInt(result.rows[0]?.count ?? "0", 10);
+};
+
+const operationStatus = async (
+  database: Queryable,
+  operationIdValue: string,
+): Promise<string> => {
+  const result = await database.query<{ readonly status: string }>(
+    "SELECT status FROM procurement_operations WHERE id = $1",
+    [operationIdValue],
+  );
+  return result.rows[0]?.status ?? "";
+};
+
 const requireOperation = (
   operation: ProcurementOperation | undefined,
 ): ProcurementOperation => {
@@ -268,3 +487,38 @@ const requireOperation = (
   }
   return operation;
 };
+
+const requirePair = <TValue>(
+  values: readonly TValue[],
+): readonly [TValue, TValue] => {
+  const [first, second] = values;
+  if (!first || !second) {
+    throw new Error("Expected two fixture values");
+  }
+  return [first, second];
+};
+
+class ClientBoundary implements TransactionalQueryable {
+  public constructor(private readonly client: Client) {}
+
+  public async query<TResult extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    values?: readonly unknown[],
+  ): Promise<QueryResult<TResult>> {
+    return this.client.query<TResult>(sql, values ? [...values] : undefined);
+  }
+
+  public async transaction<TResult>(
+    callback: (client: Queryable) => Promise<TResult>,
+  ): Promise<TResult> {
+    await this.client.query("BEGIN");
+    try {
+      const result = await callback(this);
+      await this.client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await this.client.query("ROLLBACK");
+      throw error;
+    }
+  }
+}

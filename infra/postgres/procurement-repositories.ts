@@ -141,63 +141,66 @@ export class PostgresProcurementOperationRepository implements ProcurementOperat
     readonly staleStartedBefore: Date;
     readonly now: Date;
   }): Promise<ProcurementLeaseResult> {
-    return this.db.transaction(async (client) => {
-      const current = await findByIdForUpdate(client, input.operationId);
-      if (!current) {
-        return { status: "NOT_ELIGIBLE" };
-      }
-      if (current.status === "IN_FLIGHT") {
-        if (
-          current.executionToken &&
-          current.executionStartedAt &&
-          current.executionStartedAt.getTime() >
-            input.staleStartedBefore.getTime()
-        ) {
-          return { operation: current, status: "IN_FLIGHT" };
-        }
-        if (current.dispatchState === "DISPATCH_STARTED") {
-          return { operation: current, status: "STALE_DISPATCH_STARTED" };
-        }
-      }
-      if (current.status !== "READY") {
-        return current
-          ? { operation: current, status: "NOT_ELIGIBLE" }
-          : { status: "NOT_ELIGIBLE" };
-      }
+    const updated = await this.db.query<ProcurementRow>(
+      `
+        UPDATE procurement_operations
+        SET status = 'IN_FLIGHT',
+          execution_token = $2,
+          execution_started_at = $3,
+          record_version = record_version + 1,
+          updated_at = $3
+        WHERE id = $1
+          AND (
+            (
+              execution_token IS NULL
+              AND dispatch_state = 'NOT_DISPATCHED'
+              AND status IN ('READY', 'PENDING', 'FAILED_RETRYABLE')
+            )
+            OR (
+              execution_token IS NOT NULL
+              AND execution_started_at <= $4
+              AND dispatch_state = 'NOT_DISPATCHED'
+              AND status = 'IN_FLIGHT'
+            )
+          )
+        RETURNING ${procurementReturning}
+      `,
+      [
+        input.operationId,
+        input.executionToken,
+        input.now,
+        input.staleStartedBefore,
+      ],
+    );
+    const updatedRow = updated.rows[0];
+    if (updatedRow) {
+      return {
+        operation: procurementFromRow(updatedRow),
+        status: "ACQUIRED",
+      };
+    }
+
+    const current = await findById(this.db, input.operationId);
+    if (!current) {
+      return { status: "NOT_ELIGIBLE" };
+    }
+    if (
+      current.status === "IN_FLIGHT" &&
+      current.dispatchState === "DISPATCH_STARTED"
+    ) {
       if (
-        current.executionToken &&
         current.executionStartedAt &&
         current.executionStartedAt.getTime() >
           input.staleStartedBefore.getTime()
       ) {
         return { operation: current, status: "IN_FLIGHT" };
       }
-      if (
-        current.dispatchState === "DISPATCH_STARTED" &&
-        current.executionStartedAt &&
-        current.executionStartedAt.getTime() <=
-          input.staleStartedBefore.getTime()
-      ) {
-        return { operation: current, status: "STALE_DISPATCH_STARTED" };
-      }
-      const updated = await client.query<ProcurementRow>(
-        `
-          UPDATE procurement_operations
-          SET status = 'IN_FLIGHT',
-            execution_token = $2,
-            execution_started_at = $3,
-            record_version = record_version + 1,
-            updated_at = $3
-          WHERE id = $1
-          RETURNING ${procurementReturning}
-        `,
-        [input.operationId, input.executionToken, input.now],
-      );
-      return {
-        operation: procurementFromRow(requiredRow(updated.rows[0])),
-        status: "ACQUIRED",
-      };
-    });
+      return { operation: current, status: "STALE_DISPATCH_STARTED" };
+    }
+    if (current.executionToken && current.status === "IN_FLIGHT") {
+      return { operation: current, status: "IN_FLIGHT" };
+    }
+    return { operation: current, status: "NOT_ELIGIBLE" };
   }
 
   public async markDispatchStarted(input: {
@@ -311,7 +314,7 @@ export class PostgresProcurementOperationRepository implements ProcurementOperat
           reconciliation_reason_code = COALESCE($12, reconciliation_reason_code),
           record_version = record_version + 1,
           updated_at = $13
-        WHERE id = $1 AND execution_token = $2
+        WHERE id = $1 AND execution_token = $2 AND status = 'IN_FLIGHT'
         RETURNING ${procurementReturning}
       `,
       [
@@ -400,29 +403,6 @@ const findById = async (
     [operationId],
   );
   return result.rows[0] ? procurementFromRow(result.rows[0]) : null;
-};
-
-const findByIdForUpdate = async (
-  db: Queryable,
-  operationId: string,
-): Promise<ProcurementOperation | null> => {
-  const result = await db.query<ProcurementRow>(
-    `
-      SELECT ${procurementReturning}
-      FROM procurement_operations
-      WHERE id = $1
-      FOR UPDATE
-    `,
-    [operationId],
-  );
-  return result.rows[0] ? procurementFromRow(result.rows[0]) : null;
-};
-
-const requiredRow = (row: ProcurementRow | undefined): ProcurementRow => {
-  if (!row) {
-    throw new Error("Expected procurement row");
-  }
-  return row;
 };
 
 const procurementFromRow = (row: ProcurementRow): ProcurementOperation => {

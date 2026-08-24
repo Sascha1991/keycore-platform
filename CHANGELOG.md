@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Added KS-07-03 supplier procurement orchestration with durable operations, execution leases, dispatch-state crash safety, dry-run mode, fake-supplier execution tests and PostgreSQL persistence constraints while keeping real supplier procurement disabled.
+- Hardened KS-07-03 PostgreSQL procurement concurrency so attempt creation uses order-scoped advisory locking, lease acquisition uses an atomic conditional update, and tests use separate PostgreSQL clients for concurrent actors.
 - Implemented `KS-07-02` Stripe payment integration foundation:
   - added Stripe PaymentIntent initialization behind a payment port with deterministic server-side idempotency keys;
   - added local `order_payments` persistence with atomic order/provider reservation, optimistic updates and no stored client secrets;
