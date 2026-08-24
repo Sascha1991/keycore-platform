@@ -9,6 +9,7 @@ import type {
   ControlledProcurementApproval,
   ControlledProcurementApprovalRepository,
   ControlledProcurementStatus,
+  ControlledProcurementSupplierErrorCategory,
 } from "../suppliers/kinguin/kinguin-controlled-live-procurement.js";
 import type { Queryable, TransactionalQueryable } from "./client.js";
 
@@ -32,6 +33,10 @@ interface ControlledApprovalRow {
   readonly supplier_status: string | null;
   readonly response_fingerprint: string | null;
   readonly failure_reason_code: string | null;
+  readonly supplier_http_status: number | null;
+  readonly supplier_error_code: string | null;
+  readonly supplier_error_category: ControlledProcurementSupplierErrorCategory | null;
+  readonly safe_rejection_reason_code: string | null;
   readonly expires_at: Date;
   readonly consumed_at: Date | null;
   readonly claimed_at: Date | null;
@@ -58,13 +63,16 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
             purchase_request_fingerprint, order_external_id, token_hash,
             status, dispatch_state, external_supplier_order_id,
             supplier_status, response_fingerprint, failure_reason_code,
+            supplier_http_status, supplier_error_code,
+            supplier_error_category, safe_rejection_reason_code,
             expires_at, consumed_at, claimed_at, dispatch_started_at,
             completed_at, record_version, created_at, updated_at
           )
           VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
             $11, $12, $13, $14, $15, $16, $17, $18,
-            $19, $20, $21, $22, $23, $24, $25, $26, $27
+            $19, $20, $21, $22, $23, $24, $25, $26, $27,
+            $28, $29, $30, $31
           )
           RETURNING ${returning}
         `,
@@ -183,6 +191,7 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
   public async markRejected(input: {
     readonly approvalId: string;
     readonly reasonCode: string;
+    readonly diagnostic?: ControlledProcurementApproval["rejectionDiagnostic"];
     readonly responseFingerprint?: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
@@ -193,6 +202,7 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
         completedAt: input.now,
         dispatchState: "DISPATCH_REJECTED",
         failureReasonCode: input.reasonCode,
+        rejectionDiagnostic: input.diagnostic ?? null,
         responseFingerprint: input.responseFingerprint ?? null,
         status: "PROCUREMENT_REJECTED",
       },
@@ -262,14 +272,18 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
           supplier_status = $5,
           response_fingerprint = $6,
           failure_reason_code = $7,
-          consumed_at = $8,
-          claimed_at = $9,
-          dispatch_started_at = $10,
-          completed_at = $11,
+          supplier_http_status = $8,
+          supplier_error_code = $9,
+          supplier_error_category = $10,
+          safe_rejection_reason_code = $11,
+          consumed_at = $12,
+          claimed_at = $13,
+          dispatch_started_at = $14,
+          completed_at = $15,
           record_version = record_version + 1,
-          updated_at = $12
+          updated_at = $16
         WHERE id = $1
-          AND record_version = $13
+          AND record_version = $17
           AND ${predicateSql}
         RETURNING ${returning}
       `,
@@ -281,6 +295,10 @@ export class PostgresControlledProcurementApprovalRepository implements Controll
         next.supplierStatus ?? null,
         next.responseFingerprint ?? null,
         next.failureReasonCode ?? null,
+        next.rejectionDiagnostic?.supplierHttpStatus ?? null,
+        next.rejectionDiagnostic?.supplierErrorCode ?? null,
+        next.rejectionDiagnostic?.supplierErrorCategory ?? null,
+        next.rejectionDiagnostic?.safeReasonCode ?? null,
         next.consumedAt ?? null,
         next.claimedAt ?? null,
         next.dispatchStartedAt ?? null,
@@ -313,7 +331,8 @@ const returning = `
   purchase_request_fingerprint, order_external_id, token_hash, status,
   dispatch_state, external_supplier_order_id, supplier_status,
   response_fingerprint, failure_reason_code, expires_at, consumed_at,
-  claimed_at, dispatch_started_at, completed_at, record_version,
+  supplier_http_status, supplier_error_code, supplier_error_category,
+  safe_rejection_reason_code, claimed_at, dispatch_started_at, completed_at, record_version,
   created_at, updated_at
 `;
 
@@ -354,6 +373,10 @@ const values = (
   approval.supplierStatus ?? null,
   approval.responseFingerprint ?? null,
   approval.failureReasonCode ?? null,
+  approval.rejectionDiagnostic?.supplierHttpStatus ?? null,
+  approval.rejectionDiagnostic?.supplierErrorCode ?? null,
+  approval.rejectionDiagnostic?.supplierErrorCategory ?? null,
+  approval.rejectionDiagnostic?.safeReasonCode ?? null,
   approval.expiresAt,
   approval.consumedAt ?? null,
   approval.claimedAt ?? null,
@@ -381,6 +404,16 @@ const fromRow = (
   expiresAt: row.expires_at,
   externalSupplierOrderId: row.external_supplier_order_id,
   failureReasonCode: row.failure_reason_code,
+  rejectionDiagnostic:
+    row.safe_rejection_reason_code && row.supplier_error_category
+      ? {
+          safeReasonCode: row.safe_rejection_reason_code,
+          supplier: "Kinguin",
+          supplierErrorCategory: row.supplier_error_category,
+          supplierErrorCode: row.supplier_error_code,
+          supplierHttpStatus: row.supplier_http_status,
+        }
+      : null,
   maximumAcquisitionAmount: money(
     BigInt(row.maximum_acquisition_amount_minor),
     currency(row.currency),

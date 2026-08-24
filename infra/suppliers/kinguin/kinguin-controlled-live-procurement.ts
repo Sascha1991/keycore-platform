@@ -77,6 +77,27 @@ export type ControlledProcurementAuditEvent =
   | "CONTROLLED_PROCUREMENT_RECONCILIATION_REQUESTED"
   | "CONTROLLED_PROCUREMENT_MANUAL_REVIEW_REQUIRED";
 
+export type ControlledProcurementSupplierErrorCategory =
+  | "AUTHENTICATION"
+  | "AUTHORIZATION"
+  | "VALIDATION"
+  | "INSUFFICIENT_BALANCE"
+  | "PRODUCT_UNAVAILABLE"
+  | "OFFER_UNAVAILABLE"
+  | "PRICE_MISMATCH"
+  | "DUPLICATE_REFERENCE"
+  | "RATE_LIMIT"
+  | "SUPPLIER_REJECTION"
+  | "UNKNOWN";
+
+export interface ControlledProcurementRejectionDiagnostic {
+  readonly supplier: "Kinguin";
+  readonly supplierHttpStatus: number | null;
+  readonly supplierErrorCode: string | null;
+  readonly supplierErrorCategory: ControlledProcurementSupplierErrorCategory;
+  readonly safeReasonCode: string;
+}
+
 export interface ControlledProcurementApproval {
   readonly approvalId: string;
   readonly mode: "CONTROLLED_VERIFICATION";
@@ -96,6 +117,7 @@ export interface ControlledProcurementApproval {
   readonly supplierStatus?: string | null;
   readonly responseFingerprint?: string | null;
   readonly failureReasonCode?: string | null;
+  readonly rejectionDiagnostic?: ControlledProcurementRejectionDiagnostic | null;
   readonly expiresAt: Date;
   readonly consumedAt?: Date | null;
   readonly claimedAt?: Date | null;
@@ -150,6 +172,7 @@ export interface ControlledProcurementApprovalRepository {
   markRejected(input: {
     readonly approvalId: string;
     readonly reasonCode: string;
+    readonly diagnostic?: ControlledProcurementRejectionDiagnostic;
     readonly responseFingerprint?: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null>;
@@ -235,6 +258,10 @@ export interface ControlledExecuteResult {
   readonly externalSupplierOrderId?: string;
   readonly dispatchState?: ControlledProcurementDispatchState;
   readonly reconciliationRequired: boolean;
+  readonly supplierHttpStatus?: number | null;
+  readonly supplierErrorCode?: string | null;
+  readonly supplierErrorCategory?: ControlledProcurementSupplierErrorCategory;
+  readonly safeReasonCode?: string;
 }
 
 export interface ControlledReconcileResult {
@@ -248,6 +275,10 @@ export interface ControlledReconcileResult {
   readonly supplier: "Kinguin";
   readonly orderExternalId: string;
   readonly externalSupplierOrderId?: string;
+  readonly supplierHttpStatus?: number | null;
+  readonly supplierErrorCode?: string | null;
+  readonly supplierErrorCategory?: ControlledProcurementSupplierErrorCategory;
+  readonly safeReasonCode?: string;
 }
 
 const supplier = supplierId("kinguin");
@@ -335,6 +366,11 @@ export class KinguinControlledOrderTransport {
     if (response.status >= 300 && response.status < 400) {
       throw controlledError("POST_REDIRECT_NOT_FOLLOWED");
     }
+    if (response.status >= 400 && response.status < 500) {
+      throw new ControlledKinguinOrderRejectionError(
+        normalizeKinguinOrderRejection(response),
+      );
+    }
     return response;
   }
 
@@ -361,6 +397,18 @@ export class KinguinControlledOrderTransport {
       this.forbiddenRequestCount += 1;
       throw controlledError("CONTROLLED_ORDER_ENDPOINT_BLOCKED");
     }
+  }
+}
+
+export class ControlledKinguinOrderRejectionError extends SupplierError {
+  public constructor(
+    public readonly diagnostic: ControlledProcurementRejectionDiagnostic,
+  ) {
+    super({
+      category: "REJECTED",
+      operation: diagnostic.safeReasonCode,
+      supplierId: supplier,
+    });
   }
 }
 
@@ -674,6 +722,7 @@ export class ControlledLiveProcurementService {
       }
       if (parsed.kind === "REJECTED") {
         const rejected = await this.options.repository.markRejected({
+          diagnostic: normalizedSupplierRejectedDiagnostic(),
           approvalId: approval.approvalId,
           now: this.now(),
           reasonCode: "SUPPLIER_REJECTED",
@@ -687,6 +736,7 @@ export class ControlledLiveProcurementService {
           reconciliationRequired: false,
           status: "PROCUREMENT_REJECTED",
           supplier: "Kinguin",
+          ...diagnosticFields(rejected?.rejectionDiagnostic),
         };
       }
       const confirmed = await this.options.repository.markConfirmed({
@@ -725,6 +775,7 @@ export class ControlledLiveProcurementService {
         mapped.status === "PROCUREMENT_REJECTED"
           ? await this.options.repository.markRejected({
               approvalId: approval.approvalId,
+              ...(mapped.diagnostic ? { diagnostic: mapped.diagnostic } : {}),
               now: this.now(),
               reasonCode: mapped.reasonCode,
             })
@@ -754,6 +805,7 @@ export class ControlledLiveProcurementService {
         reconciliationRequired: false,
         status: "PROCUREMENT_REJECTED",
         supplier: "Kinguin",
+        ...diagnosticFields(updated?.rejectionDiagnostic ?? mapped.diagnostic),
       };
     }
   }
@@ -813,6 +865,7 @@ export class ControlledLiveProcurementService {
           ? "CONFIRMED_REJECTION"
           : "MANUAL_REVIEW_REQUIRED",
       supplier: "Kinguin",
+      ...diagnosticFields(approval.rejectionDiagnostic),
       ...(approval.externalSupplierOrderId
         ? { externalSupplierOrderId: approval.externalSupplierOrderId }
         : {}),
@@ -981,6 +1034,7 @@ export class ControlledLiveProcurementService {
         mode: approval.mode,
         orderExternalId: approval.orderExternalId,
         reasonCode: approval.failureReasonCode ?? eventType,
+        ...diagnosticFields(approval.rejectionDiagnostic),
         status: approval.status,
         supplierId: approval.supplierId,
       },
@@ -1116,6 +1170,7 @@ export class InMemoryControlledProcurementApprovalRepository implements Controll
   public async markRejected(input: {
     readonly approvalId: string;
     readonly reasonCode: string;
+    readonly diagnostic?: ControlledProcurementRejectionDiagnostic;
     readonly responseFingerprint?: string;
     readonly now: Date;
   }): Promise<ControlledProcurementApproval | null> {
@@ -1126,6 +1181,7 @@ export class InMemoryControlledProcurementApprovalRepository implements Controll
         completedAt: input.now,
         dispatchState: "DISPATCH_REJECTED",
         failureReasonCode: input.reasonCode,
+        rejectionDiagnostic: input.diagnostic ?? null,
         responseFingerprint: input.responseFingerprint ?? null,
         status: "PROCUREMENT_REJECTED",
       },
@@ -1371,12 +1427,138 @@ const parseOrderResponse = (
   return { kind: "SUCCESS", orderId, status };
 };
 
+const normalizeKinguinOrderRejection = (
+  response: KinguinHttpResponse,
+): ControlledProcurementRejectionDiagnostic => {
+  const parsed = parseKinguinErrorBody(response.body);
+  const code = sanitizeSupplierErrorCode(parsed?.kind);
+  const status =
+    typeof parsed?.status === "number" &&
+    Number.isInteger(parsed.status) &&
+    parsed.status >= 100 &&
+    parsed.status <= 599
+      ? parsed.status
+      : response.status;
+  const mapped = mapKinguinRejectionDiagnostic(status, code);
+  return {
+    safeReasonCode: mapped.safeReasonCode,
+    supplier: "Kinguin",
+    supplierErrorCategory: mapped.supplierErrorCategory,
+    supplierErrorCode: code,
+    supplierHttpStatus: status,
+  };
+};
+
+const parseKinguinErrorBody = (
+  body: string,
+): { readonly kind?: unknown; readonly status?: unknown } | null => {
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    return isObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const sanitizeSupplierErrorCode = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (
+    trimmed.length === 0 ||
+    trimmed.length > 80 ||
+    !/^[A-Za-z0-9_.:-]+$/u.test(trimmed) ||
+    /(product.?key|serial|plaintext|token|api.?key|secret)/iu.test(trimmed)
+  ) {
+    return null;
+  }
+  return trimmed;
+};
+
+const mapKinguinRejectionDiagnostic = (
+  status: number,
+  code: string | null,
+): Pick<
+  ControlledProcurementRejectionDiagnostic,
+  "safeReasonCode" | "supplierErrorCategory"
+> => {
+  if (status === 401 || (code === "Authorization" && status !== 403)) {
+    return {
+      safeReasonCode: "KINGUIN_AUTHENTICATION_REJECTED",
+      supplierErrorCategory: "AUTHENTICATION",
+    };
+  }
+  if (status === 403) {
+    return {
+      safeReasonCode: "KINGUIN_AUTHORIZATION_REJECTED",
+      supplierErrorCategory: "AUTHORIZATION",
+    };
+  }
+  if (status === 429) {
+    return {
+      safeReasonCode: "KINGUIN_RATE_LIMITED",
+      supplierErrorCategory: "RATE_LIMIT",
+    };
+  }
+  if (code === "InsufficientBalance") {
+    return {
+      safeReasonCode: "KINGUIN_INSUFFICIENT_BALANCE",
+      supplierErrorCategory: "INSUFFICIENT_BALANCE",
+    };
+  }
+  if (code === "ProductUnavailable") {
+    return {
+      safeReasonCode: "KINGUIN_PRODUCT_UNAVAILABLE",
+      supplierErrorCategory: "PRODUCT_UNAVAILABLE",
+    };
+  }
+  if (
+    code === "ConstraintViolation" ||
+    code === "Preorder" ||
+    status === 400 ||
+    status === 422
+  ) {
+    return {
+      safeReasonCode: "KINGUIN_ORDER_VALIDATION_REJECTED",
+      supplierErrorCategory: "VALIDATION",
+    };
+  }
+  if (code === "OrderFailed" || code === "ResourceLock") {
+    return {
+      safeReasonCode: "KINGUIN_SUPPLIER_REJECTED",
+      supplierErrorCategory: "SUPPLIER_REJECTION",
+    };
+  }
+  return {
+    safeReasonCode: "KINGUIN_UNKNOWN_REJECTION",
+    supplierErrorCategory: code ? "SUPPLIER_REJECTION" : "UNKNOWN",
+  };
+};
+
+const normalizedSupplierRejectedDiagnostic =
+  (): ControlledProcurementRejectionDiagnostic => ({
+    safeReasonCode: "KINGUIN_SUPPLIER_REJECTED",
+    supplier: "Kinguin",
+    supplierErrorCategory: "SUPPLIER_REJECTION",
+    supplierErrorCode: null,
+    supplierHttpStatus: null,
+  });
+
 const mapExecutionError = (
   error: unknown,
 ): {
   readonly status: "PROCUREMENT_REJECTED" | "AMBIGUOUS";
   readonly reasonCode: string;
+  readonly diagnostic?: ControlledProcurementRejectionDiagnostic;
 } => {
+  if (error instanceof ControlledKinguinOrderRejectionError) {
+    return {
+      diagnostic: error.diagnostic,
+      reasonCode: error.diagnostic.safeReasonCode,
+      status: "PROCUREMENT_REJECTED",
+    };
+  }
   if (error instanceof SupplierError) {
     if (
       [
@@ -1414,6 +1596,18 @@ const blocked = (
     ? { orderExternalId: approval.orderExternalId }
     : {}),
 });
+
+const diagnosticFields = (
+  diagnostic: ControlledProcurementRejectionDiagnostic | null | undefined,
+) =>
+  diagnostic
+    ? {
+        safeReasonCode: diagnostic.safeReasonCode,
+        supplierErrorCategory: diagnostic.supplierErrorCategory,
+        supplierErrorCode: diagnostic.supplierErrorCode,
+        supplierHttpStatus: diagnostic.supplierHttpStatus,
+      }
+    : {};
 
 const ambiguousResult = (
   approval: ControlledProcurementApproval,

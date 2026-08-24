@@ -183,11 +183,50 @@ fingerprint and timestamp. It then stops.
 Definitive supplier rejection persists `PROCUREMENT_REJECTED` and does not
 reuse the approval.
 
+KS-07-03e persists safe normalized diagnostics for definitive Kinguin order
+rejections. The persisted diagnostic fields are:
+
+- `supplierHttpStatus`;
+- `supplierErrorCode`;
+- `supplierErrorCategory`;
+- `safeReasonCode`.
+
+`supplierErrorCode` is limited to sanitized documented machine codes such as
+Kinguin error `kind` values. Raw response bodies, human supplier messages,
+headers and debug fields are not stored. Historical rejected approvals without
+diagnostic fields remain readable and return no diagnostic.
+
+Categories are supplier-neutral and bounded to:
+
+- `AUTHENTICATION`;
+- `AUTHORIZATION`;
+- `VALIDATION`;
+- `INSUFFICIENT_BALANCE`;
+- `PRODUCT_UNAVAILABLE`;
+- `OFFER_UNAVAILABLE`;
+- `PRICE_MISMATCH`;
+- `DUPLICATE_REFERENCE`;
+- `RATE_LIMIT`;
+- `SUPPLIER_REJECTION`;
+- `UNKNOWN`.
+
 Timeout, connection reset, malformed possible-success responses, local
 persistence failure after remote success, and crash-after-dispatch scenarios are
 `AMBIGUOUS`. KeyCore never resends the POST automatically. Operators reconcile
 using documented safe Kinguin lookup by known supplier order ID or
 `orderExternalId`; the system does not guess by product, price or timestamp.
+HTTP 5xx responses remain ambiguous for controlled procurement because they may
+represent a remote unknown outcome after dispatch.
+
+For local database inspection of an existing controlled approval, operators may
+run:
+
+```sh
+npm run kinguin:inspect-controlled-procurement -- <approvalId>
+```
+
+The inspect command reads only the local KeyCore database. It does not call
+Kinguin, does not create orders and does not retrieve keys.
 
 ## Forbidden Data
 

@@ -116,6 +116,40 @@ transport that permits only `POST /v2/order`. It does not enable normal
 customer procurement, does not retry a dispatched POST and does not retrieve
 keys.
 
+KS-07-03e re-checked the official Kinguin Order v2 and error-code
+documentation. The verified order-create contract remains `POST /v2/order` with
+`products[].productId`, `products[].qty`, `products[].price`,
+`products[].keyType`, `products[].offerId` and `orderExternalId`. The docs also
+define key retrieval as `GET /v2/order/{orderId}/keys`, which remains forbidden
+for controlled procurement.
+
+Kinguin documented non-2xx error payloads include safe machine fields such as
+`kind` and `status`, plus human/debug fields such as `detail`, `trace`,
+`propertyPath` and `invalidValue`. Controlled procurement stores only sanitized
+diagnostic fields derived from HTTP status and documented machine `kind` values:
+
+- `supplierHttpStatus`;
+- `supplierErrorCode`;
+- `supplierErrorCategory`;
+- `safeReasonCode`.
+
+The current Kinguin-specific normalized mappings are:
+
+| Kinguin signal                                              | Category               | Safe reason                         |
+| ----------------------------------------------------------- | ---------------------- | ----------------------------------- |
+| HTTP `401` or `Authorization` without `403`                 | `AUTHENTICATION`       | `KINGUIN_AUTHENTICATION_REJECTED`   |
+| HTTP `403`                                                  | `AUTHORIZATION`        | `KINGUIN_AUTHORIZATION_REJECTED`    |
+| HTTP `429`                                                  | `RATE_LIMIT`           | `KINGUIN_RATE_LIMITED`              |
+| `InsufficientBalance`                                       | `INSUFFICIENT_BALANCE` | `KINGUIN_INSUFFICIENT_BALANCE`      |
+| `ProductUnavailable`                                        | `PRODUCT_UNAVAILABLE`  | `KINGUIN_PRODUCT_UNAVAILABLE`       |
+| `ConstraintViolation`, `Preorder`, HTTP `400` or HTTP `422` | `VALIDATION`           | `KINGUIN_ORDER_VALIDATION_REJECTED` |
+| `OrderFailed` or `ResourceLock`                             | `SUPPLIER_REJECTION`   | `KINGUIN_SUPPLIER_REJECTED`         |
+| Sanitized unclassified machine code                         | `SUPPLIER_REJECTION`   | `KINGUIN_UNKNOWN_REJECTION`         |
+| No safe machine code                                        | `UNKNOWN`              | `KINGUIN_UNKNOWN_REJECTION`         |
+
+Raw response bodies, supplier messages, headers and product-key material are not
+stored in approval records, audit metadata or CLI output.
+
 ## Key Retrieval And KeyVault Boundary
 
 Implemented documented key endpoint:
