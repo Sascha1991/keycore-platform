@@ -4,10 +4,16 @@ import {
   correlationId,
   currency,
   money,
+  offerId as keycoreOfferId,
+  productId as keycoreProductId,
+  supplierId,
   supplierOfferId,
   supplierProductId,
   type Money,
+  type NormalizedSupplierOffer,
+  type NormalizedSupplierProduct,
 } from "../../../packages/platform/src/contracts.js";
+import { parseCandidateListArgs } from "../../../scripts/kinguin-list-live-test-candidates.js";
 import { SupplierError } from "../../../packages/platform/src/suppliers/errors.js";
 import {
   EnvSecretProvider,
@@ -153,6 +159,246 @@ describe("controlled Kinguin live procurement", () => {
     expect(
       transport.requests.filter((request) => request.method === "POST"),
     ).toHaveLength(0);
+  });
+
+  it("discovers candidates through bounded readonly pagination", async () => {
+    const transport = new FakeTransport({
+      productPages: [
+        [productFixture({ offers: [] })],
+        [productFixture({ productId: "product-page-2" })],
+      ],
+    });
+    const result = await serviceFixture({ transport }).listCandidates({
+      maxCandidates: 10,
+      maxPages: 10,
+      pageSize: 20,
+    });
+
+    expect(result).toMatchObject({
+      eligibleCandidatesFound: 1,
+      pagesInspected: 2,
+      productRecordsInspected: 2,
+      searchStoppedBecause: "END_OF_RESULTS",
+    });
+    expect(result.candidates).toHaveLength(1);
+    expect(result.mutationRequestCount).toBe(0);
+    expect(
+      transport.requests.every((request) => request.method === "GET"),
+    ).toBe(true);
+    expect(
+      transport.requests.some((request) => request.path.includes("/keys")),
+    ).toBe(false);
+    expect(
+      transport.requests.some((request) => request.path.includes("/v2/order")),
+    ).toBe(false);
+  });
+
+  it("stops candidate discovery after maxCandidates and deduplicates repeated offers", async () => {
+    const duplicate = productFixture({
+      offers: [
+        offerFixture({ offerId: "offer-duplicate", price: 1.99 }),
+        offerFixture({ offerId: "offer-duplicate", price: 1.99 }),
+        offerFixture({ offerId: "offer-second", price: 2.99 }),
+      ],
+      productId: "product-duplicate",
+    });
+    const transport = new FakeTransport({
+      productPages: [[duplicate], [productFixture({ productId: "unread" })]],
+    });
+    const result = await serviceFixture({ transport }).listCandidates({
+      maxCandidates: 2,
+      maxPages: 10,
+      pageSize: 20,
+    });
+
+    expect(result.searchStoppedBecause).toBe("MAX_CANDIDATES");
+    expect(result.pagesInspected).toBe(1);
+    expect(
+      result.candidates.map((candidate) => candidate.supplierOfferId),
+    ).toEqual(["offer-duplicate", "offer-second"]);
+  });
+
+  it("stops candidate discovery after empty page or maxPages", async () => {
+    const emptyTransport = new FakeTransport({
+      productPages: [[productFixture({ offers: [] })], []],
+    });
+    const emptyResult = await serviceFixture({
+      transport: emptyTransport,
+    }).listCandidates({
+      maxCandidates: 10,
+      maxPages: 10,
+      pageSize: 20,
+    });
+    expect(emptyResult).toMatchObject({
+      pagesInspected: 2,
+      productRecordsInspected: 1,
+      searchStoppedBecause: "END_OF_RESULTS",
+    });
+
+    const maxPagesTransport = new FakeTransport({
+      forceNextCursor: true,
+      productPages: [
+        [productFixture({ offers: [] })],
+        [productFixture({ offers: [], productId: "product-page-2" })],
+        [productFixture({ productId: "product-page-3" })],
+      ],
+    });
+    const maxPagesResult = await serviceFixture({
+      transport: maxPagesTransport,
+    }).listCandidates({
+      maxCandidates: 10,
+      maxPages: 2,
+      pageSize: 20,
+    });
+    expect(maxPagesResult.searchStoppedBecause).toBe("MAX_PAGES");
+    expect(maxPagesResult.pagesInspected).toBe(2);
+    expect(
+      maxPagesTransport.requests.filter((request) => {
+        const url = new URL(request.path);
+        return url.pathname.endsWith("/v1/products");
+      }),
+    ).toHaveLength(2);
+  });
+
+  it("caps candidate page size, max pages and max candidates", async () => {
+    const transport = new FakeTransport({
+      forceNextCursor: true,
+      productPages: Array.from({ length: 30 }, (_, index) => [
+        productFixture({
+          productId: `product-${index}`,
+          offers: [
+            offerFixture({
+              offerId: `offer-${index}`,
+              price: ((100 + index) / 100).toFixed(2),
+            }),
+          ],
+        }),
+      ]),
+    });
+    const result = await serviceFixture({ transport }).listCandidates({
+      maxCandidates: 100,
+      maxPages: 100,
+      pageSize: 100,
+    });
+
+    expect(result.candidates).toHaveLength(20);
+    expect(result.searchStoppedBecause).toBe("MAX_CANDIDATES");
+    const productRequests = transport.requests.filter((request) => {
+      const url = new URL(request.path);
+      return url.pathname.endsWith("/v1/products");
+    });
+    expect(productRequests[0]?.query).toMatchObject({ limit: 20, page: 1 });
+    expect(productRequests.length).toBeLessThanOrEqual(25);
+  });
+
+  it("keeps eligibility, availability and currency filters fail-closed during discovery", async () => {
+    const transport = new FakeTransport({
+      productPages: [
+        [
+          productFixture({
+            productId: "ineligible",
+            regionalLimitations: "CIS",
+          }),
+          productFixture({
+            productId: "unknown-region",
+            regionId: 999,
+            regionalLimitations: "Unknown Mars",
+          }),
+          productFixture({ productId: "unavailable", qty: 0 }),
+          productFixture({
+            offers: [offerFixture({ offerId: "zero-price", price: 0 })],
+            productId: "zero-price",
+          }),
+          productFixture({
+            offers: [offerFixture({ offerId: "valid", price: 3.49 })],
+            productId: "valid",
+          }),
+        ],
+      ],
+    });
+    const result = await serviceFixture({ transport }).listCandidates({
+      maxCandidates: 10,
+      maxPages: 1,
+      pageSize: 20,
+    });
+
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]).toMatchObject({
+      supplierOfferId: "valid",
+      supplierProductId: "valid",
+    });
+  });
+
+  it("excludes unsupported currency during candidate discovery", async () => {
+    const service = new ControlledLiveProcurementService({
+      config: controlledLiveConfigFromEnv(env),
+      offerIndex: new InMemoryKinguinOfferProductIndex(),
+      readOnlySupplier: new StubCandidateSupplier({
+        offer: {
+          ...normalizedOfferFixture("usd-product", "usd-offer", 100n),
+          offer: {
+            ...normalizedOfferFixture("usd-product", "usd-offer", 100n).offer,
+            currentPrice: money(100n, currency("USD")),
+          },
+        },
+      }) as unknown as KinguinSupplier,
+      repository: new InMemoryControlledProcurementApprovalRepository(),
+    });
+
+    const result = await service.listCandidates({
+      maxCandidates: 10,
+      maxPages: 1,
+      pageSize: 20,
+    });
+
+    expect(result.candidates).toHaveLength(0);
+  });
+
+  it("sorts candidate prices numerically with deterministic tie-breaking", async () => {
+    const transport = new FakeTransport({
+      productPages: [
+        [
+          productFixture({
+            offers: [offerFixture({ offerId: "offer-1000", price: 10 })],
+            productId: "product-d",
+          }),
+          productFixture({
+            offers: [offerFixture({ offerId: "offer-99", price: 0.99 })],
+            productId: "product-c",
+          }),
+          productFixture({
+            offers: [offerFixture({ offerId: "offer-900", price: 9 })],
+            productId: "product-b",
+          }),
+          productFixture({
+            offers: [
+              offerFixture({ offerId: "offer-100", price: 1 }),
+              offerFixture({ offerId: "offer-z", price: 1 }),
+            ],
+            productId: "product-a",
+          }),
+        ],
+      ],
+    });
+    const result = await serviceFixture({ transport }).listCandidates({
+      maxCandidates: 10,
+      maxPages: 1,
+      pageSize: 20,
+    });
+
+    expect(
+      result.candidates.map((candidate) => [
+        candidate.currentAcquisitionAmountMinor,
+        candidate.supplierProductId,
+        candidate.supplierOfferId,
+      ]),
+    ).toEqual([
+      ["99", "product-c", "offer-99"],
+      ["100", "product-a", "offer-100"],
+      ["100", "product-a", "offer-z"],
+      ["900", "product-b", "offer-900"],
+      ["1000", "product-d", "offer-1000"],
+    ]);
   });
 
   it("uses stable fingerprints and binds price into the fingerprint", () => {
@@ -597,6 +843,21 @@ describe("controlled Kinguin live procurement", () => {
       "CONTROLLED_ORDER_ENDPOINT_BLOCKED",
     );
   });
+
+  it("rejects invalid CLI numeric arguments for candidate discovery", () => {
+    expect(() => parseCandidateListArgs(["--page-size", "0"])).toThrow(
+      /Invalid --page-size/u,
+    );
+    expect(() => parseCandidateListArgs(["--max-pages", "-1"])).toThrow(
+      /Invalid --max-pages/u,
+    );
+    expect(() =>
+      parseCandidateListArgs(["--max-candidates", "not-a-number"]),
+    ).toThrow(/Invalid --max-candidates/u);
+    expect(parseCandidateListArgs(["--page-size", "20"])).toEqual({
+      pageSize: 20,
+    });
+  });
 });
 
 const expectExecuteBlock = async (input: {
@@ -697,36 +958,135 @@ const request = (
 const eur = (amountMinor: number): Money =>
   money(BigInt(amountMinor), currency("EUR"));
 
+const offerFixture = (
+  overrides: Partial<NonNullable<KinguinProduct["offers"]>[number]> = {},
+): NonNullable<KinguinProduct["offers"]>[number] => ({
+  availableQty: 12,
+  isPreorder: false,
+  name: "Synthetic Kinguin Offer",
+  offerId: "offer-alpha",
+  price: 5.79,
+  qty: 12,
+  textQty: 12,
+  ...overrides,
+});
+
 const productFixture = (
   overrides: Partial<KinguinProduct> = {},
-): KinguinProduct => ({
-  activationDetails: "Activate on Steam",
-  cheapestOfferId: ["offer-alpha"],
-  isPreorder: false,
-  kinguinId: 1949,
-  name: "Synthetic Kinguin Product Steam CD Key",
-  offers: [
-    {
-      availableQty: 12,
-      isPreorder: false,
+): KinguinProduct => {
+  const productReference = overrides.productId ?? "product-alpha";
+  const offers = overrides.offers ?? [
+    offerFixture({
+      offerId: overrides.productId
+        ? `offer-${productReference}`
+        : "offer-alpha",
       name: "Synthetic Kinguin Product Steam CD Key",
-      offerId: "offer-alpha",
       price: overrides.price ?? 5.79,
       qty: overrides.qty ?? 12,
       textQty: overrides.qty ?? 12,
-    },
-  ],
-  originalName: "Synthetic Kinguin Product",
-  platform: "PC Steam",
-  price: overrides.price ?? 5.79,
-  productId: "product-alpha",
-  qty: overrides.qty ?? 12,
-  regionId: overrides.regionId ?? 3,
-  regionalLimitations: overrides.regionalLimitations ?? "REGION FREE",
-  textQty: overrides.qty ?? 12,
-  updatedAt: "2026-01-01T00:00:00+00:00",
-  ...overrides,
+    }),
+  ];
+  return {
+    activationDetails: "Activate on Steam",
+    cheapestOfferId: offers[0]?.offerId ? [offers[0].offerId] : [],
+    isPreorder: false,
+    kinguinId: 1949,
+    name: "Synthetic Kinguin Product Steam CD Key",
+    offers,
+    originalName: "Synthetic Kinguin Product",
+    platform: "PC Steam",
+    price: overrides.price ?? 5.79,
+    productId: productReference,
+    qty: overrides.qty ?? 12,
+    regionId: overrides.regionId ?? 3,
+    regionalLimitations: overrides.regionalLimitations ?? "REGION FREE",
+    textQty: overrides.qty ?? 12,
+    updatedAt: "2026-01-01T00:00:00+00:00",
+    ...overrides,
+  };
+};
+
+const normalizedProductFixture = (
+  productReference: string,
+): NormalizedSupplierProduct => ({
+  changedAt: now,
+  lifecycle: "IN_STOCK",
+  product: {
+    platforms: ["WINDOWS"],
+    productId: keycoreProductId(`supplier:kinguin:${productReference}`),
+    title: `Synthetic ${productReference}`,
+    type: "GAME",
+  },
+  supplier: {
+    contractVersion: { major: 1, minor: 0 },
+    displayName: "Kinguin",
+    supplierId: supplierId("kinguin"),
+  },
+  supplierProductId: supplierProductId(productReference),
 });
+
+const normalizedOfferFixture = (
+  productReference: string,
+  offerReference: string,
+  amountMinor: bigint,
+): NormalizedSupplierOffer => ({
+  capturedAt: now,
+  offer: {
+    availability: "IN_STOCK",
+    currentPrice: money(amountMinor, currency("EUR")),
+    germanyCompatibility: "REVIEW_REQUIRED",
+    offerId: keycoreOfferId(`supplier:kinguin:${offerReference}`),
+    productId: keycoreProductId(`supplier:kinguin:${productReference}`),
+  },
+  regionEvidence: {
+    activationRestrictions: [],
+    allowedCountries: [],
+    excludedCountries: [],
+    hasContradictoryEvidence: false,
+    hasMissingValues: false,
+    hasUnknownValues: false,
+    requiresForeignAccount: false,
+    requiresVpn: false,
+    supplierRegion: {
+      documentedSemanticsSummary: "REGION FREE",
+      supplierRegionId: "3",
+    },
+  },
+  supplier: {
+    contractVersion: { major: 1, minor: 0 },
+    displayName: "Kinguin",
+    supplierId: supplierId("kinguin"),
+  },
+  supplierOfferId: supplierOfferId(offerReference),
+  supplierProductId: supplierProductId(productReference),
+  supplierReferenceMetadata: {},
+});
+
+class StubCandidateSupplier {
+  public constructor(
+    private readonly input: {
+      readonly offer: NormalizedSupplierOffer;
+    },
+  ) {}
+
+  public async searchProducts(): Promise<{
+    readonly items: readonly NormalizedSupplierProduct[];
+  }> {
+    return {
+      items: [normalizedProductFixture(this.input.offer.supplierProductId)],
+    };
+  }
+
+  public async getProductWithOffers(): Promise<{
+    readonly product: NormalizedSupplierProduct;
+    readonly offers: readonly NormalizedSupplierOffer[];
+  }> {
+    return {
+      offers: [this.input.offer],
+      product: normalizedProductFixture(this.input.offer.supplierProductId),
+    };
+  }
+}
 
 class FakeTransport implements KinguinHttpTransport {
   public readonly requests: KinguinHttpRequest[] = [];
@@ -736,6 +1096,8 @@ class FakeTransport implements KinguinHttpTransport {
       readonly orderLookupResponse?: unknown;
       readonly orderResponse?: unknown;
       readonly product?: KinguinProduct;
+      readonly productPages?: readonly (readonly KinguinProduct[])[];
+      readonly forceNextCursor?: boolean;
       readonly status?: number;
     } = {},
   ) {}
@@ -772,23 +1134,53 @@ class FakeTransport implements KinguinHttpTransport {
       };
     }
     if (path.startsWith("/v2/products/")) {
+      const productReference = decodeURIComponent(path.split("/").at(-1) ?? "");
+      const product = this.productByReference(productReference);
       return {
-        body: JSON.stringify(this.options.product ?? productFixture()),
+        body: JSON.stringify(
+          product ?? this.options.product ?? productFixture(),
+        ),
         headers: {},
         status: 200,
       };
     }
     if (path === "/v1/products") {
+      const page =
+        typeof requestInput.query?.page === "number"
+          ? requestInput.query.page
+          : 1;
+      const pageItems =
+        this.options.productPages?.[page - 1] ??
+        (this.options.product ? [this.options.product] : [productFixture()]);
+      const itemCount =
+        this.options.productPages && !this.options.forceNextCursor
+          ? this.options.productPages.length *
+            Number(requestInput.query?.limit ?? pageItems.length)
+          : page * Number(requestInput.query?.limit ?? pageItems.length) + 1;
       return {
         body: JSON.stringify({
-          item_count: 1,
-          results: [this.options.product ?? productFixture()],
+          item_count: itemCount,
+          results: pageItems,
         }),
         headers: {},
         status: 200,
       };
     }
     return { body: "[]", headers: {}, status: 200 };
+  }
+
+  private productByReference(reference: string): KinguinProduct | null {
+    const products = [
+      ...(this.options.productPages?.flat() ?? []),
+      ...(this.options.product ? [this.options.product] : []),
+    ];
+    return (
+      products.find(
+        (product) =>
+          product.productId === reference ||
+          `kinguin-id:${product.kinguinId ?? ""}` === reference,
+      ) ?? null
+    );
   }
 }
 

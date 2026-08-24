@@ -131,8 +131,21 @@ not retryable.
 Candidate listing is read-only:
 
 ```sh
-npm run kinguin:list-live-test-candidates
+npm run kinguin:list-live-test-candidates -- --page-size 20 --max-pages 10 --max-candidates 10
 ```
+
+Candidate discovery uses bounded GET-only pagination. Defaults are page size
+`20`, maximum pages `10` and maximum candidates `10`; hard caps are page size
+`20`, maximum pages `25` and maximum candidates `20`. Optional `--start-page`
+can begin the bounded scan at a later page. The command stops when enough
+eligible candidates are found, the API reaches the end of results, an empty
+page is returned, or the page cap is reached.
+
+The output includes pages inspected, real product records processed, eligible
+candidate count, stop reason, safe candidate fields, tested GET endpoints and
+`mutationRequestCount: 0`. It does not include API keys, raw supplier payloads
+or product keys. Candidate sorting uses numeric minor-unit price order with
+stable SupplierProductId and SupplierOfferId tie-breaks.
 
 Preparation is read-only and requires explicit product and offer IDs:
 

@@ -10,6 +10,9 @@
   controlled config validators, read-only commands use guarded GET-only
   transport, mutation transport pins the production Kinguin order endpoint, and
   approval lifecycle updates are conditional on expected state/version.
+- Added KS-07-03d bounded read-only Kinguin candidate discovery pagination with
+  safe CLI caps, product-record counting, candidate deduplication and numeric
+  minor-unit price sorting.
 - Added KS-07-03b controlled Kinguin procurement dry-run verification with a technically read-only live transport, bounded real product sampling, Germany eligibility, synthetic verification-only pricing, deterministic purchase request fingerprinting and no supplier mutation.
 - Added KS-07-03 supplier procurement orchestration with durable operations, execution leases, dispatch-state crash safety, dry-run mode, fake-supplier execution tests and PostgreSQL persistence constraints while keeping real supplier procurement disabled.
 - Hardened KS-07-03 PostgreSQL procurement concurrency so attempt creation uses order-scoped advisory locking, lease acquisition uses an atomic conditional update, and tests use separate PostgreSQL clients for concurrent actors.
