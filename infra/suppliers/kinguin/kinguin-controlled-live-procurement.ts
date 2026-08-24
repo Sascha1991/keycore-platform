@@ -215,6 +215,11 @@ export interface ControlledCandidate {
 
 export interface ControlledCandidateListResult {
   readonly status: "SUCCEEDED";
+  readonly pagesInspected: number;
+  readonly productRecordsInspected: number;
+  readonly eligibleCandidatesFound: number;
+  readonly searchStoppedBecause:
+    "MAX_CANDIDATES" | "END_OF_RESULTS" | "MAX_PAGES";
   readonly candidates: readonly ControlledCandidate[];
   readonly endpointsTested: readonly string[];
   readonly mutationRequestCount: 0;
@@ -253,6 +258,12 @@ const allowedProductionBasePath = "/esa/api";
 const operationVersion = "KINGUIN_CONTROLLED_LIVE_ORDER_V1";
 const defaultApprovalTtlMs = 5 * 60 * 1_000;
 const defaultOrderTimeoutMs = 10_000;
+const defaultCandidatePageSize = 20;
+const defaultCandidateMaxPages = 10;
+const defaultCandidateMaxCandidates = 10;
+const candidatePageSizeCap = 20;
+const candidateMaxPagesCap = 25;
+const candidateMaxCandidatesCap = 20;
 
 export const controlledLiveConfigFromEnv = (
   env: Readonly<Record<string, string | undefined>>,
@@ -379,65 +390,135 @@ export class ControlledLiveProcurementService {
   }
 
   public async listCandidates(input: {
-    readonly limit?: number;
+    readonly pageSize?: number;
+    readonly maxPages?: number;
+    readonly maxCandidates?: number;
+    readonly startPage?: number;
   }): Promise<ControlledCandidateListResult> {
-    const page = await this.options.readOnlySupplier.searchProducts({
-      limit: Math.min(Math.max(input.limit ?? 10, 1), 20),
-      page: 1,
-    });
+    const pageSize = boundedPositiveInteger(
+      input.pageSize,
+      defaultCandidatePageSize,
+      candidatePageSizeCap,
+      "INVALID_CANDIDATE_PAGE_SIZE",
+    );
+    const maxPages = boundedPositiveInteger(
+      input.maxPages,
+      defaultCandidateMaxPages,
+      candidateMaxPagesCap,
+      "INVALID_CANDIDATE_MAX_PAGES",
+    );
+    const maxCandidates = boundedPositiveInteger(
+      input.maxCandidates,
+      defaultCandidateMaxCandidates,
+      candidateMaxCandidatesCap,
+      "INVALID_CANDIDATE_MAX_CANDIDATES",
+    );
+    const startPage = boundedPositiveInteger(
+      input.startPage,
+      1,
+      Number.MAX_SAFE_INTEGER,
+      "INVALID_CANDIDATE_START_PAGE",
+    );
     const candidates: ControlledCandidate[] = [];
+    const seenCandidates = new Set<string>();
+    const endpoints = new Set<string>();
     const registry = new StaticRegionSemanticRegistry();
     const engine = new GermanyEligibilityEngine({ regionSemantics: registry });
-    for (const product of page.items) {
-      const offers =
-        (
-          product as unknown as {
-            readonly offers?: readonly NormalizedSupplierOffer[];
+    let pagesInspected = 0;
+    let productRecordsInspected = 0;
+    let searchStoppedBecause: ControlledCandidateListResult["searchStoppedBecause"] =
+      "MAX_PAGES";
+    for (let offset = 0; offset < maxPages; offset += 1) {
+      const pageNumber = startPage + offset;
+      const page = await this.options.readOnlySupplier.searchProducts({
+        limit: pageSize,
+        page: pageNumber,
+      });
+      pagesInspected += 1;
+      endpoints.add(`GET /v1/products?page=${pageNumber}&limit=${pageSize}`);
+      for (const listedProduct of page.items) {
+        productRecordsInspected += 1;
+        const detailedProduct =
+          await this.options.readOnlySupplier.getProductWithOffers(
+            listedProduct.supplierProductId,
+          );
+        if (!detailedProduct) {
+          continue;
+        }
+        endpoints.add(`GET /v2/products/${listedProduct.supplierProductId}`);
+        const product = detailedProduct.product;
+        const offers = detailedProduct.offers;
+        for (const offer of offers) {
+          const mapped = await this.options.offerIndex.resolveProductForOffer(
+            offer.supplierOfferId,
+          );
+          if (mapped && mapped !== offer.supplierProductId) {
+            continue;
           }
-        ).offers ?? [];
-      for (const offer of offers) {
-        if (offer.regionEvidence.supplierRegion) {
-          registry.set({
-            semantic: semanticForControlledRegionText(
-              offer.regionEvidence.supplierRegion.documentedSemanticsSummary,
-            ),
+          if (offer.regionEvidence.supplierRegion) {
+            registry.set({
+              semantic: semanticForControlledRegionText(
+                offer.regionEvidence.supplierRegion.documentedSemanticsSummary,
+              ),
+              supplierId: supplier,
+              supplierRegionId:
+                offer.regionEvidence.supplierRegion.supplierRegionId,
+            });
+          }
+          const eligibility = engine.evaluate({
+            evidence: offer.regionEvidence,
             supplierId: supplier,
-            supplierRegionId:
-              offer.regionEvidence.supplierRegion.supplierRegionId,
           });
+          const candidateKey = [
+            supplier,
+            offer.supplierProductId,
+            offer.supplierOfferId,
+          ].join("|");
+          if (
+            eligibility.decision === "ALLOWED" &&
+            offer.offer.availability !== "OUT_OF_STOCK" &&
+            offer.offer.availability !== "UNKNOWN" &&
+            offer.offer.currentPrice.currency === currency("EUR") &&
+            offer.offer.currentPrice.amountMinor > 0n &&
+            !seenCandidates.has(candidateKey)
+          ) {
+            seenCandidates.add(candidateKey);
+            candidates.push({
+              availability: offer.offer.availability,
+              currency: offer.offer.currentPrice.currency,
+              currentAcquisitionAmountMinor:
+                offer.offer.currentPrice.amountMinor.toString(),
+              germanyEligibilityReasonCode: eligibility.reasonCode,
+              productTitle: product.product.title,
+              supplierOfferId: offer.supplierOfferId,
+              supplierProductId: offer.supplierProductId,
+            });
+            if (candidates.length >= maxCandidates) {
+              searchStoppedBecause = "MAX_CANDIDATES";
+              break;
+            }
+          }
         }
-        const eligibility = engine.evaluate({
-          evidence: offer.regionEvidence,
-          supplierId: supplier,
-        });
-        if (
-          eligibility.decision === "ALLOWED" &&
-          offer.offer.availability !== "OUT_OF_STOCK" &&
-          offer.offer.availability !== "UNKNOWN" &&
-          offer.offer.currentPrice.currency === currency("EUR") &&
-          offer.offer.currentPrice.amountMinor > 0n
-        ) {
-          candidates.push({
-            availability: offer.offer.availability,
-            currency: offer.offer.currentPrice.currency,
-            currentAcquisitionAmountMinor:
-              offer.offer.currentPrice.amountMinor.toString(),
-            germanyEligibilityReasonCode: eligibility.reasonCode,
-            productTitle: product.product.title,
-            supplierOfferId: offer.supplierOfferId,
-            supplierProductId: offer.supplierProductId,
-          });
+        if (candidates.length >= maxCandidates) {
+          break;
         }
+      }
+      if (candidates.length >= maxCandidates) {
+        break;
+      }
+      if (page.items.length === 0 || !page.nextCursor) {
+        searchStoppedBecause = "END_OF_RESULTS";
+        break;
       }
     }
     return {
-      candidates: candidates.sort((left, right) =>
-        left.currentAcquisitionAmountMinor.localeCompare(
-          right.currentAcquisitionAmountMinor,
-        ),
-      ),
-      endpointsTested: ["GET /v1/products?page=1&limit=<bounded>"],
+      candidates: candidates.sort(compareControlledCandidates),
+      eligibleCandidatesFound: candidates.length,
+      endpointsTested: [...endpoints],
       mutationRequestCount: 0,
+      pagesInspected,
+      productRecordsInspected,
+      searchStoppedBecause,
       status: "SUCCEEDED",
     };
   }
@@ -1357,6 +1438,36 @@ const positiveIntegerEnv = (value: string | undefined): number | null => {
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const boundedPositiveInteger = (
+  value: number | undefined,
+  defaultValue: number,
+  cap: number,
+  reasonCode: string,
+): number => {
+  if (value === undefined) {
+    return defaultValue;
+  }
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw controlledError(reasonCode);
+  }
+  return Math.min(value, cap);
+};
+
+const compareControlledCandidates = (
+  left: ControlledCandidate,
+  right: ControlledCandidate,
+): number => {
+  const leftPrice = BigInt(left.currentAcquisitionAmountMinor);
+  const rightPrice = BigInt(right.currentAcquisitionAmountMinor);
+  if (leftPrice !== rightPrice) {
+    return leftPrice < rightPrice ? -1 : 1;
+  }
+  const product = left.supplierProductId.localeCompare(right.supplierProductId);
+  return product === 0
+    ? left.supplierOfferId.localeCompare(right.supplierOfferId)
+    : product;
 };
 
 const decimalAmount = (value: Money): string => {

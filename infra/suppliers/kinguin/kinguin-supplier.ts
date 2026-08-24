@@ -772,6 +772,16 @@ export class KinguinSupplier implements SupplierPort {
   public async getProduct(
     productReference: SupplierProductId,
   ): Promise<NormalizedSupplierProduct | null> {
+    const productWithOffers = await this.getProductWithOffers(productReference);
+    return productWithOffers?.product ?? null;
+  }
+
+  public async getProductWithOffers(
+    productReference: SupplierProductId,
+  ): Promise<{
+    readonly product: NormalizedSupplierProduct;
+    readonly offers: readonly NormalizedSupplierOffer[];
+  } | null> {
     try {
       const payload = await this.client.requestJson({
         method: "GET",
@@ -787,7 +797,13 @@ export class KinguinSupplier implements SupplierPort {
       }
       const product = payload as KinguinProduct;
       this.offerProductIndex.rememberProductOffers(product, "getProduct");
-      return normalizeProductPayload(product, new Date());
+      const now = new Date();
+      return {
+        offers: (product.offers ?? [undefined]).map((offer) =>
+          normalizeOfferPayload(product, offer, now),
+        ),
+        product: normalizeProductPayload(product, now),
+      };
     } catch (error) {
       if (error instanceof SupplierError && error.category === "NOT_FOUND") {
         return null;
