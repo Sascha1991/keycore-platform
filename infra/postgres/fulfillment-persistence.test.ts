@@ -201,20 +201,30 @@ describe.skipIf(!connectionString)("PostgresFulfillmentRepository", () => {
 
   it("queries 50k fulfillment metadata rows without decrypting secrets", async () => {
     await withDatabase(async (database) => {
-      const values = Array.from({ length: 50_000 }, (_, index) => {
-        const id = randomUUID();
-        return `('${id}', 'kinguin', 'GE-${index}', 1, 'READY', 'NOT_STARTED', 'NOT_READY', '${"a".repeat(
-          64,
-        )}', '${correlationId(`bulk-${index}`)}', '${now.toISOString()}', '${now.toISOString()}', 1)`;
-      }).join(",");
-      await database.query(`
+      await database.query(
+        `
         INSERT INTO fulfillment_operations(
           id, supplier_id, external_supplier_order_id, expected_quantity,
           status, retrieval_state, delivery_state, token_hash,
           correlation_id, created_at, updated_at, record_version
         )
-        VALUES ${values}
-      `);
+        SELECT
+          gen_random_uuid(),
+          'kinguin',
+          'GE-' || series,
+          1,
+          'READY',
+          'NOT_STARTED',
+          'NOT_READY',
+          repeat('a', 64),
+          'bulk-' || series,
+          $1,
+          $1,
+          1
+        FROM generate_series(1, 50000) AS series
+      `,
+        [now],
+      );
       const started = performance.now();
       const result = await database.query<{ readonly count: string }>(
         "SELECT count(*)::text FROM fulfillment_operations WHERE supplier_id = 'kinguin' AND status = 'READY'",
@@ -230,7 +240,13 @@ describe.skipIf(!connectionString)("PostgresFulfillmentRepository", () => {
 const createOperation = async (
   database: PostgresTestDatabase,
 ): Promise<FulfillmentOperation> => {
-  const operation = operationFixture();
+  const approval = controlledApprovalFixture();
+  await withControlledRepository(database.schemaName, (repository) =>
+    repository.create(approval),
+  );
+  const operation = operationFixture({
+    controlledProcurementApprovalId: approval.approvalId,
+  });
   const result = await withRepository(database.schemaName, (repository) =>
     repository.createIdempotent({ now, operation }),
   );
