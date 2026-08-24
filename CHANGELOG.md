@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added KS-07-04 secure key retrieval and fulfillment foundation with durable
+  fulfillment operations, AES-256-GCM encrypted fulfillment secrets, controlled
+  Kinguin key-retrieval approval gates, retrieval leases, safe inspect command
+  and supplier-key leakage tests while leaving production customer delivery
+  disabled.
 - Added KS-07-03e safe Kinguin procurement rejection diagnostics with sanitized
   supplier HTTP status, documented machine error code, normalized category,
   safe reason code, durable approval persistence, reconciliation output and a

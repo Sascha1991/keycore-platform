@@ -117,6 +117,19 @@ Known external supplier order IDs can be reconciled through the supplier port. U
 
 Acquisition cost is stored only on internal procurement records. Generic audit and outbox payloads include safe IDs, status, reason code, attempt generation and correlation ID. They exclude product keys, API credentials, raw supplier payloads, supplier cost, profit and margin.
 
+## Fulfillment Handoff
+
+KS-07-04 adds the secure fulfillment boundary after confirmed procurement.
+Supplier key retrieval is allowed only from confirmed procurement evidence with
+a known external supplier order ID. Retrieval creates or reuses one durable
+fulfillment operation, acquires a retrieval lease, validates supplier key
+response shape, encrypts product-key material immediately and leaves customer
+delivery at `DELIVERY_PENDING`.
+
+Procurement remains the source of purchase truth. Fulfillment does not create a
+second supplier purchase and does not retry ambiguous procurement.
+
 ## Limitations
 
-Real supplier purchase execution is intentionally disabled. Product-key retrieval, fulfillment, refunds, invoices, admin UI and production deployment remain later tasks and approval-gated work.
+Normal production key retrieval remains approval-gated. Refunds, invoices,
+admin UI and production deployment remain later tasks and approval-gated work.

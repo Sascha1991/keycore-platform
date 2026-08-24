@@ -32,6 +32,7 @@ const main = async (): Promise<void> => {
           approvalId: approval.approvalId,
           createdAt: approval.createdAt.toISOString(),
           dispatchState: approval.dispatchState,
+          externalSupplierOrderId: approval.externalSupplierOrderId,
           orderExternalId: approval.orderExternalId,
           safeReasonCode: approval.rejectionDiagnostic?.safeReasonCode ?? null,
           status: approval.status,

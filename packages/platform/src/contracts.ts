@@ -16,6 +16,7 @@ export * from "./pricing/pricing-margin.js";
 export * from "./pricing/price-locks.js";
 export * from "./orders/order-orchestration.js";
 export * from "./procurement/supplier-procurement.js";
+export * from "./fulfillment/secure-key-fulfillment.js";
 export * from "./queue/job.js";
 export * from "./queue/observability.js";
 export * from "./queue/retry.js";

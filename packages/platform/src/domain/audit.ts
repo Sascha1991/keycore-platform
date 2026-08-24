@@ -22,6 +22,7 @@ export const auditEventTypes = [
 
 export type PrefixAuditEventType =
   | `CATALOG_${string}`
+  | `FULFILLMENT_${string}`
   | `ORDER_${string}`
   | `PAYMENT_${string}`
   | `PRICING_${string}`
@@ -245,7 +246,7 @@ export const validateAuditEventType = (eventType: string): AuditEventType => {
   }
 
   if (
-    /^(CATALOG|ORDER|PAYMENT|PRICING|PROCUREMENT|REFUND|STOREFRONT)_[A-Z0-9_]+$/u.test(
+    /^(CATALOG|FULFILLMENT|ORDER|PAYMENT|PRICING|PROCUREMENT|REFUND|STOREFRONT)_[A-Z0-9_]+$/u.test(
       eventType,
     )
   ) {

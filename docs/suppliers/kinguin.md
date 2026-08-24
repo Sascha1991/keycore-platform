@@ -156,6 +156,20 @@ Implemented documented key endpoint:
 
 - `GET /v2/order/{orderId}/keys`
 
+KS-07-04 re-checked the current official Kinguin Order v2 documentation. Key
+retrieval is documented as `GET /v2/order/{orderId}/keys` with optional `page`
+and `limit` query parameters. The endpoint returns an array of key objects. A
+key object includes `id`, `serial`, `type`, `name`, `kinguinId`, `offerId` and
+`productId`. The documentation states the key is available once delivered to
+the order and recommends periodic key download, `order.status` webhook handling
+when order status becomes `completed`, or polling order details until keys are
+delivered.
+
+The documentation does not state that downloading keys is destructive or
+one-time. KS-07-04 models this download as repeatable read-only while retaining
+durable retrieval leases and fail-closed validation. Network and rate-limit
+failures can remain retryable. Malformed key responses are terminal failures.
+
 Supported content types:
 
 - `text/plain`

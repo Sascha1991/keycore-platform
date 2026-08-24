@@ -174,6 +174,19 @@ npm run kinguin:reconcile-live-procurement -- <approvalId>
 
 It never creates an order and never retrieves keys.
 
+Controlled key retrieval is a separate KS-07-04 workflow:
+
+```sh
+npm run kinguin:prepare-live-key-retrieval -- <approvalId>
+npm run kinguin:execute-approved-key-retrieval -- <fulfillmentApprovalId> <oneTimeToken>
+```
+
+Preparation is DB-only and outputs `NO PRODUCT KEY HAS BEEN RETRIEVED.` It
+does not call Kinguin. Execution requires the separate
+`KEYCORE_ALLOW_KINGUIN_LIVE_KEY_RETRIEVAL=true` opt-in and
+`KEYCORE_KINGUIN_CONTROLLED_KEY_RETRIEVAL_MODE=CONTROLLED_VERIFICATION_ONE_TIME`.
+The previous read-only and purchase-mutation flags do not enable key retrieval.
+
 ## Outcomes
 
 Successful order creation persists `PROCUREMENT_CONFIRMED` with approval ID,
