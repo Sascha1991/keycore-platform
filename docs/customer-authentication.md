@@ -93,6 +93,11 @@ only in a secure server-managed cookie:
 Future state-changing customer HTTP endpoints must include CSRF protection
 appropriate to the selected cookie policy.
 
+KS-07-08 defines that customer delivery mutations use a secure cookie session
+credential, configured allowed origins and an HMAC double-submit CSRF token
+bound to the session credential hash. The CSRF token is not an authentication
+credential and cannot create a principal.
+
 ## Audit And Inspect
 
 Safe audit events include authentication failure and session create, rotate and

@@ -27,6 +27,11 @@ The default channel is fake/test infrastructure. Production customer delivery is
 disabled unless a caller explicitly opts in through runtime configuration and a
 real customer identity binding exists.
 
+KS-07-08 adds a transport-neutral authenticated delivery handler above this
+engine. It keeps the KS-07-05 one-time capability requirement, resolves the
+customer from a KS-07-07 session and calls this service only after Origin, CSRF,
+rate-limit and object-authorization checks pass.
+
 ## Authorization
 
 Delivery authorization is delegated to `CustomerOrderAuthorizationPort`.
@@ -134,6 +139,11 @@ These commands do not contact Kinguin or any delivery provider. They print only
 safe metadata such as masked customer email, ownership status, fulfillment
 state, encrypted-secret presence, encryption version/key ID and latest delivery
 attempt status/reason.
+
+The authenticated transport foundation does not add a new inspect command.
+Existing safe inspection remains sufficient and must not output delivery
+capabilities, capability hashes, session credentials, ciphertext internals or
+plaintext product keys.
 
 ## Real Fulfillment Gate
 
