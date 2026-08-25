@@ -59,6 +59,13 @@ describePostgres("PostgresCustomerAuthSessionRepository", () => {
       );
       expect(JSON.stringify(stored.rows)).not.toContain(rawToken);
       expect(stored.rows[0]?.identity_binding_id).toBe(binding);
+      await expect(
+        repository.findIdentityBindingById({ identityBindingId: binding }),
+      ).resolves.toMatchObject({
+        customerId: customer,
+        id: binding,
+        provider: "TEST",
+      });
 
       await expect(
         repository.createSession({
@@ -79,6 +86,37 @@ describePostgres("PostgresCustomerAuthSessionRepository", () => {
           },
         }),
       ).resolves.toEqual({ status: "TOKEN_HASH_COLLISION" });
+      await expect(
+        repository.createSession({
+          session: {
+            authAssurance: "AUTHENTICATED",
+            authContextId: "provider-mismatch-context",
+            authenticatedAt: now,
+            createdAt: now,
+            customerId: customer,
+            expiresAt: new Date(now.getTime() + 60_000),
+            id: randomUUID(),
+            identityBindingId: binding,
+            lastSeenAt: now,
+            provider: "WOOCOMMERCE",
+            recordVersion: 1,
+            revokedAt: null,
+            sessionTokenHash: hashCustomerSessionToken(
+              "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            ),
+          },
+        }),
+      ).resolves.toEqual({ status: "IDENTITY_BINDING_NOT_FOUND" });
+      await expect(
+        database.query(
+          `
+            UPDATE customer_identity_bindings
+            SET provider = 'WOOCOMMERCE'
+            WHERE id = $1
+          `,
+          [binding],
+        ),
+      ).rejects.toThrow();
 
       await expect(
         service.resolveSession({

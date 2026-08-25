@@ -15,6 +15,7 @@ import {
   type CorrelationId,
   type CustomerAuthenticationAuthorityPort,
   type CustomerId,
+  type CustomerIdentityBinding,
   type CustomerIdentityBindingAuthorityPort,
   type EmailVerificationAuthorityPort,
   type OrderId,
@@ -315,6 +316,168 @@ describe("CustomerAuthenticationService", () => {
     expect(JSON.stringify(inspection)).not.toContain(requireToken(created));
     expect(JSON.stringify(inspection)).not.toMatch(/[a-f0-9]{64}/u);
   });
+
+  it("invalidates sessions when the authoritative identity binding disappears", async () => {
+    const fixture = await createVerifiedFixture("removed-binding-subject");
+    const auth = authService(fixture, {
+      assertion: assertion("removed-binding-subject"),
+    });
+    const created = await auth.createSession({
+      correlationId: correlationId("corr-auth-binding-create"),
+    });
+    const token = requireToken(created);
+    await expect(
+      auth.resolveSession({
+        correlationId: correlationId("corr-auth-binding-valid"),
+        rawSessionToken: token,
+      }),
+    ).resolves.toMatchObject({ status: "AUTHENTICATED" });
+
+    fixture.identityRepository.removeIdentityBindingById(
+      requireBindingId(
+        await auth.inspectSession({ sessionId: requireSessionId(created) }),
+      ),
+    );
+
+    await expect(
+      auth.resolveSession({
+        correlationId: correlationId("corr-auth-binding-missing"),
+        rawSessionToken: token,
+      }),
+    ).resolves.toEqual({ reasonCode: "SESSION_INVALID", status: "INVALID" });
+    await expect(
+      new CustomerSessionPrincipalProvider({
+        correlationId: correlationId("corr-auth-binding-principal"),
+        rawSessionToken: token,
+        service: auth,
+      }).currentPrincipal(),
+    ).resolves.toBeNull();
+    const rotated = await auth.rotateSession({
+      correlationId: correlationId("corr-auth-binding-rotate"),
+      rawSessionToken: token,
+    });
+    expect(rotated).toEqual({
+      reasonCode: "SESSION_INVALID",
+      status: "INVALID",
+    });
+    expect("rawSessionToken" in rotated).toBe(false);
+  });
+
+  it("invalidates sessions when the binding customer or provider no longer matches", async () => {
+    const fixture = await createVerifiedFixture("mismatch-subject");
+    const other = await createCustomer(
+      fixture.identityRepository,
+      "other@example.com",
+    );
+    const auth = authService(fixture, {
+      assertion: assertion("mismatch-subject"),
+    });
+    const customerMismatch = await auth.createSession({
+      correlationId: correlationId("corr-auth-customer-mismatch-create"),
+    });
+    const bindingId = requireBindingId(
+      await auth.inspectSession({
+        sessionId: requireSessionId(customerMismatch),
+      }),
+    );
+    const binding = await requireIdentityBinding(fixture, bindingId);
+    fixture.identityRepository.replaceIdentityBinding({
+      ...binding,
+      customerId: other,
+    });
+    await expect(
+      auth.resolveSession({
+        correlationId: correlationId("corr-auth-customer-mismatch"),
+        rawSessionToken: requireToken(customerMismatch),
+      }),
+    ).resolves.toEqual({ reasonCode: "SESSION_INVALID", status: "INVALID" });
+
+    const providerFixture = await createVerifiedFixture(
+      "provider-mismatch-subject",
+    );
+    const providerAuth = authService(providerFixture, {
+      assertion: assertion("provider-mismatch-subject"),
+    });
+    const providerMismatch = await providerAuth.createSession({
+      correlationId: correlationId("corr-auth-provider-mismatch-create"),
+    });
+    const providerBindingId = requireBindingId(
+      await providerAuth.inspectSession({
+        sessionId: requireSessionId(providerMismatch),
+      }),
+    );
+    const providerBinding = await requireIdentityBinding(
+      providerFixture,
+      providerBindingId,
+    );
+    providerFixture.identityRepository.replaceIdentityBinding({
+      ...providerBinding,
+      provider: "WOOCOMMERCE",
+      providerSubject: "provider-moved-subject",
+    });
+    await expect(
+      providerAuth.resolveSession({
+        correlationId: correlationId("corr-auth-provider-mismatch"),
+        rawSessionToken: requireToken(providerMismatch),
+      }),
+    ).resolves.toEqual({ reasonCode: "SESSION_INVALID", status: "INVALID" });
+  });
+
+  it("invalidated sessions cannot authorize synthetic delivery or reach decrypt/delivery boundaries", async () => {
+    const fixture = await createVerifiedFixture("blocked-delivery-subject");
+    const order = orderId("33333333-3333-4333-8333-333333333333");
+    const fulfillmentId = "44444444-4444-4444-8444-444444444444";
+    fixture.identityRepository.addOrder({
+      customerId: fixture.customerId,
+      fulfillmentStatus: "PENDING",
+      orderId: order,
+      paymentStatus: "CAPTURED",
+      procurementStatus: "SUCCEEDED",
+      recordVersion: 1,
+      status: "FULFILLMENT_PENDING",
+      updatedAt: baseNow,
+    });
+    fixture.identityRepository.addFulfillment({
+      deliveryState: "PENDING",
+      encryptedSecretId: "synthetic-encrypted-secret",
+      fulfillmentId,
+      orderId: order,
+      retrievalState: "RETRIEVED",
+      status: "DELIVERY_PENDING",
+    });
+    const auth = authService(fixture, {
+      assertion: assertion("blocked-delivery-subject"),
+    });
+    const created = await auth.createSession({
+      correlationId: correlationId("corr-auth-blocked-delivery-create"),
+    });
+    fixture.identityRepository.removeIdentityBindingById(
+      requireBindingId(
+        await auth.inspectSession({ sessionId: requireSessionId(created) }),
+      ),
+    );
+
+    const deliveryAuth = new PersistedCustomerOrderAuthorizationPort({
+      principalProvider: new CustomerSessionPrincipalProvider({
+        correlationId: correlationId("corr-auth-blocked-delivery-principal"),
+        rawSessionToken: requireToken(created),
+        service: auth,
+      }),
+      repository: fixture.identityRepository,
+    });
+
+    await expect(
+      deliveryAuth.authorizeDelivery({
+        customerId: fixture.customerId,
+        expiresAt: new Date(baseNow.getTime() + 60_000),
+        fulfillmentId,
+        issuedAt: baseNow,
+        orderId: order,
+        purpose: "customer-key-delivery",
+        version: 1,
+      }),
+    ).resolves.toEqual({ status: "DENIED" });
+  });
 });
 
 const createVerifiedFixture = async (providerSubject: string) => {
@@ -355,6 +518,27 @@ const createVerifiedFixture = async (providerSubject: string) => {
     customerId: targetCustomerId,
     identityRepository,
   };
+};
+
+const createCustomer = async (
+  identityRepository: InMemoryCustomerOrderIdentityRepository,
+  email: string,
+): Promise<CustomerId> => {
+  const service = new CustomerOrderIdentityService({
+    emailVerificationAuthority: new FakeEmailVerificationAuthority(),
+    identityBindingAuthority: new FakeIdentityBindingAuthority("unused"),
+    now: () => baseNow,
+    orderOwnershipAuthority: new FakeOrderOwnershipAuthority(),
+    repository: identityRepository,
+  });
+  const created = await service.createCustomer({
+    correlationId: correlationId(`corr-customer-${email}`),
+    email,
+  });
+  if (!("customer" in created)) {
+    throw new Error("Expected customer fixture");
+  }
+  return created.customer.id;
 };
 
 const authService = (
@@ -493,4 +677,27 @@ const requireSessionId = (
     throw new Error("Expected created auth fixture");
   }
   return result.sessionId;
+};
+
+const requireBindingId = (
+  inspection: Awaited<
+    ReturnType<CustomerAuthenticationService["inspectSession"]>
+  >,
+): string => {
+  if (!inspection) {
+    throw new Error("Expected session inspection fixture");
+  }
+  return inspection.identityBindingId;
+};
+
+const requireIdentityBinding = async (
+  fixture: Awaited<ReturnType<typeof createVerifiedFixture>>,
+  bindingId: string,
+): Promise<CustomerIdentityBinding> => {
+  const binding =
+    await fixture.identityRepository.findIdentityBindingById(bindingId);
+  if (!binding) {
+    throw new Error("Expected identity binding fixture");
+  }
+  return binding;
 };

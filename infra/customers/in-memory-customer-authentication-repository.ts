@@ -20,7 +20,7 @@ export class InMemoryCustomerAuthSessionRepository implements CustomerAuthSessio
         readonly provider: CustomerIdentityProvider;
         readonly providerSubject: string;
       }) => Promise<CustomerIdentityBinding | null>;
-      readonly findIdentityBindingById?: (
+      readonly findIdentityBindingById: (
         id: string,
       ) => Promise<CustomerIdentityBinding | null>;
     },
@@ -31,6 +31,12 @@ export class InMemoryCustomerAuthSessionRepository implements CustomerAuthSessio
     readonly providerSubject: string;
   }): Promise<CustomerIdentityBinding | null> {
     return this.options.findIdentityBindingByProviderSubject(input);
+  }
+
+  public findIdentityBindingById(input: {
+    readonly identityBindingId: string;
+  }): Promise<CustomerIdentityBinding | null> {
+    return this.options.findIdentityBindingById(input.identityBindingId);
   }
 
   public findCustomerById(
@@ -50,6 +56,16 @@ export class InMemoryCustomerAuthSessionRepository implements CustomerAuthSessio
     if (!(await this.findCustomerById(input.session.customerId))) {
       return { status: "CUSTOMER_NOT_FOUND" };
     }
+    const binding = await this.findIdentityBindingById({
+      identityBindingId: input.session.identityBindingId,
+    });
+    if (
+      !binding ||
+      binding.customerId !== input.session.customerId ||
+      binding.provider !== input.session.provider
+    ) {
+      return { status: "IDENTITY_BINDING_NOT_FOUND" };
+    }
     if (this.sessionByHash.has(input.session.sessionTokenHash)) {
       return { status: "TOKEN_HASH_COLLISION" };
     }
@@ -66,10 +82,9 @@ export class InMemoryCustomerAuthSessionRepository implements CustomerAuthSessio
     if (!session) {
       return null;
     }
-    const binding =
-      (await this.options.findIdentityBindingById?.(
-        session.identityBindingId,
-      )) ?? null;
+    const binding = await this.options.findIdentityBindingById(
+      session.identityBindingId,
+    );
     if (binding && binding.customerId !== session.customerId) {
       return null;
     }

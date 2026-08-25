@@ -1,6 +1,9 @@
 CREATE UNIQUE INDEX customer_identity_bindings_id_customer_unique_idx
   ON customer_identity_bindings(id, customer_id);
 
+CREATE UNIQUE INDEX customer_identity_bindings_id_customer_provider_unique_idx
+  ON customer_identity_bindings(id, customer_id, provider);
+
 CREATE TABLE customer_auth_sessions (
   id UUID PRIMARY KEY,
   customer_id UUID NOT NULL REFERENCES keycore_customers(id) ON DELETE RESTRICT,
@@ -16,8 +19,8 @@ CREATE TABLE customer_auth_sessions (
   auth_assurance TEXT NOT NULL,
   auth_context_id TEXT NOT NULL,
   CONSTRAINT customer_auth_sessions_binding_customer_fk
-    FOREIGN KEY (identity_binding_id, customer_id)
-    REFERENCES customer_identity_bindings(id, customer_id)
+    FOREIGN KEY (identity_binding_id, customer_id, provider)
+    REFERENCES customer_identity_bindings(id, customer_id, provider)
     ON DELETE RESTRICT,
   CONSTRAINT customer_auth_sessions_provider_check CHECK (
     provider IN ('KEYCORE', 'WOOCOMMERCE', 'TEST')

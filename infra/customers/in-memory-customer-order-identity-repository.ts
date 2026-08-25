@@ -66,6 +66,23 @@ export class InMemoryCustomerOrderIdentityRepository implements CustomerOrderIde
     return null;
   }
 
+  public removeIdentityBindingById(bindingId: string): void {
+    for (const [key, binding] of this.bindings) {
+      if (binding.id === bindingId) {
+        this.bindings.delete(key);
+        return;
+      }
+    }
+  }
+
+  public replaceIdentityBinding(binding: CustomerIdentityBinding): void {
+    this.removeIdentityBindingById(binding.id);
+    this.bindings.set(
+      `${binding.provider}:${binding.providerSubject}`,
+      binding,
+    );
+  }
+
   public async createCustomer(input: {
     readonly customer: KeyCoreCustomer;
     readonly now: Date;

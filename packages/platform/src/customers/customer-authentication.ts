@@ -84,6 +84,9 @@ export interface CustomerAuthSessionRepository {
     readonly provider: CustomerIdentityProvider;
     readonly providerSubject: string;
   }): Promise<CustomerIdentityBinding | null>;
+  findIdentityBindingById(input: {
+    readonly identityBindingId: string;
+  }): Promise<CustomerIdentityBinding | null>;
   findCustomerById(customerId: CustomerId): Promise<KeyCoreCustomer | null>;
   createSession(input: {
     readonly session: CustomerAuthSession;
@@ -517,6 +520,17 @@ export class CustomerAuthenticationService {
       session.customerId,
     );
     if (!customer) {
+      return { status: "INVALID" };
+    }
+    const binding = await this.options.repository.findIdentityBindingById({
+      identityBindingId: session.identityBindingId,
+    });
+    if (
+      !binding ||
+      binding.id !== session.identityBindingId ||
+      binding.customerId !== session.customerId ||
+      binding.provider !== session.provider
+    ) {
       return { status: "INVALID" };
     }
     return { status: "ACTIVE" };

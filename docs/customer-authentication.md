@@ -61,14 +61,18 @@ and the idle timeout must not exceed the absolute TTL.
 ## Resolution, Rotation And Revocation
 
 Session resolution hashes the raw token, finds the server-side session, checks
-revocation, absolute expiration, idle timeout, customer existence and identity
-binding validity, then returns an `AuthenticatedCustomerPrincipal` with
-`AUTHENTICATED` assurance.
+revocation, absolute expiration, idle timeout, customer existence and the
+authoritative identity binding ID, then returns an
+`AuthenticatedCustomerPrincipal` with `AUTHENTICATED` assurance. A session is
+invalid if its stored `identityBindingId` no longer exists or if that binding no
+longer belongs to the same customer/provider pair. Resolution does not fall back
+to email, provider subject or caller-supplied customer ID.
 
 Rotation replaces the stored hash atomically. The old token becomes unusable;
-only one concurrent rotation can win. Logout/revoke is idempotent. Revoke-all
-marks all active sessions for a customer revoked through an internal service
-operation.
+only one concurrent rotation can win. Rotation uses the same session validation,
+so a missing or non-authoritative identity binding cannot receive a replacement
+token. Logout/revoke is idempotent. Revoke-all marks all active sessions for a
+customer revoked through an internal service operation.
 
 `lastSeenAt` is updated only when the prior value is older than the configured
 touch interval to avoid write amplification.

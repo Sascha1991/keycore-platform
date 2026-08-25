@@ -61,6 +61,12 @@ export class PostgresCustomerAuthSessionRepository implements CustomerAuthSessio
     return result.rows[0] ? bindingFromRow(result.rows[0]) : null;
   }
 
+  public findIdentityBindingById(input: {
+    readonly identityBindingId: string;
+  }): Promise<CustomerIdentityBinding | null> {
+    return findBindingById(this.db, input.identityBindingId);
+  }
+
   public async findCustomerById(
     requestedCustomerId: CustomerId,
   ): Promise<KeyCoreCustomer | null> {
@@ -84,7 +90,11 @@ export class PostgresCustomerAuthSessionRepository implements CustomerAuthSessio
         client,
         input.session.identityBindingId,
       );
-      if (!binding || binding.customerId !== input.session.customerId) {
+      if (
+        !binding ||
+        binding.customerId !== input.session.customerId ||
+        binding.provider !== input.session.provider
+      ) {
         return { status: "IDENTITY_BINDING_NOT_FOUND" };
       }
       const inserted = await client.query<SessionRow>(
