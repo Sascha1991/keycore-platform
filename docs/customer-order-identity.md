@@ -8,7 +8,8 @@ procurement.
 ## Identity Model
 
 `CustomerId` is an opaque immutable UUID. Email is contact metadata, not the
-customer identity.
+customer identity and not authentication. Creating or replaying a customer by
+email never proves that the caller owns the mailbox.
 
 Customers persist:
 
@@ -17,23 +18,38 @@ Customers persist:
 - record version;
 - creation and update timestamps.
 
+Normal customer creation always creates `UNVERIFIED`. `VERIFIED` requires
+trusted evidence through `EmailVerificationAuthorityPort`; the default
+authority fails closed until a real verification source is connected. The only
+implemented transition is `UNVERIFIED -> VERIFIED`; PostgreSQL blocks
+`VERIFIED -> UNVERIFIED` regression.
+
 Email normalization trims the address and lowercases only the domain. It does
 not apply provider-specific behavior such as removing dots or plus tags. A
-duplicate normalized email returns the existing customer explicitly; it does not
-silently merge unrelated identities.
+duplicate normalized email returns the existing customer explicitly for internal
+idempotency; it does not silently merge unrelated identities, authenticate a
+caller, bind external identity, bind an order or authorize delivery. Future
+public boundaries must avoid exposing detailed existing-customer results in a
+way that enables account discovery.
 
 External identity bindings are stored separately with `(provider,
-provider_subject)` uniqueness. Binding an already-used external subject to a
-different customer fails closed with `IDENTITY_CONFLICT`.
+provider_subject)` uniqueness. Binding requires
+`CustomerIdentityBindingAuthorityPort`, where a future provider integration
+derives the provider subject from verified provider-side context. Knowing a
+`customerId` plus a `providerSubject` string is not proof. Binding an already
+used external subject to a different customer fails closed with
+`IDENTITY_CONFLICT`; binding to a nonexistent customer returns
+`CUSTOMER_NOT_FOUND`.
 
 ## Order Ownership
 
-`keycore_orders.customer_id` records the owner when ownership is proven by a
-trusted service or admin context. Existing legacy orders may remain unowned.
+`keycore_orders.customer_id` records the owner when ownership is proven by
+`OrderOwnershipBindingAuthorityPort`. Plain caller-created metadata objects are
+not trust boundaries. Existing legacy orders may remain unowned.
 
 Ownership binding is concurrency-safe:
 
-- missing trusted context returns `UNTRUSTED_CONTEXT`;
+- missing ownership authority returns `UNTRUSTED_AUTHORITY`;
 - unknown customer returns `CUSTOMER_NOT_FOUND`;
 - unknown order returns `ORDER_NOT_FOUND`;
 - stale order version returns `STALE_WRITER`;
@@ -64,7 +80,9 @@ unauthorized/not-ready response shape to avoid enumeration.
 
 Production authentication is represented by
 `FailClosedProductionPrincipalProvider`, which always returns no principal until
-a real auth integration is explicitly added in a later task.
+a real auth integration is explicitly added in a later task. Test principals are
+rejected by persisted delivery authorization unless the composition root
+explicitly enables `allowTestPrincipal` for tests.
 
 ## Safe Inspect
 

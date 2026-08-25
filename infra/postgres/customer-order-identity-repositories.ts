@@ -4,14 +4,14 @@ import {
   orderId,
   type CustomerId,
   type CustomerIdentityBinding,
-  type CustomerIdentityBindingResult,
+  type CustomerIdentityBindingRepositoryResult,
   type CustomerIdentityProvider,
   type CustomerInspection,
   type CustomerOrderIdentityRepository,
   type EmailVerificationState,
   type KeyCoreCustomer,
   type OrderId,
-  type OrderOwnershipBindingResult,
+  type OrderOwnershipBindingRepositoryResult,
   type OrderOwnershipInspection,
   type OwnedOrderSnapshot,
 } from "../../packages/platform/src/contracts.js";
@@ -50,6 +50,7 @@ export class PostgresCustomerOrderIdentityRepository implements CustomerOrderIde
 
   public async createCustomer(input: {
     readonly customer: KeyCoreCustomer;
+    readonly now: Date;
   }): Promise<
     | { readonly status: "CREATED"; readonly customer: KeyCoreCustomer }
     | { readonly status: "EXISTING"; readonly customer: KeyCoreCustomer }
@@ -105,8 +106,12 @@ export class PostgresCustomerOrderIdentityRepository implements CustomerOrderIde
 
   public async bindIdentity(input: {
     readonly binding: CustomerIdentityBinding;
-  }): Promise<CustomerIdentityBindingResult> {
+  }): Promise<CustomerIdentityBindingRepositoryResult> {
     return this.db.transaction(async (client) => {
+      const customer = await findCustomerById(client, input.binding.customerId);
+      if (!customer) {
+        return { status: "CUSTOMER_NOT_FOUND" };
+      }
       const inserted = await client.query<BindingRow>(
         `
           INSERT INTO customer_identity_bindings(
@@ -142,17 +147,59 @@ export class PostgresCustomerOrderIdentityRepository implements CustomerOrderIde
     });
   }
 
+  public async markEmailVerified(input: {
+    readonly customerId: CustomerId;
+    readonly expectedCustomerVersion: number;
+    readonly now: Date;
+  }): Promise<
+    | { readonly status: "VERIFIED"; readonly customer: KeyCoreCustomer }
+    | {
+        readonly status: "ALREADY_VERIFIED";
+        readonly customer: KeyCoreCustomer;
+      }
+    | { readonly status: "CUSTOMER_NOT_FOUND" }
+    | { readonly status: "STALE_WRITER"; readonly customer?: KeyCoreCustomer }
+  > {
+    return this.db.transaction(async (client) => {
+      const customer = await findCustomerByIdForUpdate(
+        client,
+        input.customerId,
+      );
+      if (!customer) {
+        return { status: "CUSTOMER_NOT_FOUND" };
+      }
+      if (customer.emailVerificationState === "VERIFIED") {
+        return { customer, status: "ALREADY_VERIFIED" };
+      }
+      if (customer.recordVersion !== input.expectedCustomerVersion) {
+        return { customer, status: "STALE_WRITER" };
+      }
+      const updated = await client.query<CustomerRow>(
+        `
+          UPDATE keycore_customers
+          SET email_verification_state = 'VERIFIED',
+            record_version = record_version + 1,
+            updated_at = $3
+          WHERE id = $1
+            AND email_verification_state = 'UNVERIFIED'
+            AND record_version = $2
+          RETURNING ${customerReturning}
+        `,
+        [input.customerId, input.expectedCustomerVersion, input.now],
+      );
+      const row = updated.rows[0];
+      return row
+        ? { customer: customerFromRow(row), status: "VERIFIED" }
+        : { customer, status: "STALE_WRITER" };
+    });
+  }
+
   public async bindOrderOwnership(input: {
     readonly orderId: OrderId;
     readonly customerId: CustomerId;
     readonly expectedOrderVersion: number;
     readonly now: Date;
-  }): Promise<
-    Exclude<
-      OrderOwnershipBindingResult,
-      { readonly status: "UNTRUSTED_CONTEXT" }
-    >
-  > {
+  }): Promise<OrderOwnershipBindingRepositoryResult> {
     return this.db.transaction(async (client) => {
       const customer = await findCustomerById(client, input.customerId);
       if (!customer) {
@@ -292,6 +339,22 @@ const findCustomerById = async (
       SELECT ${customerReturning}
       FROM keycore_customers
       WHERE id = $1
+    `,
+    [requestedCustomerId],
+  );
+  return result.rows[0] ? customerFromRow(result.rows[0]) : null;
+};
+
+const findCustomerByIdForUpdate = async (
+  db: Queryable,
+  requestedCustomerId: CustomerId,
+): Promise<KeyCoreCustomer | null> => {
+  const result = await db.query<CustomerRow>(
+    `
+      SELECT ${customerReturning}
+      FROM keycore_customers
+      WHERE id = $1
+      FOR UPDATE
     `,
     [requestedCustomerId],
   );

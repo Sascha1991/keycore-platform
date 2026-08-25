@@ -10,12 +10,15 @@ import {
   correlationId,
   orderId,
   productId,
+  type CorrelationId,
   type CustomerId,
+  type CustomerIdentityBindingAuthorityPort,
+  type EmailVerificationAuthorityPort,
   type OrderId,
+  type OrderOwnershipBindingAuthorityPort,
 } from "../../packages/platform/src/contracts.js";
-import { PostgresTestDatabase } from "./test-database.js";
+import { PostgresTestDatabase, quoteIdentifier } from "./test-database.js";
 import { PostgresCustomerOrderIdentityRepository } from "./customer-order-identity-repositories.js";
-import { quoteIdentifier } from "./test-database.js";
 import type { Queryable, TransactionalQueryable } from "./client.js";
 
 const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
@@ -23,22 +26,23 @@ const describePostgres = connectionString ? describe : describe.skip;
 const now = new Date("2026-08-25T00:00:00.000Z");
 
 describePostgres("PostgresCustomerOrderIdentityRepository", () => {
-  it("persists customer identity, immutable order ownership and fail-closed fulfillment authorization", async () => {
+  it("persists trusted verification, binding, ownership and fail-closed delivery authorization", async () => {
     const database = await initDatabase();
     try {
       const boundary = new TestTransactionBoundary(database);
       const repository = new PostgresCustomerOrderIdentityRepository(boundary);
-      const service = new CustomerOrderIdentityService({
-        now: () => now,
-        repository,
-      });
+      const service = serviceFor(repository, "subject-1");
       const product = await insertProduct(database);
-      const lock = await insertPriceLock(database, product);
-      const targetOrder = await insertOrder(database, product, lock, {
-        fulfillmentStatus: "PENDING",
-        procurementStatus: "SUCCEEDED",
-        status: "FULFILLMENT_PENDING",
-      });
+      const targetOrder = await insertOrder(
+        database,
+        product,
+        await insertPriceLock(database, product),
+        {
+          fulfillmentStatus: "PENDING",
+          procurementStatus: "SUCCEEDED",
+          status: "FULFILLMENT_PENDING",
+        },
+      );
       const otherOrder = await insertOrder(
         database,
         product,
@@ -50,53 +54,135 @@ describePostgres("PostgresCustomerOrderIdentityRepository", () => {
         },
       );
 
-      const owner = requiredCustomer(
-        await service.createCustomer({
-          correlationId: correlationId("corr-pg-owner"),
-          email: "Owner@Example.COM",
-          emailVerificationState: "VERIFIED",
-        }),
+      const race = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          service.createCustomer({
+            correlationId: correlationId("corr-pg-owner"),
+            email: "Owner@Example.COM",
+          }),
+        ),
       );
-      const ownerReplay = await service.createCustomer({
-        correlationId: correlationId("corr-pg-owner"),
-        email: "Owner@example.com",
-        emailVerificationState: "VERIFIED",
+      expect(race.filter((result) => result.status === "CREATED")).toHaveLength(
+        1,
+      );
+      expect(
+        race.filter((result) => result.status === "EXISTING"),
+      ).toHaveLength(4);
+      const owner = requiredCustomer(required(race[0]));
+      await expect(repository.findCustomerById(owner)).resolves.toMatchObject({
+        emailVerificationState: "UNVERIFIED",
       });
-      expect(ownerReplay).toMatchObject({
-        customer: { id: owner },
-        status: "EXISTING",
+
+      await expect(
+        service.markEmailVerified({
+          correlationId: correlationId("corr-pg-owner"),
+          customerId: owner,
+          expectedCustomerVersion: 0,
+        }),
+      ).resolves.toMatchObject({ status: "STALE_WRITER" });
+      await expect(
+        service.markEmailVerified({
+          correlationId: correlationId("corr-pg-owner"),
+          customerId: owner,
+          expectedCustomerVersion: 1,
+        }),
+      ).resolves.toMatchObject({
+        customer: { emailVerificationState: "VERIFIED", recordVersion: 2 },
+        status: "VERIFIED",
       });
+      await expect(
+        new CustomerOrderIdentityService({
+          now: () => now,
+          repository,
+        }).markEmailVerified({
+          correlationId: correlationId("corr-pg-owner-denied"),
+          customerId: owner,
+          expectedCustomerVersion: 2,
+        }),
+      ).resolves.toEqual({ status: "UNTRUSTED_AUTHORITY" });
+
       const otherCustomer = requiredCustomer(
         await service.createCustomer({
           correlationId: correlationId("corr-pg-other"),
           email: "other@example.com",
-          emailVerificationState: "VERIFIED",
         }),
       );
-
+      await service.markEmailVerified({
+        correlationId: correlationId("corr-pg-other"),
+        customerId: otherCustomer,
+        expectedCustomerVersion: 1,
+      });
       await expect(
-        service.bindIdentity({
-          correlationId: correlationId("corr-pg-bind-id"),
-          customerId: owner,
-          provider: "TEST",
-          providerSubject: "subject-1",
+        repository.bindIdentity({
+          binding: {
+            createdAt: now,
+            customerId: "00000000-0000-4000-8000-000000000001" as CustomerId,
+            id: randomUUID(),
+            provider: "TEST",
+            providerSubject: "missing-customer",
+          },
         }),
-      ).resolves.toMatchObject({ status: "BOUND" });
+      ).resolves.toEqual({ status: "CUSTOMER_NOT_FOUND" });
+      await expect(
+        new CustomerOrderIdentityService({
+          now: () => now,
+          repository,
+        }).bindIdentity({
+          correlationId: correlationId("corr-pg-bind-denied"),
+          customerId: owner,
+        }),
+      ).resolves.toEqual({ status: "UNTRUSTED_AUTHORITY" });
+      const sameBindingRace = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          service.bindIdentity({
+            correlationId: correlationId("corr-pg-bind-id"),
+            customerId: owner,
+          }),
+        ),
+      );
+      expect(
+        sameBindingRace.filter((result) => result.status === "BOUND"),
+      ).toHaveLength(1);
+      expect(
+        sameBindingRace.filter((result) => result.status === "ALREADY_BOUND"),
+      ).toHaveLength(4);
       await expect(
         service.bindIdentity({
-          correlationId: correlationId("corr-pg-bind-id"),
+          correlationId: correlationId("corr-pg-bind-conflict"),
           customerId: otherCustomer,
-          provider: "TEST",
-          providerSubject: "subject-1",
         }),
       ).resolves.toEqual({ status: "IDENTITY_CONFLICT" });
+
+      await expect(
+        new CustomerOrderIdentityService({
+          identityBindingAuthority: new FakeIdentityBindingAuthority(
+            "bad subject",
+          ),
+          now: () => now,
+          repository,
+        }).bindIdentity({
+          correlationId: correlationId("corr-pg-bind-invalid"),
+          customerId: otherCustomer,
+        }),
+      ).resolves.toEqual({ status: "INVALID_PROVIDER_SUBJECT" });
+
+      await expect(
+        new CustomerOrderIdentityService({
+          now: () => now,
+          repository,
+        }).bindOrderOwnership({
+          correlationId: correlationId("corr-pg-owner-bind-denied"),
+          customerId: owner,
+          expectedOrderVersion: 1,
+          orderId: targetOrder,
+        }),
+      ).resolves.toEqual({ status: "UNTRUSTED_AUTHORITY" });
       await expect(
         service.bindOrderOwnership({
           correlationId: correlationId("corr-pg-owner-bind"),
           customerId: owner,
           expectedOrderVersion: 0,
           orderId: targetOrder,
-          trustedContext: trustedContext(),
         }),
       ).resolves.toMatchObject({ status: "STALE_WRITER" });
       await expect(
@@ -105,7 +191,6 @@ describePostgres("PostgresCustomerOrderIdentityRepository", () => {
           customerId: owner,
           expectedOrderVersion: 1,
           orderId: targetOrder,
-          trustedContext: trustedContext(),
         }),
       ).resolves.toMatchObject({ status: "BOUND" });
       await expect(
@@ -114,7 +199,6 @@ describePostgres("PostgresCustomerOrderIdentityRepository", () => {
           customerId: otherCustomer,
           expectedOrderVersion: 2,
           orderId: targetOrder,
-          trustedContext: trustedContext(),
         }),
       ).resolves.toMatchObject({ status: "OWNERSHIP_CONFLICT" });
       await expect(
@@ -149,12 +233,16 @@ describePostgres("PostgresCustomerOrderIdentityRepository", () => {
         ),
       ).resolves.toEqual({ status: "DENIED" });
       await expect(
+        authorization(repository, owner, "TEST").authorizeDelivery(
+          authz(owner, targetOrder, fulfillmentId),
+        ),
+      ).resolves.toEqual({ status: "DENIED" });
+      await expect(
         service.bindOrderOwnership({
           correlationId: correlationId("corr-pg-owner-bind"),
           customerId: owner,
           expectedOrderVersion: 2,
           orderId: targetOrder,
-          trustedContext: trustedContext(),
         }),
       ).resolves.toMatchObject({ status: "ALREADY_BOUND" });
     } finally {
@@ -208,6 +296,68 @@ class TestTransactionBoundary implements TransactionalQueryable {
     } finally {
       await client.end();
     }
+  }
+}
+
+const serviceFor = (
+  repository: PostgresCustomerOrderIdentityRepository,
+  providerSubject: string,
+): CustomerOrderIdentityService =>
+  new CustomerOrderIdentityService({
+    emailVerificationAuthority: new FakeEmailVerificationAuthority(),
+    identityBindingAuthority: new FakeIdentityBindingAuthority(providerSubject),
+    now: () => now,
+    orderOwnershipAuthority: new FakeOrderOwnershipAuthority(),
+    repository,
+  });
+
+class FakeEmailVerificationAuthority implements EmailVerificationAuthorityPort {
+  public async verifiedEmailEvidence(input: {
+    readonly customerId: CustomerId;
+    readonly emailNormalized: string;
+    readonly correlationId: CorrelationId;
+  }) {
+    return {
+      evidence: {
+        customerId: input.customerId,
+        emailNormalized: input.emailNormalized,
+        provider: "TEST" as const,
+        providerEvidenceId: `email-evidence:${input.correlationId}`,
+        verifiedAt: now,
+      },
+      status: "AUTHORIZED" as const,
+    };
+  }
+}
+
+class FakeIdentityBindingAuthority implements CustomerIdentityBindingAuthorityPort {
+  public constructor(private readonly providerSubject: string) {}
+
+  public async verifiedIdentitySubject(input: {
+    readonly customerId: CustomerId;
+    readonly correlationId: CorrelationId;
+  }) {
+    return {
+      provider: "TEST" as const,
+      providerEvidenceId: `identity-evidence:${input.customerId}:${input.correlationId}`,
+      providerSubject: this.providerSubject,
+      status: "AUTHORIZED" as const,
+    };
+  }
+}
+
+class FakeOrderOwnershipAuthority implements OrderOwnershipBindingAuthorityPort {
+  public async verifiedOrderOwnership(input: {
+    readonly orderId: OrderId;
+    readonly customerId: CustomerId;
+    readonly correlationId: CorrelationId;
+  }) {
+    return {
+      actorId: "checkout-service",
+      actorType: "SERVICE" as const,
+      providerEvidenceId: `ownership-evidence:${input.customerId}:${input.orderId}:${input.correlationId}`,
+      status: "AUTHORIZED" as const,
+    };
   }
 }
 
@@ -345,10 +495,11 @@ const insertReadyFulfillment = async (
 const authorization = (
   repository: PostgresCustomerOrderIdentityRepository,
   principalCustomerId: CustomerId,
+  assurance: "AUTHENTICATED" | "TEST" = "AUTHENTICATED",
 ): PersistedCustomerOrderAuthorizationPort =>
   new PersistedCustomerOrderAuthorizationPort({
     principalProvider: new StaticAuthenticatedCustomerPrincipalProvider({
-      authenticationContext: { assurance: "TEST", provider: "TEST" },
+      authenticationContext: { assurance, provider: "TEST" },
       customerId: principalCustomerId,
     }),
     repository,
@@ -366,12 +517,6 @@ const authz = (
   orderId: requestedOrderId,
   purpose: "customer-key-delivery" as const,
   version: 1 as const,
-});
-
-const trustedContext = () => ({
-  actorId: "checkout-service",
-  actorType: "SERVICE" as const,
-  reasonCode: "ORDER_OWNERSHIP_INITIAL_BINDING" as const,
 });
 
 const requiredCustomer = (

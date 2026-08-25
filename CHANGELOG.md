@@ -6,7 +6,9 @@
   customer IDs, normalized/verified customer records, external identity binding
   placeholders, immutable order ownership, persisted delivery authorization,
   reversible PostgreSQL migration, safe inspect commands and fail-closed
-  production principal behavior.
+  production principal behavior; hardened trust boundaries so email
+  verification, external identity binding and order ownership binding require
+  injected trusted authorities instead of request-controlled metadata.
 - Added KS-07-05 secure customer key delivery foundation with one-time
   capability authorization, customer/order authorization port, explicit
   claim/acknowledge delivery attempts, fake/test delivery boundary, plaintext

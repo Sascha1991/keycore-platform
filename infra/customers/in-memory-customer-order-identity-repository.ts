@@ -1,10 +1,10 @@
 import type {
   CustomerIdentityBinding,
-  CustomerIdentityBindingResult,
+  CustomerIdentityBindingRepositoryResult,
   CustomerInspection,
   CustomerOrderIdentityRepository,
   KeyCoreCustomer,
-  OrderOwnershipBindingResult,
+  OrderOwnershipBindingRepositoryResult,
   OrderOwnershipInspection,
   OwnedOrderSnapshot,
 } from "../../packages/platform/src/contracts.js";
@@ -79,7 +79,10 @@ export class InMemoryCustomerOrderIdentityRepository implements CustomerOrderIde
 
   public async bindIdentity(input: {
     readonly binding: CustomerIdentityBinding;
-  }): Promise<CustomerIdentityBindingResult> {
+  }): Promise<CustomerIdentityBindingRepositoryResult> {
+    if (!this.customers.has(input.binding.customerId)) {
+      return { status: "CUSTOMER_NOT_FOUND" };
+    }
     const key = `${input.binding.provider}:${input.binding.providerSubject}`;
     const existing = this.bindings.get(key);
     if (existing) {
@@ -91,17 +94,45 @@ export class InMemoryCustomerOrderIdentityRepository implements CustomerOrderIde
     return { binding: input.binding, status: "BOUND" };
   }
 
+  public async markEmailVerified(input: {
+    readonly customerId: CustomerId;
+    readonly expectedCustomerVersion: number;
+    readonly now: Date;
+  }): Promise<
+    | { readonly status: "VERIFIED"; readonly customer: KeyCoreCustomer }
+    | {
+        readonly status: "ALREADY_VERIFIED";
+        readonly customer: KeyCoreCustomer;
+      }
+    | { readonly status: "CUSTOMER_NOT_FOUND" }
+    | { readonly status: "STALE_WRITER"; readonly customer?: KeyCoreCustomer }
+  > {
+    const customer = this.customers.get(input.customerId);
+    if (!customer) {
+      return { status: "CUSTOMER_NOT_FOUND" };
+    }
+    if (customer.emailVerificationState === "VERIFIED") {
+      return { customer, status: "ALREADY_VERIFIED" };
+    }
+    if (customer.recordVersion !== input.expectedCustomerVersion) {
+      return { customer, status: "STALE_WRITER" };
+    }
+    const verified: KeyCoreCustomer = {
+      ...customer,
+      emailVerificationState: "VERIFIED",
+      recordVersion: customer.recordVersion + 1,
+      updatedAt: input.now,
+    };
+    this.customers.set(input.customerId, verified);
+    return { customer: verified, status: "VERIFIED" };
+  }
+
   public async bindOrderOwnership(input: {
     readonly orderId: OrderId;
     readonly customerId: CustomerId;
     readonly expectedOrderVersion: number;
     readonly now: Date;
-  }): Promise<
-    Exclude<
-      OrderOwnershipBindingResult,
-      { readonly status: "UNTRUSTED_CONTEXT" }
-    >
-  > {
+  }): Promise<OrderOwnershipBindingRepositoryResult> {
     if (!this.customers.has(input.customerId)) {
       return { status: "CUSTOMER_NOT_FOUND" };
     }

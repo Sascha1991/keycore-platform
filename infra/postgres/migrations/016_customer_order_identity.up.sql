@@ -39,6 +39,7 @@ CREATE TABLE customer_identity_bindings (
     length(trim(provider_subject)) > 0
     AND length(provider_subject) <= 256
     AND provider_subject = btrim(provider_subject)
+    AND provider_subject !~ '[[:cntrl:]]'
   ),
   CONSTRAINT customer_identity_bindings_safe_text_check CHECK (
     provider_subject !~* '(product.?key|serial|plaintext|token|api.?key|secret)'
@@ -82,3 +83,21 @@ CREATE TRIGGER keycore_orders_customer_ownership_immutable
 BEFORE UPDATE ON keycore_orders
 FOR EACH ROW
 EXECUTE FUNCTION prevent_keycore_order_customer_reassignment();
+
+CREATE FUNCTION prevent_customer_verification_regression()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF OLD.email_verification_state = 'VERIFIED'
+    AND NEW.email_verification_state <> 'VERIFIED' THEN
+    RAISE EXCEPTION 'KeyCore customer verification state cannot regress';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER keycore_customers_verification_no_regression
+BEFORE UPDATE ON keycore_customers
+FOR EACH ROW
+EXECUTE FUNCTION prevent_customer_verification_regression();

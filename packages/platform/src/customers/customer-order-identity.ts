@@ -46,10 +46,79 @@ export interface AuthenticatedCustomerPrincipalProvider {
   currentPrincipal(): Promise<AuthenticatedCustomerPrincipal | null>;
 }
 
-export interface TrustedOrderOwnershipBindingContext {
-  readonly actorType: "SERVICE" | "ADMIN";
-  readonly actorId: string;
-  readonly reasonCode: "ORDER_OWNERSHIP_INITIAL_BINDING";
+export interface EmailVerificationEvidence {
+  readonly customerId: CustomerId;
+  readonly emailNormalized: string;
+  readonly provider: CustomerIdentityProvider;
+  readonly providerEvidenceId: string;
+  readonly verifiedAt: Date;
+}
+
+export interface EmailVerificationAuthorityPort {
+  verifiedEmailEvidence(input: {
+    readonly customerId: CustomerId;
+    readonly emailNormalized: string;
+    readonly correlationId: CorrelationId;
+  }): Promise<
+    | {
+        readonly status: "AUTHORIZED";
+        readonly evidence: EmailVerificationEvidence;
+      }
+    | { readonly status: "DENIED" }
+  >;
+}
+
+export interface CustomerIdentityBindingAuthorityPort {
+  verifiedIdentitySubject(input: {
+    readonly customerId: CustomerId;
+    readonly correlationId: CorrelationId;
+  }): Promise<
+    | {
+        readonly status: "AUTHORIZED";
+        readonly provider: CustomerIdentityProvider;
+        readonly providerSubject: string;
+        readonly providerEvidenceId: string;
+      }
+    | { readonly status: "DENIED" }
+  >;
+}
+
+export interface OrderOwnershipBindingAuthorityPort {
+  verifiedOrderOwnership(input: {
+    readonly orderId: OrderId;
+    readonly customerId: CustomerId;
+    readonly correlationId: CorrelationId;
+  }): Promise<
+    | {
+        readonly status: "AUTHORIZED";
+        readonly actorType: "SERVICE" | "ADMIN";
+        readonly actorId: string;
+        readonly providerEvidenceId: string;
+      }
+    | { readonly status: "DENIED" }
+  >;
+}
+
+export class FailClosedEmailVerificationAuthority implements EmailVerificationAuthorityPort {
+  public async verifiedEmailEvidence(): Promise<{ readonly status: "DENIED" }> {
+    return { status: "DENIED" };
+  }
+}
+
+export class FailClosedCustomerIdentityBindingAuthority implements CustomerIdentityBindingAuthorityPort {
+  public async verifiedIdentitySubject(): Promise<{
+    readonly status: "DENIED";
+  }> {
+    return { status: "DENIED" };
+  }
+}
+
+export class FailClosedOrderOwnershipBindingAuthority implements OrderOwnershipBindingAuthorityPort {
+  public async verifiedOrderOwnership(): Promise<{
+    readonly status: "DENIED";
+  }> {
+    return { status: "DENIED" };
+  }
 }
 
 export type CustomerCreateResult =
@@ -57,16 +126,32 @@ export type CustomerCreateResult =
   | { readonly status: "EXISTING"; readonly customer: KeyCoreCustomer }
   | { readonly status: "INVALID_EMAIL" };
 
+export type CustomerEmailVerificationResult =
+  | { readonly status: "VERIFIED"; readonly customer: KeyCoreCustomer }
+  | { readonly status: "ALREADY_VERIFIED"; readonly customer: KeyCoreCustomer }
+  | { readonly status: "CUSTOMER_NOT_FOUND" }
+  | { readonly status: "UNTRUSTED_AUTHORITY" }
+  | { readonly status: "STALE_WRITER"; readonly customer?: KeyCoreCustomer };
+
 export type CustomerIdentityBindingResult =
-  | {
-      readonly status: "BOUND";
-      readonly binding: CustomerIdentityBinding;
-    }
+  | { readonly status: "BOUND"; readonly binding: CustomerIdentityBinding }
   | {
       readonly status: "ALREADY_BOUND";
       readonly binding: CustomerIdentityBinding;
     }
-  | { readonly status: "IDENTITY_CONFLICT" };
+  | { readonly status: "IDENTITY_CONFLICT" }
+  | { readonly status: "CUSTOMER_NOT_FOUND" }
+  | { readonly status: "UNTRUSTED_AUTHORITY" }
+  | { readonly status: "INVALID_PROVIDER_SUBJECT" };
+
+export type CustomerIdentityBindingRepositoryResult =
+  | { readonly status: "BOUND"; readonly binding: CustomerIdentityBinding }
+  | {
+      readonly status: "ALREADY_BOUND";
+      readonly binding: CustomerIdentityBinding;
+    }
+  | { readonly status: "IDENTITY_CONFLICT" }
+  | { readonly status: "CUSTOMER_NOT_FOUND" };
 
 export type OrderOwnershipBindingResult =
   | { readonly status: "BOUND"; readonly order: OwnedOrderSnapshot }
@@ -78,7 +163,18 @@ export type OrderOwnershipBindingResult =
   | { readonly status: "STALE_WRITER"; readonly order?: OwnedOrderSnapshot }
   | { readonly status: "ORDER_NOT_FOUND" }
   | { readonly status: "CUSTOMER_NOT_FOUND" }
-  | { readonly status: "UNTRUSTED_CONTEXT" };
+  | { readonly status: "UNTRUSTED_AUTHORITY" };
+
+export type OrderOwnershipBindingRepositoryResult =
+  | { readonly status: "BOUND"; readonly order: OwnedOrderSnapshot }
+  | { readonly status: "ALREADY_BOUND"; readonly order: OwnedOrderSnapshot }
+  | {
+      readonly status: "OWNERSHIP_CONFLICT";
+      readonly order?: OwnedOrderSnapshot;
+    }
+  | { readonly status: "STALE_WRITER"; readonly order?: OwnedOrderSnapshot }
+  | { readonly status: "ORDER_NOT_FOUND" }
+  | { readonly status: "CUSTOMER_NOT_FOUND" };
 
 export interface OwnedOrderSnapshot {
   readonly orderId: OrderId;
@@ -103,20 +199,28 @@ export interface CustomerOrderIdentityRepository {
   findCustomerByNormalizedEmail(
     emailNormalized: string,
   ): Promise<KeyCoreCustomer | null>;
+  markEmailVerified(input: {
+    readonly customerId: CustomerId;
+    readonly expectedCustomerVersion: number;
+    readonly now: Date;
+  }): Promise<
+    | { readonly status: "VERIFIED"; readonly customer: KeyCoreCustomer }
+    | {
+        readonly status: "ALREADY_VERIFIED";
+        readonly customer: KeyCoreCustomer;
+      }
+    | { readonly status: "CUSTOMER_NOT_FOUND" }
+    | { readonly status: "STALE_WRITER"; readonly customer?: KeyCoreCustomer }
+  >;
   bindIdentity(input: {
     readonly binding: CustomerIdentityBinding;
-  }): Promise<CustomerIdentityBindingResult>;
+  }): Promise<CustomerIdentityBindingRepositoryResult>;
   bindOrderOwnership(input: {
     readonly orderId: OrderId;
     readonly customerId: CustomerId;
     readonly expectedOrderVersion: number;
     readonly now: Date;
-  }): Promise<
-    Exclude<
-      OrderOwnershipBindingResult,
-      { readonly status: "UNTRUSTED_CONTEXT" }
-    >
-  >;
+  }): Promise<OrderOwnershipBindingRepositoryResult>;
   authorizeFulfillmentForCustomer(input: {
     readonly customerId: CustomerId;
     readonly orderId: OrderId;
@@ -151,6 +255,9 @@ export interface OrderOwnershipInspection {
 
 export interface CustomerOrderIdentityServiceOptions {
   readonly repository: CustomerOrderIdentityRepository;
+  readonly emailVerificationAuthority?: EmailVerificationAuthorityPort;
+  readonly identityBindingAuthority?: CustomerIdentityBindingAuthorityPort;
+  readonly orderOwnershipAuthority?: OrderOwnershipBindingAuthorityPort;
   readonly audit?: AuditEventPort;
   readonly environment?: AuditEvent["environment"];
   readonly now?: () => Date;
@@ -159,17 +266,28 @@ export interface CustomerOrderIdentityServiceOptions {
 export class CustomerOrderIdentityService {
   private readonly now: () => Date;
   private readonly environment: AuditEvent["environment"];
+  private readonly emailVerificationAuthority: EmailVerificationAuthorityPort;
+  private readonly identityBindingAuthority: CustomerIdentityBindingAuthorityPort;
+  private readonly orderOwnershipAuthority: OrderOwnershipBindingAuthorityPort;
 
   public constructor(
     private readonly options: CustomerOrderIdentityServiceOptions,
   ) {
     this.now = options.now ?? (() => new Date());
     this.environment = options.environment ?? "LOCAL";
+    this.emailVerificationAuthority =
+      options.emailVerificationAuthority ??
+      new FailClosedEmailVerificationAuthority();
+    this.identityBindingAuthority =
+      options.identityBindingAuthority ??
+      new FailClosedCustomerIdentityBindingAuthority();
+    this.orderOwnershipAuthority =
+      options.orderOwnershipAuthority ??
+      new FailClosedOrderOwnershipBindingAuthority();
   }
 
   public async createCustomer(input: {
     readonly email: string;
-    readonly emailVerificationState?: EmailVerificationState;
     readonly correlationId: CorrelationId;
   }): Promise<CustomerCreateResult> {
     const normalized = normalizeCustomerEmail(input.email);
@@ -181,7 +299,7 @@ export class CustomerOrderIdentityService {
       customer: {
         createdAt: now,
         emailNormalized: normalized,
-        emailVerificationState: input.emailVerificationState ?? "UNVERIFIED",
+        emailVerificationState: "UNVERIFIED",
         id: customerId(randomUUID()),
         recordVersion: 1,
         updatedAt: now,
@@ -201,37 +319,94 @@ export class CustomerOrderIdentityService {
     return result;
   }
 
+  public async markEmailVerified(input: {
+    readonly customerId: CustomerId;
+    readonly expectedCustomerVersion: number;
+    readonly correlationId: CorrelationId;
+  }): Promise<CustomerEmailVerificationResult> {
+    const customer = await this.options.repository.findCustomerById(
+      input.customerId,
+    );
+    if (!customer) {
+      return { status: "CUSTOMER_NOT_FOUND" };
+    }
+    const authority =
+      await this.emailVerificationAuthority.verifiedEmailEvidence({
+        correlationId: input.correlationId,
+        customerId: input.customerId,
+        emailNormalized: customer.emailNormalized,
+      });
+    if (
+      authority.status !== "AUTHORIZED" ||
+      authority.evidence.customerId !== input.customerId ||
+      authority.evidence.emailNormalized !== customer.emailNormalized
+    ) {
+      return { status: "UNTRUSTED_AUTHORITY" };
+    }
+    const result = await this.options.repository.markEmailVerified({
+      customerId: input.customerId,
+      expectedCustomerVersion: input.expectedCustomerVersion,
+      now: this.now(),
+    });
+    await this.audit({
+      correlationId: input.correlationId,
+      customerId: input.customerId,
+      eventType: "CUSTOMER_EMAIL_VERIFIED",
+      outcome:
+        result.status === "VERIFIED" || result.status === "ALREADY_VERIFIED"
+          ? "SUCCEEDED"
+          : "DENIED",
+      reasonCode: result.status,
+      metadata: { provider: authority.evidence.provider },
+    });
+    return result;
+  }
+
   public async bindIdentity(input: {
     readonly customerId: CustomerId;
-    readonly provider: CustomerIdentityProvider;
-    readonly providerSubject: string;
     readonly correlationId: CorrelationId;
   }): Promise<CustomerIdentityBindingResult> {
     const customer = await this.options.repository.findCustomerById(
       input.customerId,
     );
-    if (!customer || input.providerSubject.trim().length === 0) {
-      return { status: "IDENTITY_CONFLICT" };
+    if (!customer) {
+      return { status: "CUSTOMER_NOT_FOUND" };
+    }
+    const authority =
+      await this.identityBindingAuthority.verifiedIdentitySubject({
+        correlationId: input.correlationId,
+        customerId: input.customerId,
+      });
+    if (authority.status !== "AUTHORIZED") {
+      return { status: "UNTRUSTED_AUTHORITY" };
+    }
+    const providerSubject = authority.providerSubject;
+    if (!isSafeProviderSubject(providerSubject)) {
+      return { status: "INVALID_PROVIDER_SUBJECT" };
     }
     const result = await this.options.repository.bindIdentity({
       binding: {
         createdAt: this.now(),
         customerId: input.customerId,
         id: randomUUID(),
-        provider: input.provider,
-        providerSubject: input.providerSubject.trim(),
+        provider: authority.provider,
+        providerSubject,
       },
     });
     await this.audit({
       correlationId: input.correlationId,
       customerId: input.customerId,
       eventType:
-        result.status === "IDENTITY_CONFLICT"
+        result.status === "IDENTITY_CONFLICT" ||
+        result.status === "CUSTOMER_NOT_FOUND"
           ? "CUSTOMER_IDENTITY_BINDING_CONFLICT"
           : "CUSTOMER_IDENTITY_BOUND",
-      outcome: result.status === "IDENTITY_CONFLICT" ? "DENIED" : "SUCCEEDED",
+      outcome:
+        result.status === "BOUND" || result.status === "ALREADY_BOUND"
+          ? "SUCCEEDED"
+          : "DENIED",
       reasonCode: result.status,
-      metadata: { provider: input.provider },
+      metadata: { provider: authority.provider },
     });
     return result;
   }
@@ -240,14 +415,17 @@ export class CustomerOrderIdentityService {
     readonly orderId: OrderId;
     readonly customerId: CustomerId;
     readonly expectedOrderVersion: number;
-    readonly trustedContext: TrustedOrderOwnershipBindingContext | null;
     readonly correlationId: CorrelationId;
   }): Promise<OrderOwnershipBindingResult> {
-    if (
-      !input.trustedContext ||
-      input.trustedContext.actorId.trim().length === 0
-    ) {
-      return { status: "UNTRUSTED_CONTEXT" };
+    const authority = await this.orderOwnershipAuthority.verifiedOrderOwnership(
+      {
+        correlationId: input.correlationId,
+        customerId: input.customerId,
+        orderId: input.orderId,
+      },
+    );
+    if (authority.status !== "AUTHORIZED") {
+      return { status: "UNTRUSTED_AUTHORITY" };
     }
     const result = await this.options.repository.bindOrderOwnership({
       customerId: input.customerId,
@@ -267,7 +445,7 @@ export class CustomerOrderIdentityService {
           ? "SUCCEEDED"
           : "DENIED",
       reasonCode: result.status,
-      metadata: { orderId: input.orderId },
+      metadata: { actorType: authority.actorType, orderId: input.orderId },
     });
     return result;
   }
@@ -307,6 +485,7 @@ export class PersistedCustomerOrderAuthorizationPort implements CustomerOrderAut
       readonly repository: CustomerOrderIdentityRepository;
       readonly principalProvider: AuthenticatedCustomerPrincipalProvider;
       readonly requireVerifiedEmail?: boolean;
+      readonly allowTestPrincipal?: boolean;
       readonly audit?: AuditEventPort;
       readonly environment?: AuditEvent["environment"];
       readonly now?: () => Date;
@@ -319,7 +498,11 @@ export class PersistedCustomerOrderAuthorizationPort implements CustomerOrderAut
     { readonly status: "AUTHORIZED" } | { readonly status: "DENIED" }
   > {
     const principal = await this.options.principalProvider.currentPrincipal();
-    if (!principal || principal.customerId !== authorization.customerId) {
+    if (
+      !principal ||
+      principal.customerId !== authorization.customerId ||
+      !this.isAcceptedPrincipal(principal)
+    ) {
       await this.auditDenied(authorization, principal?.customerId ?? null);
       return { status: "DENIED" };
     }
@@ -334,6 +517,16 @@ export class PersistedCustomerOrderAuthorizationPort implements CustomerOrderAut
       await this.auditDenied(authorization, principal.customerId);
     }
     return result;
+  }
+
+  private isAcceptedPrincipal(
+    principal: AuthenticatedCustomerPrincipal,
+  ): boolean {
+    return (
+      principal.authenticationContext.assurance === "AUTHENTICATED" ||
+      (this.options.allowTestPrincipal === true &&
+        principal.authenticationContext.assurance === "TEST")
+    );
   }
 
   private async auditDenied(
@@ -404,6 +597,12 @@ export const normalizeCustomerEmail = (email: string): string | null => {
   }
   return `${local}@${domain}`;
 };
+
+export const isSafeProviderSubject = (providerSubject: string): boolean =>
+  providerSubject.length > 0 &&
+  providerSubject.length <= 256 &&
+  providerSubject === providerSubject.trim() &&
+  !/[\u0000-\u001f\u007f]/u.test(providerSubject);
 
 export const maskCustomerEmail = (emailNormalized: string): string => {
   const [local = "", domain = ""] = emailNormalized.split("@");

@@ -1,3 +1,6 @@
+DROP TRIGGER IF EXISTS keycore_customers_verification_no_regression ON keycore_customers;
+DROP FUNCTION IF EXISTS prevent_customer_verification_regression();
+
 DROP TRIGGER IF EXISTS keycore_orders_customer_ownership_immutable ON keycore_orders;
 DROP FUNCTION IF EXISTS prevent_keycore_order_customer_reassignment();
 

@@ -47,7 +47,9 @@ customer, order or fulfillment context fails closed before decryption.
 
 Legacy or unclaimed orders and fulfillments fail closed. Production customer
 delivery still requires a real customer authentication provider; the production
-principal provider remains fail-closed until that integration exists.
+principal provider remains fail-closed until that integration exists. Test
+principals are denied by default and can only be accepted through explicit test
+composition.
 
 ## Capability And TTL
 
