@@ -64,6 +64,40 @@ describe("Kinguin controlled key retrieval", () => {
     );
   });
 
+  it("supports documented periodic key retrieval without internal retries", async () => {
+    const transport = new CapturingTransport([
+      {
+        id: "key-1",
+        kinguinId: 1949,
+        name: "Anno 2070",
+        offerId: "offer-alpha",
+        productId: "product-alpha",
+        serial: canaryProductKey,
+        type: "text/plain",
+      },
+    ]);
+    const adapter = adapterWith(transport);
+
+    await adapter.retrievePurchasedKeys({
+      correlationId: correlationId("retrieve-1"),
+      expectedQuantity: 1,
+      externalSupplierOrderId: "GE1373B866F3",
+      supplierId: supplierId("kinguin"),
+    });
+    await adapter.retrievePurchasedKeys({
+      correlationId: correlationId("retrieve-2"),
+      expectedQuantity: 1,
+      externalSupplierOrderId: "GE1373B866F3",
+      supplierId: supplierId("kinguin"),
+    });
+
+    expect(transport.requests).toHaveLength(2);
+    expect(transport.requests.map((request) => request.method)).toEqual([
+      "GET",
+      "GET",
+    ]);
+  });
+
   it("returns pending for zero keys without exposing order detail", async () => {
     await expect(
       adapterWith(new CapturingTransport([])).retrievePurchasedKeys({
@@ -97,6 +131,19 @@ describe("Kinguin controlled key retrieval", () => {
         baseUrl,
         delegate: new CapturingTransport([], 302),
       }).retrieveKeys(request("GET", "/v2/order/GE1373B866F3/keys")),
+    ).rejects.toThrow(SupplierError);
+  });
+
+  it("requires finite positive controlled key retrieval timeouts", async () => {
+    const guard = new KinguinControlledKeyRetrievalTransport({
+      baseUrl,
+      delegate: new CapturingTransport([]),
+    });
+    await expect(
+      guard.retrieveKeys({
+        ...request("GET", "/v2/order/GE1373B866F3/keys"),
+        timeoutMs: 0,
+      }),
     ).rejects.toThrow(SupplierError);
   });
 

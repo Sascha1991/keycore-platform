@@ -59,7 +59,7 @@ export const fulfillmentServiceFromEnv = async (
   const repository = new PostgresFulfillmentRepository(db);
   const keyRetrieval =
     mode === "EXECUTE"
-      ? kinguinKeyRetrievalFromEnv(env)
+      ? kinguinKeyRetrievalFromEnv(env, fulfillmentConfig.keyRetrievalTimeoutMs)
       : new PrepareOnlyKeyRetrieval();
   const service = new SecureKeyFulfillmentService({
     approvalTtlMs: fulfillmentConfig.approvalTtlMs,
@@ -79,8 +79,12 @@ export const fulfillmentServiceFromEnv = async (
 
 const kinguinKeyRetrievalFromEnv = (
   env: Readonly<Record<string, string | undefined>>,
+  timeoutMs: number,
 ): SupplierKeyRetrievalPort => {
-  const supplierConfig = validateControlledReadOnlyConfig(env);
+  const supplierConfig = {
+    ...validateControlledReadOnlyConfig(env),
+    timeoutMs,
+  };
   const keyGuard = new KinguinControlledKeyRetrievalTransport({
     baseUrl: supplierConfig.baseUrl,
     delegate: new FetchKinguinHttpTransport(),

@@ -7,6 +7,10 @@
   Kinguin key-retrieval approval gates, retrieval leases, safe inspect command
   and supplier-key leakage tests while leaving production customer delivery
   disabled.
+- Hardened KS-07-04 key retrieval with documented Kinguin repeatability policy,
+  finite controlled retrieval timeout configuration, one-request execution,
+  local crypto/persistence failure reason codes, `FULFILLMENT_KEY_RETRIEVED`
+  success semantics and PostgreSQL orphan-secret/concurrent-writer tests.
 - Added KS-07-03e safe Kinguin procurement rejection diagnostics with sanitized
   supplier HTTP status, documented machine error code, normalized category,
   safe reason code, durable approval persistence, reconciliation output and a

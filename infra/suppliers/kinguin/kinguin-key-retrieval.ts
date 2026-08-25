@@ -96,6 +96,17 @@ export class KinguinControlledKeyRetrievalTransport {
         supplierId: this.supplierId,
       });
     }
+    if (
+      !Number.isSafeInteger(request.timeoutMs) ||
+      request.timeoutMs <= 0 ||
+      !Number.isFinite(request.timeoutMs)
+    ) {
+      throw new SupplierError({
+        category: "REJECTED",
+        operation: "controlledKeyRetrievalTimeout",
+        supplierId: this.supplierId,
+      });
+    }
     const response = await this.input.delegate.send(request);
     if (response.status >= 300 && response.status < 400) {
       throw new SupplierError({

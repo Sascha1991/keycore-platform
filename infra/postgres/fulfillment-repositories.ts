@@ -212,17 +212,18 @@ export class PostgresFulfillmentRepository implements FulfillmentRepository {
     readonly material: FulfillmentEncryptedSecretMaterial;
     readonly now: Date;
   }): Promise<FulfillmentOperation | null> {
-    return this.db.transaction(async (client) => {
-      const current = await findById(client, input.fulfillmentId);
-      if (
-        !current ||
-        current.retrievalExecutionToken !== input.executionToken ||
-        current.encryptedSecretId
-      ) {
-        return null;
-      }
-      const secret = await client.query<SecretRow>(
-        `
+    try {
+      return await this.db.transaction(async (client) => {
+        const current = await findByIdForUpdate(client, input.fulfillmentId);
+        if (
+          !current ||
+          current.retrievalExecutionToken !== input.executionToken ||
+          current.encryptedSecretId
+        ) {
+          return null;
+        }
+        const secret = await client.query<SecretRow>(
+          `
           INSERT INTO fulfillment_secrets(
             fulfillment_id, ciphertext, encryption_nonce, encryption_tag,
             wrapped_data_encryption_key, encryption_key_id,
@@ -231,21 +232,21 @@ export class PostgresFulfillmentRepository implements FulfillmentRepository {
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           RETURNING *
         `,
-        [
-          input.fulfillmentId,
-          toBuffer(input.material.ciphertext),
-          toBuffer(input.material.nonce),
-          toBuffer(input.material.authenticationTag),
-          toBuffer(input.material.wrappedDataEncryptionKey),
-          input.material.encryptionKeyId,
-          input.material.encryptionVersion,
-          input.material.algorithm,
-          input.now,
-        ],
-      );
-      const secretId = requireSecretRow(secret.rows[0]).id;
-      const updated = await client.query<FulfillmentRow>(
-        `
+          [
+            input.fulfillmentId,
+            toBuffer(input.material.ciphertext),
+            toBuffer(input.material.nonce),
+            toBuffer(input.material.authenticationTag),
+            toBuffer(input.material.wrappedDataEncryptionKey),
+            input.material.encryptionKeyId,
+            input.material.encryptionVersion,
+            input.material.algorithm,
+            input.now,
+          ],
+        );
+        const secretId = requireSecretRow(secret.rows[0]).id;
+        const updated = await client.query<FulfillmentRow>(
+          `
           UPDATE fulfillment_operations
           SET status = 'DELIVERY_PENDING',
             retrieval_state = 'RETRIEVED',
@@ -261,10 +262,19 @@ export class PostgresFulfillmentRepository implements FulfillmentRepository {
             AND encrypted_secret_id IS NULL
           RETURNING ${fulfillmentReturning}
         `,
-        [input.fulfillmentId, input.executionToken, secretId, input.now],
-      );
-      return updated.rows[0] ? fromRow(updated.rows[0]) : null;
-    });
+          [input.fulfillmentId, input.executionToken, secretId, input.now],
+        );
+        if (!updated.rows[0]) {
+          throw new RollbackFulfillmentSecretInsert();
+        }
+        return fromRow(updated.rows[0]);
+      });
+    } catch (error) {
+      if (error instanceof RollbackFulfillmentSecretInsert) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   public async markFailed(input: {
@@ -386,6 +396,22 @@ const findById = async (
   return result.rows[0] ? fromRow(result.rows[0]) : null;
 };
 
+const findByIdForUpdate = async (
+  db: Queryable,
+  fulfillmentId: string,
+): Promise<FulfillmentOperation | null> => {
+  const result = await db.query<FulfillmentRow>(
+    `
+      SELECT ${fulfillmentReturning}
+      FROM fulfillment_operations
+      WHERE id = $1
+      FOR UPDATE
+    `,
+    [fulfillmentId],
+  );
+  return result.rows[0] ? fromRow(result.rows[0]) : null;
+};
+
 const findByControlledProcurementApprovalId = async (
   db: Queryable,
   approvalId: string,
@@ -473,3 +499,9 @@ const requireSecretRow = (row: SecretRow | undefined): SecretRow => {
   }
   return row;
 };
+
+class RollbackFulfillmentSecretInsert extends Error {
+  public constructor() {
+    super("Fulfillment secret insert rolled back after ownership loss");
+  }
+}

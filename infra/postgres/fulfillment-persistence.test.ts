@@ -152,6 +152,108 @@ describe.skipIf(!connectionString)("PostgresFulfillmentRepository", () => {
     });
   });
 
+  it("requires current retrieval ownership and prevents orphan secrets", async () => {
+    await withDatabase(async (database) => {
+      const provider = new MemoryKeyProvider("fulfillment-mk-v1");
+      const operation = await createOperation(database);
+      const lease = await withRepository(database.schemaName, (repository) =>
+        repository.acquireRetrievalLease({
+          executionToken: randomUUID(),
+          fulfillmentId: operation.id,
+          now,
+          staleStartedBefore: new Date(now.getTime() - 60_000),
+          tokenHash: operation.tokenHash ?? "",
+        }),
+      );
+      if (lease.status !== "ACQUIRED") {
+        throw new Error("Expected fulfillment lease");
+      }
+      const material = await encryptFulfillmentSecret(
+        Buffer.from(canaryProductKey, "utf8"),
+        fulfillmentEncryptionContext(lease.operation),
+        provider,
+      );
+
+      await expect(
+        withRepository(database.schemaName, (repository) =>
+          repository.markRetrieved({
+            executionToken: randomUUID(),
+            fulfillmentId: operation.id,
+            material,
+            now,
+          }),
+        ),
+      ).resolves.toBeNull();
+
+      const secretCount = await database.query<{ readonly count: string }>(
+        "SELECT count(*)::text FROM fulfillment_secrets WHERE fulfillment_id = $1",
+        [operation.id],
+      );
+      expect(secretCount.rows[0]?.count).toBe("0");
+      await expect(
+        withRepository(database.schemaName, (repository) =>
+          repository.findById(operation.id),
+        ),
+      ).resolves.toMatchObject({
+        encryptedSecretId: null,
+        status: "RETRIEVAL_IN_FLIGHT",
+      });
+    });
+  });
+
+  it("allows exactly one concurrent markRetrieved writer", async () => {
+    await withDatabase(async (database) => {
+      const provider = new MemoryKeyProvider("fulfillment-mk-v1");
+      const operation = await createOperation(database);
+      const lease = await withRepository(database.schemaName, (repository) =>
+        repository.acquireRetrievalLease({
+          executionToken: randomUUID(),
+          fulfillmentId: operation.id,
+          now,
+          staleStartedBefore: new Date(now.getTime() - 60_000),
+          tokenHash: operation.tokenHash ?? "",
+        }),
+      );
+      if (lease.status !== "ACQUIRED") {
+        throw new Error("Expected fulfillment lease");
+      }
+      const material = await encryptFulfillmentSecret(
+        Buffer.from(canaryProductKey, "utf8"),
+        fulfillmentEncryptionContext(lease.operation),
+        provider,
+      );
+
+      const results = await Promise.all(
+        Array.from({ length: 2 }, () =>
+          withRepository(database.schemaName, (repository) =>
+            repository.markRetrieved({
+              executionToken: lease.operation.retrievalExecutionToken ?? "",
+              fulfillmentId: operation.id,
+              material,
+              now,
+            }),
+          ),
+        ),
+      );
+
+      expect(results.filter(Boolean)).toHaveLength(1);
+      const secretCount = await database.query<{ readonly count: string }>(
+        "SELECT count(*)::text FROM fulfillment_secrets WHERE fulfillment_id = $1",
+        [operation.id],
+      );
+      expect(secretCount.rows[0]?.count).toBe("1");
+      await expect(
+        withRepository(database.schemaName, (repository) =>
+          repository.findById(operation.id),
+        ),
+      ).resolves.toMatchObject({
+        retrievalExecutionToken: null,
+        retrievalState: "RETRIEVED",
+        status: "DELIVERY_PENDING",
+      });
+    });
+  });
+
   it("keeps terminal retrieved state from stale overwrite", async () => {
     await withDatabase(async (database) => {
       const provider = new MemoryKeyProvider("fulfillment-mk-v1");

@@ -5,6 +5,7 @@ export interface FulfillmentRuntimeConfig {
   readonly controlledKeyRetrievalMode:
     "DISABLED" | "CONTROLLED_VERIFICATION_ONE_TIME";
   readonly approvalTtlMs: number;
+  readonly keyRetrievalTimeoutMs: number;
   readonly retrievalLeaseStaleAfterMs: number;
   readonly keyManagementProvider: DevelopmentKeyManagementProvider;
 }
@@ -36,6 +37,11 @@ export const fulfillmentConfigFromEnv = (
       masterKeyMaterialBase64: masterKey,
       masterKeyVersion: keyId,
     }),
+    keyRetrievalTimeoutMs: positiveIntegerEnv(
+      env.KINGUIN_CONTROLLED_KEY_RETRIEVAL_TIMEOUT_MS,
+      10_000,
+      "KINGUIN_CONTROLLED_KEY_RETRIEVAL_TIMEOUT_MS",
+    ),
     retrievalLeaseStaleAfterMs: positiveIntegerEnv(
       env.KEYCORE_FULFILLMENT_RETRIEVAL_LEASE_STALE_AFTER_MS,
       60_000,

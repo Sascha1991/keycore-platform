@@ -16,6 +16,7 @@ import {
   type SupplierKeyRetrievalPort,
 } from "../contracts.js";
 import { SupplierError } from "../suppliers/errors.js";
+import { fulfillmentConfigFromEnv } from "../../../../infra/fulfillment/fulfillment-config.js";
 import { InMemoryFulfillmentRepository } from "../../../../infra/fulfillment/in-memory-fulfillment-repository.js";
 import {
   SecureKeyFulfillmentService,
@@ -24,6 +25,7 @@ import {
   encryptFulfillmentSecret,
   fulfillmentEncryptionAlgorithm,
   fulfillmentEncryptionContext,
+  fulfillmentOutboxPayload,
 } from "./secure-key-fulfillment.js";
 
 const now = new Date("2026-08-25T10:00:00.000Z");
@@ -263,8 +265,13 @@ describe("secure key fulfillment service", () => {
     });
   });
 
-  it("encrypts successful fake retrieval and leaves delivery pending", async () => {
-    const harness = serviceHarness();
+  it("encrypts successful fake retrieval, leaves delivery pending and uses retrieval reason", async () => {
+    const audit = new CapturingAudit();
+    const key = retrievedKey();
+    const harness = serviceHarness({
+      audit,
+      keyRetrieval: new StaticKeyRetrieval([key]),
+    });
     const prepared = await harness.service.prepareControlledRetrieval({
       controlledProcurementApprovalId: "approval-confirmed",
       correlationId: correlationId("prepare"),
@@ -285,6 +292,7 @@ describe("secure key fulfillment service", () => {
     expect(result).toMatchObject({
       deliveryState: "PENDING",
       hasEncryptedSecret: true,
+      reasonCode: "FULFILLMENT_KEY_RETRIEVED",
       status: "DELIVERY_PENDING",
     });
     expect(operation?.retrievalState).toBe("RETRIEVED");
@@ -303,6 +311,20 @@ describe("secure key fulfillment service", () => {
       harness.keyManagementProvider,
     );
     expect(Buffer.from(decrypted).toString("utf8")).toBe(canaryProductKey);
+    expect(Buffer.from(key.material).every((byte) => byte === 0)).toBe(true);
+    expect(audit.events.map((event) => event.reasonCode)).toEqual([
+      "FULFILLMENT_CREATED",
+      "FULFILLMENT_KEY_RETRIEVED",
+    ]);
+    expect(audit.events.at(-1)?.metadata).toEqual({
+      deliveryState: "PENDING",
+      externalSupplierOrderId: "GE1373B866F3",
+      fulfillmentId: operation.id,
+      reasonCode: "FULFILLMENT_KEY_RETRIEVED",
+      retrievalState: "RETRIEVED",
+      status: "DELIVERY_PENDING",
+      supplierId: "kinguin",
+    });
   });
 
   it("prevents duplicate retrieval after encrypted secret exists", async () => {
@@ -355,6 +377,33 @@ describe("secure key fulfillment service", () => {
     expect(
       results.filter((result) => result.status === "FAILED_RETRYABLE"),
     ).toHaveLength(1);
+  });
+
+  it("performs at most one supplier key request per explicit execution", async () => {
+    const keyRetrieval = new ThrowingKeyRetrieval(
+      new SupplierError({
+        category: "TIMEOUT",
+        operation: "downloadKeys",
+        supplierId: supplierId("kinguin"),
+      }),
+    );
+    const harness = serviceHarness({ keyRetrieval });
+    const prepared = await harness.service.prepareControlledRetrieval({
+      controlledProcurementApprovalId: "approval-confirmed",
+      correlationId: correlationId("prepare"),
+    });
+
+    await expect(
+      harness.service.executeControlledRetrieval({
+        correlationId: correlationId("execute"),
+        executionToken: prepared.oneTimeExecutionToken ?? "",
+        fulfillmentApprovalId: prepared.fulfillmentApprovalId ?? "",
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "FULFILLMENT_SUPPLIER_RETRYABLE",
+      status: "FAILED_RETRYABLE",
+    });
+    expect(keyRetrieval.calls).toHaveLength(1);
   });
 
   it("handles zero keys, multiple keys, malformed and pending supplier responses safely", async () => {
@@ -458,6 +507,107 @@ describe("secure key fulfillment service", () => {
     }
   });
 
+  it("classifies KMS failures and local persistence failures separately from supplier failures", async () => {
+    const kms = serviceHarness({
+      keyManagementProvider: new WrapRejectingKeyProvider(),
+    });
+    const kmsPrepared = await kms.service.prepareControlledRetrieval({
+      controlledProcurementApprovalId: "approval-kms",
+      correlationId: correlationId("prepare"),
+    });
+    await expect(
+      kms.service.executeControlledRetrieval({
+        correlationId: correlationId("execute"),
+        executionToken: kmsPrepared.oneTimeExecutionToken ?? "",
+        fulfillmentApprovalId: kmsPrepared.fulfillmentApprovalId ?? "",
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "FULFILLMENT_KEY_MANAGEMENT_FAILED",
+      status: "FAILED_RETRYABLE",
+    });
+
+    const persistenceRepository = new MarkRetrievedNullRepository();
+    const persistence = serviceHarness({ repository: persistenceRepository });
+    const persistencePrepared =
+      await persistence.service.prepareControlledRetrieval({
+        controlledProcurementApprovalId: "approval-persistence",
+        correlationId: correlationId("prepare"),
+      });
+    await expect(
+      persistence.service.executeControlledRetrieval({
+        correlationId: correlationId("execute"),
+        executionToken: persistencePrepared.oneTimeExecutionToken ?? "",
+        fulfillmentApprovalId: persistencePrepared.fulfillmentApprovalId ?? "",
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "FULFILLMENT_LOCAL_PERSISTENCE_FAILED",
+      status: "FAILED_RETRYABLE",
+    });
+  });
+
+  it("does not classify unknown local exceptions as supplier retryable", async () => {
+    const harness = serviceHarness({
+      keyRetrieval: new ThrowingKeyRetrieval(new Error("programming bug")),
+    });
+    const prepared = await harness.service.prepareControlledRetrieval({
+      controlledProcurementApprovalId: "approval-unknown",
+      correlationId: correlationId("prepare"),
+    });
+
+    await expect(
+      harness.service.executeControlledRetrieval({
+        correlationId: correlationId("execute"),
+        executionToken: prepared.oneTimeExecutionToken ?? "",
+        fulfillmentApprovalId: prepared.fulfillmentApprovalId ?? "",
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "FULFILLMENT_LOCAL_UNKNOWN",
+      status: "AMBIGUOUS",
+    });
+  });
+
+  it("allows stale retryable recovery because Kinguin key retrieval is documented repeatable read-only", async () => {
+    const repository = new InMemoryFulfillmentRepository();
+    const firstKeyRetrieval = new ThrowingKeyRetrieval(
+      new SupplierError({
+        category: "TIMEOUT",
+        operation: "downloadKeys",
+        supplierId: supplierId("kinguin"),
+      }),
+    );
+    const first = serviceHarness({
+      keyRetrieval: firstKeyRetrieval,
+      repository,
+    });
+    const prepared = await first.service.prepareControlledRetrieval({
+      controlledProcurementApprovalId: "approval-stale-recovery",
+      correlationId: correlationId("prepare"),
+    });
+    await first.service.executeControlledRetrieval({
+      correlationId: correlationId("execute-timeout"),
+      executionToken: prepared.oneTimeExecutionToken ?? "",
+      fulfillmentApprovalId: prepared.fulfillmentApprovalId ?? "",
+    });
+
+    const retryKeyRetrieval = new StaticKeyRetrieval([retrievedKey()]);
+    const retry = serviceHarness({
+      keyRetrieval: retryKeyRetrieval,
+      repository,
+    });
+    await expect(
+      retry.service.executeControlledRetrieval({
+        correlationId: correlationId("execute-retry"),
+        executionToken: prepared.oneTimeExecutionToken ?? "",
+        fulfillmentApprovalId: prepared.fulfillmentApprovalId ?? "",
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "FULFILLMENT_KEY_RETRIEVED",
+      status: "DELIVERY_PENDING",
+    });
+    expect(firstKeyRetrieval.calls).toHaveLength(1);
+    expect(retryKeyRetrieval.calls).toHaveLength(1);
+  });
+
   it("keeps product keys and fake supplier secrets out of audit, queue payloads, CLI-shaped output and errors", async () => {
     const audit = new CapturingAudit();
     const harness = serviceHarness({
@@ -484,9 +634,11 @@ describe("secure key fulfillment service", () => {
       fulfillmentId: operation?.id ?? null,
       status: operation?.status ?? null,
     });
+    const outboxPayload = operation ? fulfillmentOutboxPayload(operation) : {};
     const serialized = JSON.stringify({
       audit: audit.events,
       operation,
+      outboxPayload,
       queuePayload,
       result,
     });
@@ -494,6 +646,18 @@ describe("secure key fulfillment service", () => {
     expect(serialized).not.toContain(canaryProductKey);
     expect(serialized).not.toContain(canaryApiKey);
     expect(serialized).not.toContain(canaryExecutionToken);
+    expect(serialized).not.toMatch(/ciphertext|nonce|tag|wrapped/i);
+  });
+
+  it("uses a documented finite 10s default timeout for controlled key retrieval", () => {
+    const config = fulfillmentConfigFromEnv(fulfillmentEnv());
+    expect(config.keyRetrievalTimeoutMs).toBe(10_000);
+    expect(() =>
+      fulfillmentConfigFromEnv({
+        ...fulfillmentEnv(),
+        KINGUIN_CONTROLLED_KEY_RETRIEVAL_TIMEOUT_MS: "0",
+      }),
+    ).toThrow("KINGUIN_CONTROLLED_KEY_RETRIEVAL_TIMEOUT_MS_INVALID");
   });
 });
 
@@ -664,6 +828,22 @@ class RejectingKeyProvider extends MemoryKeyProvider {
   }
 }
 
+class WrapRejectingKeyProvider extends MemoryKeyProvider {
+  public constructor() {
+    super("wrapping-failure");
+  }
+
+  public override async wrapDataKey(): Promise<never> {
+    throw new Error("kms wrap failed");
+  }
+}
+
+class MarkRetrievedNullRepository extends InMemoryFulfillmentRepository {
+  public override async markRetrieved(): Promise<null> {
+    return null;
+  }
+}
+
 class CapturingAudit implements AuditEventPort {
   public readonly events: AuditEvent[] = [];
 
@@ -671,3 +851,8 @@ class CapturingAudit implements AuditEventPort {
     this.events.push(event);
   }
 }
+
+const fulfillmentEnv = (): Readonly<Record<string, string>> => ({
+  KEYCORE_FULFILLMENT_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
+  KEYCORE_FULFILLMENT_MASTER_KEY_ID: "test-fulfillment-v1",
+});

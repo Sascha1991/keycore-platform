@@ -88,15 +88,14 @@ The endpoint accepts `page` and `limit` query parameters and returns an array of
 key objects. Each object includes `id`, `serial`, `type`, `name`, `kinguinId`,
 `offerId` and `productId`. `serial` is product-key material.
 
-The docs state a key is available once delivered to the order and list safe
-retrieval strategies: periodically download keys, use `order.status` webhook
-and download when status is `completed`, or check order details until keys are
-delivered.
-
-The documentation does not state that downloading keys is destructive or
-one-time. KS-07-04 therefore models the Kinguin key download as repeatable
-read-only. Network failures on retrieval may be retried through the durable
-fulfillment operation. Malformed key responses fail closed.
+The docs state a key is available once delivered to the order and explicitly
+list periodic calls to the Download keys endpoint with pagination as one of the
+recommended retrieval strategies. The state-changing return flow is documented
+separately as `POST /v2/order/{orderId}/keys/return`, with its own one-request
+limit. KS-07-04 therefore models Kinguin key download as repeatable read-only.
+Network, timeout and rate-limit failures on key retrieval may become
+`FAILED_RETRYABLE` and be retried only by a later explicit command invocation
+through the durable fulfillment lease. Malformed key responses fail closed.
 
 Kinguin also documents:
 
@@ -135,12 +134,34 @@ Execution additionally requires:
 
 - `KEYCORE_ALLOW_KINGUIN_LIVE_KEY_RETRIEVAL=true`;
 - `KEYCORE_KINGUIN_CONTROLLED_KEY_RETRIEVAL_MODE=CONTROLLED_VERIFICATION_ONE_TIME`;
+- finite `KINGUIN_CONTROLLED_KEY_RETRIEVAL_TIMEOUT_MS`, default `10000`;
 - matching unexpired one-time token;
 - durable retrieval lease ownership;
 - no existing encrypted secret.
 
+One execution invocation performs at most one supplier key request. There is no
+internal rapid retry loop.
+
 Do not run execution for a real order until PR review, green CI, merge, local
 migration and explicit operator action are complete.
+
+## Crash And Failure Recovery
+
+Supplier success and local persistence are not one atomic transaction. After a
+supplier key response, KeyCore encrypts the material and commits the encrypted
+secret insert plus fulfillment state transition in one PostgreSQL transaction.
+If local KMS/encryption fails, the operation is marked `FAILED_RETRYABLE` with
+`FULFILLMENT_KEY_MANAGEMENT_FAILED`. If encrypted persistence loses ownership
+or fails before commit, the operation uses `FULFILLMENT_LOCAL_PERSISTENCE_FAILED`
+and no orphan secret may remain.
+
+This retryable recovery is allowed only because the current Kinguin docs support
+periodic repeatable key download. Unknown local errors before a classified
+supplier result are not labeled as supplier failures; they become
+`AMBIGUOUS` with `FULFILLMENT_LOCAL_UNKNOWN`.
+
+Successful encrypted persistence uses reason code `FULFILLMENT_KEY_RETRIEVED`.
+`FULFILLMENT_CREATED` is reserved for operation creation.
 
 ## Inspect
 

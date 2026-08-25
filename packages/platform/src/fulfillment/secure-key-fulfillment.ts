@@ -50,6 +50,7 @@ export type FulfillmentDeliveryState =
 export type FulfillmentReasonCode =
   | "FULFILLMENT_CREATED"
   | "FULFILLMENT_ALREADY_EXISTS"
+  | "FULFILLMENT_KEY_RETRIEVED"
   | "FULFILLMENT_NOT_FOUND"
   | "PROCUREMENT_NOT_CONFIRMED"
   | "SUPPLIER_ORDER_REFERENCE_MISSING"
@@ -66,6 +67,9 @@ export type FulfillmentReasonCode =
   | "FULFILLMENT_SUPPLIER_REJECTED"
   | "FULFILLMENT_SUPPLIER_RETRYABLE"
   | "FULFILLMENT_SUPPLIER_AMBIGUOUS"
+  | "FULFILLMENT_KEY_MANAGEMENT_FAILED"
+  | "FULFILLMENT_LOCAL_PERSISTENCE_FAILED"
+  | "FULFILLMENT_LOCAL_UNKNOWN"
   | "OPTIMISTIC_CONCURRENCY_CONFLICT";
 
 export interface FulfillmentOperation {
@@ -501,14 +505,17 @@ export class SecureKeyFulfillmentService {
     }
     const operation = lease.operation;
     const executionToken = requireString(operation.retrievalExecutionToken);
+    const supplierResult = await this.retrieveFromSupplier(operation, input);
+    if (supplierResult.status === "FAILED") {
+      return this.failOwned(
+        operation,
+        executionToken,
+        supplierResult.failureStatus,
+        supplierResult.reasonCode,
+      );
+    }
+    let keyMaterial: Uint8Array | null = null;
     try {
-      const supplierResult =
-        await this.options.keyRetrieval.retrievePurchasedKeys({
-          correlationId: input.correlationId,
-          expectedQuantity: operation.expectedQuantity,
-          externalSupplierOrderId: operation.externalSupplierOrderId,
-          supplierId: operation.supplierId,
-        });
       if (supplierResult.status === "PENDING") {
         return this.failOwned(
           operation,
@@ -536,8 +543,9 @@ export class SecureKeyFulfillmentService {
           "FULFILLMENT_SUPPLIER_RESPONSE_INVALID",
         );
       }
+      keyMaterial = key.material;
       const material = await encryptFulfillmentSecret(
-        key.material,
+        keyMaterial,
         fulfillmentEncryptionContext(operation),
         this.options.keyManagementProvider,
       );
@@ -548,31 +556,68 @@ export class SecureKeyFulfillmentService {
         now: this.now(),
       });
       if (!retrieved) {
-        return {
-          reasonCode: "OPTIMISTIC_CONCURRENCY_CONFLICT",
-          status: "AMBIGUOUS",
-        };
+        return this.failOwned(
+          operation,
+          executionToken,
+          "FAILED_RETRYABLE",
+          "FULFILLMENT_LOCAL_PERSISTENCE_FAILED",
+        );
       }
       await this.audit(
         retrieved,
         "FULFILLMENT_KEY_RETRIEVAL_SUCCEEDED",
         "SUCCEEDED",
-        "FULFILLMENT_CREATED",
+        "FULFILLMENT_KEY_RETRIEVED",
       );
       return resultFor(
         retrieved,
-        "FULFILLMENT_CREATED",
+        "FULFILLMENT_KEY_RETRIEVED",
         "DELIVERY_PENDING",
         true,
       );
     } catch (error) {
-      const mapped = mapRetrievalError(error);
+      const mapped = mapLocalPostRetrievalError(error);
       return this.failOwned(
         operation,
         executionToken,
         mapped.status,
         mapped.reasonCode,
       );
+    } finally {
+      keyMaterial?.fill(0);
+    }
+  }
+
+  private async retrieveFromSupplier(
+    operation: FulfillmentOperation,
+    input: {
+      readonly correlationId: CorrelationId;
+    },
+  ): Promise<
+    | Awaited<ReturnType<SupplierKeyRetrievalPort["retrievePurchasedKeys"]>>
+    | {
+        readonly status: "FAILED";
+        readonly failureStatus: Extract<
+          FulfillmentStatus,
+          "FAILED_RETRYABLE" | "FAILED_TERMINAL" | "AMBIGUOUS"
+        >;
+        readonly reasonCode: FulfillmentReasonCode;
+      }
+  > {
+    try {
+      return await this.options.keyRetrieval.retrievePurchasedKeys({
+        correlationId: input.correlationId,
+        expectedQuantity: operation.expectedQuantity,
+        externalSupplierOrderId: operation.externalSupplierOrderId,
+        supplierId: operation.supplierId,
+      });
+    } catch (error) {
+      const mapped = mapSupplierRetrievalError(error);
+      return {
+        failureStatus: mapped.status,
+        reasonCode: mapped.reasonCode,
+        status: "FAILED",
+      };
     }
   }
 
@@ -728,7 +773,7 @@ const requireDate = (value: Date | null | undefined): Date => {
   return value;
 };
 
-const mapRetrievalError = (
+const mapSupplierRetrievalError = (
   error: unknown,
 ): {
   readonly status: "FAILED_RETRYABLE" | "FAILED_TERMINAL" | "AMBIGUOUS";
@@ -762,7 +807,28 @@ const mapRetrievalError = (
     }
   }
   return {
-    reasonCode: "FULFILLMENT_SUPPLIER_RETRYABLE",
+    reasonCode: "FULFILLMENT_LOCAL_UNKNOWN",
+    status: "AMBIGUOUS",
+  };
+};
+
+const mapLocalPostRetrievalError = (
+  error: unknown,
+): {
+  readonly status: "FAILED_RETRYABLE" | "MANUAL_REVIEW_REQUIRED";
+  readonly reasonCode: FulfillmentReasonCode;
+} => {
+  if (
+    error instanceof Error &&
+    /key|wrap|encrypt|crypto|kms/iu.test(error.message)
+  ) {
+    return {
+      reasonCode: "FULFILLMENT_KEY_MANAGEMENT_FAILED",
+      status: "FAILED_RETRYABLE",
+    };
+  }
+  return {
+    reasonCode: "FULFILLMENT_LOCAL_PERSISTENCE_FAILED",
     status: "FAILED_RETRYABLE",
   };
 };
