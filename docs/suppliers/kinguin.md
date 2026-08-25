@@ -156,6 +156,36 @@ Implemented documented key endpoint:
 
 - `GET /v2/order/{orderId}/keys`
 
+KS-07-04 re-checked the current official Kinguin Order v2 documentation. Key
+retrieval is documented as `GET /v2/order/{orderId}/keys` with optional `page`
+and `limit` query parameters. The endpoint returns an array of key objects. A
+key object includes `id`, `serial`, `type`, `name`, `kinguinId`, `offerId` and
+`productId`. The documentation states the key is available once delivered to
+the order and recommends periodic key download, `order.status` webhook handling
+when order status becomes `completed`, or polling order details until keys are
+delivered.
+
+The documentation explicitly recommends periodically calling the Download keys
+endpoint with pagination. It also documents the state-changing return flow as
+the separate `POST /v2/order/{orderId}/keys/return` endpoint. KS-07-04 therefore
+models key download as repeatable read-only while retaining durable retrieval
+leases and fail-closed validation. Network, timeout and rate-limit failures can
+remain retryable through a later explicit invocation. Malformed key responses
+are terminal failures.
+
+Controlled live key retrieval uses finite
+`KINGUIN_CONTROLLED_KEY_RETRIEVAL_TIMEOUT_MS`, default `10000`. One execution
+invocation sends at most one `GET /v2/order/{orderId}/keys` request; KeyCore
+does not run an internal retry loop for key retrieval.
+
+If Kinguin returns key material but local encryption or PostgreSQL persistence
+fails before the encrypted secret is committed, KeyCore classifies the failure
+as local (`FULFILLMENT_KEY_MANAGEMENT_FAILED` or
+`FULFILLMENT_LOCAL_PERSISTENCE_FAILED`), not as supplier rejection. Recovery is
+retryable only because the current Kinguin documentation supports repeated
+read-only download. Unknown local exceptions are not converted into supplier
+retryability.
+
 Supported content types:
 
 - `text/plain`

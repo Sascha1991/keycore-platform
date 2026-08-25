@@ -30,6 +30,9 @@ Fees, VAT-aware calculations, target margin, minimum profit, rounding, price loc
 
 Stripe, risk state, idempotent order orchestration, supplier procurement, fulfillment, invoice trigger and refunds.
 
+KS-07-04 adds the secure key retrieval and fulfillment foundation after
+confirmed procurement, while production customer delivery remains disabled.
+
 ## Phase 08 – Customer Account
 
 Registration, order history, secure key vault, invoices, activation instructions and access auditing.

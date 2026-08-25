@@ -193,7 +193,7 @@ interface KinguinOrder {
   readonly createdAt?: string;
 }
 
-interface KinguinKey {
+export interface KinguinKey {
   readonly id?: string;
   readonly serial?: string;
   readonly type?: string;
