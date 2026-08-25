@@ -31,7 +31,10 @@ real customer identity binding exists.
 
 Delivery authorization is delegated to `CustomerOrderAuthorizationPort`.
 Callers cannot authorize by merely knowing a fulfillment ID, order ID or token.
-The canonical authorization context binds:
+KS-07-06 provides a persisted implementation that requires an authenticated
+principal, a verified customer, persisted `keycore_orders.customer_id`
+ownership and a fulfillment operation linked to the same order before
+decryption. The canonical authorization context binds:
 
 - customer ID;
 - order ID;
@@ -42,9 +45,11 @@ The canonical authorization context binds:
 The context fingerprint is persisted and must match during execution. A changed
 customer, order or fulfillment context fails closed before decryption.
 
-The current `keycore_orders` schema has no production customer ownership column.
-Until that schema and identity adapter exist, production customer delivery must
-remain disabled and fail closed.
+Legacy or unclaimed orders and fulfillments fail closed. Production customer
+delivery still requires a real customer authentication provider; the production
+principal provider remains fail-closed until that integration exists. Test
+principals are denied by default and can only be accepted through explicit test
+composition.
 
 ## Capability And TTL
 
@@ -119,11 +124,14 @@ DB-only inspection:
 
 ```sh
 npm run customer-delivery:inspect -- <fulfillmentId>
+npm run customer:inspect -- <customerId>
+npm run order:ownership-inspect -- <orderId>
 ```
 
-This command does not contact Kinguin or any delivery provider. It prints only
-safe metadata such as fulfillment state, encrypted-secret presence, encryption
-version/key ID and latest delivery attempt status/reason.
+These commands do not contact Kinguin or any delivery provider. They print only
+safe metadata such as masked customer email, ownership status, fulfillment
+state, encrypted-secret presence, encryption version/key ID and latest delivery
+attempt status/reason.
 
 ## Real Fulfillment Gate
 

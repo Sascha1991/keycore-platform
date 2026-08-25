@@ -4,6 +4,7 @@ import type { AuditEvent } from "../domain/audit.js";
 import type { Money } from "../domain/money.js";
 import type {
   CorrelationId,
+  CustomerId,
   ProductId,
   OrderId,
 } from "../domain/identifiers.js";
@@ -84,6 +85,7 @@ export interface KeyCoreOrder {
   readonly id: OrderId;
   readonly productId: ProductId;
   readonly priceLockId: string;
+  readonly customerId?: CustomerId | null;
   readonly customerAmount: Money;
   readonly currency: Money["currency"];
   readonly quantity: number;
@@ -838,6 +840,7 @@ const createInitialOrder = (input: {
   correlationId: input.correlationId,
   createdAt: input.now,
   currency: input.lock.currency,
+  customerId: null,
   customerAmount: input.lock.lockedSellPrice,
   fulfillmentStatus: "NOT_STARTED",
   id: randomUUID() as OrderId,
