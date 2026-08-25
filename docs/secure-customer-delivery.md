@@ -45,11 +45,12 @@ decryption. The canonical authorization context binds:
 The context fingerprint is persisted and must match during execution. A changed
 customer, order or fulfillment context fails closed before decryption.
 
-Legacy or unclaimed orders and fulfillments fail closed. Production customer
-delivery still requires a real customer authentication provider; the production
-principal provider remains fail-closed until that integration exists. Test
-principals are denied by default and can only be accepted through explicit test
-composition.
+Legacy or unclaimed orders and fulfillments fail closed. KS-07-07 can provide a
+production session-backed authenticated principal after a trusted provider
+assertion resolves through a persisted customer identity binding. It still does
+not add a public customer HTTP endpoint or production key delivery channel.
+Test principals are denied by default and can only be accepted through explicit
+test composition.
 
 ## Capability And TTL
 
@@ -126,6 +127,7 @@ DB-only inspection:
 npm run customer-delivery:inspect -- <fulfillmentId>
 npm run customer:inspect -- <customerId>
 npm run order:ownership-inspect -- <orderId>
+npm run customer-session:inspect -- <sessionId>
 ```
 
 These commands do not contact Kinguin or any delivery provider. They print only

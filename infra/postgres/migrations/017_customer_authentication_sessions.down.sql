@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS customer_auth_sessions;
+
+DROP INDEX IF EXISTS customer_identity_bindings_id_customer_provider_unique_idx;
+
+DROP INDEX IF EXISTS customer_identity_bindings_id_customer_unique_idx;

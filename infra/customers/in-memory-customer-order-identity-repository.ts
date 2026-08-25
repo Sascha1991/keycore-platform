@@ -1,6 +1,7 @@
 import type {
   CustomerIdentityBinding,
   CustomerIdentityBindingRepositoryResult,
+  CustomerIdentityProvider,
   CustomerInspection,
   CustomerOrderIdentityRepository,
   KeyCoreCustomer,
@@ -43,6 +44,43 @@ export class InMemoryCustomerOrderIdentityRepository implements CustomerOrderIde
     readonly encryptedSecretId: string | null;
   }): void {
     this.fulfillments.set(input.fulfillmentId, input);
+  }
+
+  public async findIdentityBindingByProviderSubject(input: {
+    readonly provider: CustomerIdentityProvider;
+    readonly providerSubject: string;
+  }): Promise<CustomerIdentityBinding | null> {
+    return (
+      this.bindings.get(`${input.provider}:${input.providerSubject}`) ?? null
+    );
+  }
+
+  public async findIdentityBindingById(
+    bindingId: string,
+  ): Promise<CustomerIdentityBinding | null> {
+    for (const binding of this.bindings.values()) {
+      if (binding.id === bindingId) {
+        return binding;
+      }
+    }
+    return null;
+  }
+
+  public removeIdentityBindingById(bindingId: string): void {
+    for (const [key, binding] of this.bindings) {
+      if (binding.id === bindingId) {
+        this.bindings.delete(key);
+        return;
+      }
+    }
+  }
+
+  public replaceIdentityBinding(binding: CustomerIdentityBinding): void {
+    this.removeIdentityBindingById(binding.id);
+    this.bindings.set(
+      `${binding.provider}:${binding.providerSubject}`,
+      binding,
+    );
   }
 
   public async createCustomer(input: {
