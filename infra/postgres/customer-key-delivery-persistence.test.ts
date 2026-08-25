@@ -32,7 +32,7 @@ const markerSecret = "KEYCORE_TEST_CUSTOMER_DELIVERY_PG_DO_NOT_LEAK_24680";
 describe.skipIf(!connectionString)(
   "PostgresCustomerKeyDeliveryRepository",
   () => {
-    it("stores one-time delivery capabilities only as hashes", async () => {
+    it("persists secure customer delivery state and concurrency invariants", async () => {
       await withDatabase(async (database) => {
         const fulfillment = await createRetrievedFulfillment(database);
         const { approval, capability } = approvalFixture(fulfillment);
@@ -67,60 +67,57 @@ describe.skipIf(!connectionString)(
             }),
           ),
         ).resolves.toMatchObject({ status: "CONTEXT_MISMATCH" });
-      });
-    });
 
-    it("allows exactly one concurrent delivery claim", async () => {
-      await withDatabase(async (database) => {
-        const fulfillment = await createRetrievedFulfillment(database);
-        const { approval, capability } = approvalFixture(fulfillment);
+        const concurrentFulfillment =
+          await createRetrievedFulfillment(database);
+        const {
+          approval: concurrentApproval,
+          capability: concurrentCapability,
+        } = approvalFixture(concurrentFulfillment);
         await withDeliveryRepository(database.schemaName, (repository) =>
-          repository.createApproval({ approval, now }),
+          repository.createApproval({ approval: concurrentApproval, now }),
         );
 
-        const results = await Promise.all(
+        const claimResults = await Promise.all(
           Array.from({ length: 10 }, () =>
             withDeliveryRepository(database.schemaName, (repository) =>
               repository.claimDelivery({
-                approvalId: approval.id,
+                approvalId: concurrentApproval.id,
                 channel: "FAKE",
-                contextFingerprint: approval.contextFingerprint,
+                contextFingerprint: concurrentApproval.contextFingerprint,
                 executionToken: randomUUID(),
                 now,
                 staleStartedBefore: new Date(now.getTime() - 60_000),
-                tokenHash: hashCustomerDeliveryCapability(capability),
+                tokenHash: hashCustomerDeliveryCapability(concurrentCapability),
               }),
             ),
           ),
         );
 
         expect(
-          results.filter((result) => result.status === "CLAIMED"),
+          claimResults.filter((result) => result.status === "CLAIMED"),
         ).toHaveLength(1);
         expect(
-          results.filter((result) => result.status === "IN_FLIGHT"),
+          claimResults.filter((result) => result.status === "IN_FLIGHT"),
         ).toHaveLength(9);
-      });
-    });
 
-    it("marks fulfillment delivered and emits one outbox event atomically", async () => {
-      await withDatabase(async (database) => {
-        const fulfillment = await createRetrievedFulfillment(database);
-        const { approval, capability } = approvalFixture(fulfillment);
+        const deliveryFulfillment = await createRetrievedFulfillment(database);
+        const { approval: deliveryApproval, capability: deliveryCapability } =
+          approvalFixture(deliveryFulfillment);
         await withDeliveryRepository(database.schemaName, (repository) =>
-          repository.createApproval({ approval, now }),
+          repository.createApproval({ approval: deliveryApproval, now }),
         );
         const claim = await withDeliveryRepository(
           database.schemaName,
           (repository) =>
             repository.claimDelivery({
-              approvalId: approval.id,
+              approvalId: deliveryApproval.id,
               channel: "FAKE",
-              contextFingerprint: approval.contextFingerprint,
+              contextFingerprint: deliveryApproval.contextFingerprint,
               executionToken: randomUUID(),
               now,
               staleStartedBefore: new Date(now.getTime() - 60_000),
-              tokenHash: hashCustomerDeliveryCapability(capability),
+              tokenHash: hashCustomerDeliveryCapability(deliveryCapability),
             }),
         );
         if (claim.status !== "CLAIMED") {
@@ -128,7 +125,7 @@ describe.skipIf(!connectionString)(
         }
         const outbox = outboxEvent(claim.attempt.fulfillmentId);
 
-        const results = await Promise.all(
+        const deliveryResults = await Promise.all(
           Array.from({ length: 2 }, () =>
             withDeliveryRepository(database.schemaName, (repository) =>
               repository.markDelivered({
@@ -142,13 +139,13 @@ describe.skipIf(!connectionString)(
           ),
         );
 
-        expect(results.filter(Boolean)).toHaveLength(1);
+        expect(deliveryResults.filter(Boolean)).toHaveLength(1);
         const fulfillmentRow = await database.query<{
           readonly delivery_state: string;
           readonly status: string;
         }>(
           "SELECT status, delivery_state FROM fulfillment_operations WHERE id = $1",
-          [fulfillment.id],
+          [deliveryFulfillment.id],
         );
         expect(fulfillmentRow.rows[0]).toMatchObject({
           delivery_state: "DELIVERED",
@@ -160,27 +157,24 @@ describe.skipIf(!connectionString)(
         );
         expect(outboxCount.rows[0]?.count).toBe("1");
         expect(await tableText(database)).not.toContain(markerSecret);
-      });
-    });
 
-    it("moves stale in-flight delivery attempts to manual review", async () => {
-      await withDatabase(async (database) => {
-        const fulfillment = await createRetrievedFulfillment(database);
-        const { approval, capability } = approvalFixture(fulfillment);
+        const staleFulfillment = await createRetrievedFulfillment(database);
+        const { approval: staleApproval, capability: staleCapability } =
+          approvalFixture(staleFulfillment);
         await withDeliveryRepository(database.schemaName, (repository) =>
-          repository.createApproval({ approval, now }),
+          repository.createApproval({ approval: staleApproval, now }),
         );
         const claimed = await withDeliveryRepository(
           database.schemaName,
           (repository) =>
             repository.claimDelivery({
-              approvalId: approval.id,
+              approvalId: staleApproval.id,
               channel: "FAKE",
-              contextFingerprint: approval.contextFingerprint,
+              contextFingerprint: staleApproval.contextFingerprint,
               executionToken: randomUUID(),
               now,
               staleStartedBefore: new Date(now.getTime() - 60_000),
-              tokenHash: hashCustomerDeliveryCapability(capability),
+              tokenHash: hashCustomerDeliveryCapability(staleCapability),
             }),
         );
         expect(claimed.status).toBe("CLAIMED");
@@ -188,13 +182,13 @@ describe.skipIf(!connectionString)(
         await expect(
           withDeliveryRepository(database.schemaName, (repository) =>
             repository.claimDelivery({
-              approvalId: approval.id,
+              approvalId: staleApproval.id,
               channel: "FAKE",
-              contextFingerprint: approval.contextFingerprint,
+              contextFingerprint: staleApproval.contextFingerprint,
               executionToken: randomUUID(),
               now: new Date(now.getTime() + 120_000),
               staleStartedBefore: new Date(now.getTime() + 60_000),
-              tokenHash: hashCustomerDeliveryCapability(capability),
+              tokenHash: hashCustomerDeliveryCapability(staleCapability),
             }),
           ),
         ).resolves.toMatchObject({
@@ -205,7 +199,7 @@ describe.skipIf(!connectionString)(
           status: "MANUAL_REVIEW_REQUIRED",
         });
       });
-    });
+    }, 20_000);
   },
 );
 
