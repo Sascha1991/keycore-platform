@@ -12,8 +12,12 @@ import {
   type AuditEventPort,
   type CorrelationId,
   type CustomerDeliveryAuthorization,
+  type CustomerKeyDeliveryAttempt,
   type CustomerKeyDeliveryPort,
   type CustomerKeyDeliveryPortResult,
+  type CustomerKeyDeliveryReasonCode,
+  type CustomerKeyDeliveryRepository,
+  type CustomerKeyDeliveryStatus,
   type CustomerOrderAuthorizationPort,
   type FulfillmentOperation,
   type KeyManagementProvider,
@@ -357,6 +361,132 @@ describe("customer key delivery foundation", () => {
     });
   });
 
+  it("treats post-dispatch local persistence failure as possible delivery", async () => {
+    const audit = new CapturingAudit();
+    const deliveryPort = new FakeDeliveryPort();
+    const harness = await serviceHarness({
+      audit,
+      deliveryPort,
+      deliveryRepositoryFactory: (repository) =>
+        new FailingDeliveryRepository(repository, {
+          markDelivered: "throw",
+        }),
+    });
+    const prepared = await prepare(harness);
+
+    const result = await harness.service.executeDelivery({
+      capability: prepared.oneTimeCapability ?? "",
+      channel: "FAKE",
+      correlationId: correlationId("delivery-post-dispatch-failure"),
+      customerId: harness.customerId,
+      deliveryApprovalId: prepared.deliveryApprovalId ?? "",
+      fulfillmentId: harness.fulfillment.id,
+      orderId: harness.orderId,
+    });
+
+    expect(result).toMatchObject({
+      reasonCode: "FULFILLMENT_DELIVERY_OUTCOME_UNKNOWN",
+      status: "MANUAL_REVIEW_REQUIRED",
+    });
+    expect(deliveryPort.calls).toHaveLength(1);
+    await expect(
+      harness.deliveryRepository.findLatestAttemptByFulfillmentId(
+        harness.fulfillment.id,
+      ),
+    ).resolves.toMatchObject({
+      failureReasonCode: "FULFILLMENT_DELIVERY_OUTCOME_UNKNOWN",
+      status: "MANUAL_REVIEW_REQUIRED",
+    });
+    expect(
+      safeSerialized({
+        audit: audit.events,
+        deliveryRepository: harness.deliveryRepository,
+        result,
+      }),
+    ).not.toContain(markerSecret);
+
+    await harness.service.executeDelivery({
+      capability: prepared.oneTimeCapability ?? "",
+      channel: "FAKE",
+      correlationId: correlationId("delivery-post-dispatch-reentry"),
+      customerId: harness.customerId,
+      deliveryApprovalId: prepared.deliveryApprovalId ?? "",
+      fulfillmentId: harness.fulfillment.id,
+      orderId: harness.orderId,
+    });
+    expect(deliveryPort.calls).toHaveLength(1);
+  });
+
+  it("does not mask possible delivery when manual-review persistence also fails", async () => {
+    const deliveryPort = new InspectingDeliveryPort();
+    const harness = await serviceHarness({
+      deliveryPort,
+      deliveryLeaseStaleAfterMs: 1,
+      deliveryRepositoryFactory: (repository) =>
+        new FailingDeliveryRepository(repository, {
+          markDelivered: "throw",
+          markFailed: "throw",
+        }),
+    });
+    const prepared = await prepare(harness);
+
+    const result = await harness.service.executeDelivery({
+      capability: prepared.oneTimeCapability ?? "",
+      channel: "FAKE",
+      correlationId: correlationId("delivery-post-dispatch-double-failure"),
+      customerId: harness.customerId,
+      deliveryApprovalId: prepared.deliveryApprovalId ?? "",
+      fulfillmentId: harness.fulfillment.id,
+      orderId: harness.orderId,
+    });
+
+    expect(result).toMatchObject({
+      reasonCode: "FULFILLMENT_DELIVERY_OUTCOME_UNKNOWN",
+      status: "MANUAL_REVIEW_REQUIRED",
+    });
+    expect(deliveryPort.calls).toHaveLength(1);
+    expect(deliveryPort.lastPlaintextBuffer).toBeTruthy();
+    expect(deliveryPort.lastPlaintextBuffer?.toString("utf8")).not.toContain(
+      markerSecret,
+    );
+    expect(safeSerialized({ result })).not.toContain(markerSecret);
+
+    await expect(
+      harness.service.executeDelivery({
+        capability: prepared.oneTimeCapability ?? "",
+        channel: "FAKE",
+        correlationId: correlationId("delivery-post-dispatch-fresh-reentry"),
+        customerId: harness.customerId,
+        deliveryApprovalId: prepared.deliveryApprovalId ?? "",
+        fulfillmentId: harness.fulfillment.id,
+        orderId: harness.orderId,
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "FULFILLMENT_DELIVERY_IN_FLIGHT",
+      status: "IN_FLIGHT",
+    });
+
+    const staleService = harness.createService({
+      deliveryRepository: harness.deliveryRepository,
+      now: () => new Date(now.getTime() + 5_000),
+    });
+    await expect(
+      staleService.executeDelivery({
+        capability: prepared.oneTimeCapability ?? "",
+        channel: "FAKE",
+        correlationId: correlationId("delivery-post-dispatch-stale-reentry"),
+        customerId: harness.customerId,
+        deliveryApprovalId: prepared.deliveryApprovalId ?? "",
+        fulfillmentId: harness.fulfillment.id,
+        orderId: harness.orderId,
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "FULFILLMENT_DELIVERY_OUTCOME_UNKNOWN",
+      status: "MANUAL_REVIEW_REQUIRED",
+    });
+    expect(deliveryPort.calls).toHaveLength(1);
+  });
+
   it("blocks the protected real fulfillment unless the live gate is explicit", async () => {
     const harness = await serviceHarness({
       fulfillmentId: protectedRealFulfillmentId,
@@ -392,6 +522,9 @@ const serviceHarness = async (
     readonly authorization?: CustomerOrderAuthorizationPort;
     readonly deliveryLeaseStaleAfterMs?: number;
     readonly deliveryPort?: FakeDeliveryPort;
+    readonly deliveryRepositoryFactory?: (
+      repository: InMemoryCustomerKeyDeliveryRepository,
+    ) => CustomerKeyDeliveryRepository;
     readonly audit?: AuditEventPort;
     readonly executeKeyManagementProvider?: CountingKeyProvider;
     readonly executeNow?: () => Date;
@@ -403,6 +536,9 @@ const serviceHarness = async (
   const deliveryRepository = new InMemoryCustomerKeyDeliveryRepository(
     fulfillmentRepository,
   );
+  const serviceDeliveryRepository =
+    options.deliveryRepositoryFactory?.(deliveryRepository) ??
+    deliveryRepository;
   const keyManagementProvider = new CountingKeyProvider("delivery-mk-v1");
   const executeKeyManagementProvider =
     options.executeKeyManagementProvider ?? keyManagementProvider;
@@ -430,7 +566,7 @@ const serviceHarness = async (
     approvalTtlMs: 300_000,
     deliveryLeaseStaleAfterMs: options.deliveryLeaseStaleAfterMs ?? 60_000,
     deliveryPort,
-    deliveryRepository,
+    deliveryRepository: serviceDeliveryRepository,
     environment: "CI" as const,
     fulfillmentRepository,
     orderAuthorization:
@@ -442,6 +578,17 @@ const serviceHarness = async (
     customerId: customer,
     deliveryPort,
     deliveryRepository,
+    createService: (overrides: {
+      readonly deliveryRepository?: CustomerKeyDeliveryRepository;
+      readonly now?: () => Date;
+    }) =>
+      new CustomerKeyDeliveryService({
+        ...common,
+        deliveryRepository:
+          overrides.deliveryRepository ?? serviceDeliveryRepository,
+        keyManagementProvider,
+        now: overrides.now ?? (() => now),
+      }),
     executeService: new CustomerKeyDeliveryService({
       ...common,
       keyManagementProvider: executeKeyManagementProvider,
@@ -571,3 +718,77 @@ class CapturingAudit implements AuditEventPort {
     this.events.push(event);
   }
 }
+
+class FailingDeliveryRepository implements CustomerKeyDeliveryRepository {
+  public constructor(
+    private readonly delegate: CustomerKeyDeliveryRepository,
+    private readonly failures: {
+      readonly markDelivered?: "throw";
+      readonly markFailed?: "throw";
+    },
+  ) {}
+
+  public createApproval(
+    input: Parameters<CustomerKeyDeliveryRepository["createApproval"]>[0],
+  ) {
+    return this.delegate.createApproval(input);
+  }
+
+  public claimDelivery(
+    input: Parameters<CustomerKeyDeliveryRepository["claimDelivery"]>[0],
+  ) {
+    return this.delegate.claimDelivery(input);
+  }
+
+  public async markDelivered(
+    _input: Parameters<CustomerKeyDeliveryRepository["markDelivered"]>[0],
+  ): Promise<CustomerKeyDeliveryAttempt | null> {
+    if (this.failures.markDelivered === "throw") {
+      throw new Error("synthetic post-dispatch persistence failure");
+    }
+    return this.delegate.markDelivered(_input);
+  }
+
+  public async markFailed(input: {
+    readonly attemptId: string;
+    readonly executionToken: string;
+    readonly status: Extract<
+      CustomerKeyDeliveryStatus,
+      | "FAILED_RETRYABLE"
+      | "FAILED_TERMINAL"
+      | "AMBIGUOUS"
+      | "MANUAL_REVIEW_REQUIRED"
+    >;
+    readonly reasonCode: CustomerKeyDeliveryReasonCode;
+    readonly now: Date;
+  }): Promise<CustomerKeyDeliveryAttempt | null> {
+    if (this.failures.markFailed === "throw") {
+      throw new Error("synthetic manual-review persistence failure");
+    }
+    return this.delegate.markFailed(input);
+  }
+
+  public findLatestAttemptByFulfillmentId(
+    fulfillmentId: string,
+  ): Promise<CustomerKeyDeliveryAttempt | null> {
+    return this.delegate.findLatestAttemptByFulfillmentId(fulfillmentId);
+  }
+}
+
+class InspectingDeliveryPort extends FakeDeliveryPort {
+  public lastPlaintextBuffer: Buffer | null = null;
+
+  public override async deliver(input: {
+    readonly authorization: CustomerDeliveryAuthorization;
+    readonly plaintext: Buffer;
+    readonly correlationId: CorrelationId;
+  }): Promise<CustomerKeyDeliveryPortResult> {
+    this.lastPlaintextBuffer = input.plaintext;
+    return super.deliver(input);
+  }
+}
+
+const safeSerialized = (value: unknown): string =>
+  JSON.stringify(value, (_key, current) =>
+    typeof current === "bigint" ? current.toString() : current,
+  );

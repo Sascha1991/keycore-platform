@@ -97,6 +97,18 @@ Failed delivery-port results are classified:
 - provider rejection: `FAILED_TERMINAL`;
 - ambiguous provider outcome: `MANUAL_REVIEW_REQUIRED`.
 
+After the delivery port reports definitive external success, the failure model
+changes. Any later failure before KeyCore durably records local `DELIVERED`
+state is treated as possible external delivery. The service returns
+`MANUAL_REVIEW_REQUIRED` with `FULFILLMENT_DELIVERY_OUTCOME_UNKNOWN`; it must
+not return retryable/local-unknown semantics that could drive blind redelivery.
+
+If the attempt to persist `MANUAL_REVIEW_REQUIRED` also fails, the caller still
+receives the same safe ambiguous result. The original in-flight lease remains
+present, so immediate re-entry is blocked. Stale recovery for that in-flight
+attempt also moves to manual review instead of automatically dispatching the
+key again.
+
 Automatic customer redelivery is not implemented in KS-07-05. Retry or
 re-issue after failed/manual-review attempts requires future policy and human
 safe handling.

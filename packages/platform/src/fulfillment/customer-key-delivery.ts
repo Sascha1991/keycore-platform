@@ -437,6 +437,7 @@ export class CustomerKeyDeliveryService {
       );
     }
     let plaintext: Buffer | null = null;
+    let externalDeliveryConfirmed = false;
     try {
       plaintext = await this.decryptForImmediateDelivery(secret, fulfillment);
       const delivered = await this.options.deliveryPort.deliver({
@@ -445,6 +446,7 @@ export class CustomerKeyDeliveryService {
         correlationId: input.correlationId,
         plaintext,
       });
+      externalDeliveryConfirmed = true;
       const persisted = await this.options.deliveryRepository.markDelivered({
         attemptId: attempt.id,
         deliveredAt: delivered.deliveredAt,
@@ -457,12 +459,7 @@ export class CustomerKeyDeliveryService {
         }),
       });
       if (!persisted) {
-        return this.failAttempt(
-          attempt,
-          executionToken,
-          "MANUAL_REVIEW_REQUIRED",
-          "FULFILLMENT_DELIVERY_OUTCOME_UNKNOWN",
-        );
+        return this.possibleDeliveryOutcomeUnknown(attempt, executionToken);
       }
       await this.audit(
         input.correlationId,
@@ -485,6 +482,9 @@ export class CustomerKeyDeliveryService {
         status: "DELIVERED",
       };
     } catch (error) {
+      if (externalDeliveryConfirmed) {
+        return this.possibleDeliveryOutcomeUnknown(attempt, executionToken);
+      }
       const mapped = mapDeliveryError(error);
       return this.failAttempt(
         attempt,
@@ -494,6 +494,27 @@ export class CustomerKeyDeliveryService {
       );
     } finally {
       plaintext?.fill(0);
+    }
+  }
+
+  private async possibleDeliveryOutcomeUnknown(
+    attempt: CustomerKeyDeliveryAttempt,
+    executionToken: string,
+  ): Promise<CustomerKeyDeliveryExecuteResult> {
+    try {
+      return await this.failAttempt(
+        attempt,
+        executionToken,
+        "MANUAL_REVIEW_REQUIRED",
+        "FULFILLMENT_DELIVERY_OUTCOME_UNKNOWN",
+      );
+    } catch {
+      return {
+        channel: attempt.channel,
+        fulfillmentId: attempt.fulfillmentId,
+        reasonCode: "FULFILLMENT_DELIVERY_OUTCOME_UNKNOWN",
+        status: "MANUAL_REVIEW_REQUIRED",
+      };
     }
   }
 
