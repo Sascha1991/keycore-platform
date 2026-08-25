@@ -37,6 +37,11 @@ confirmed procurement, while production customer delivery remains disabled.
 
 Registration, order history, secure key vault, invoices, activation instructions and access auditing.
 
+KS-08-01 adds the backend account read-model foundation for account summary,
+owned order history, safe key-vault metadata, invoice metadata, activation
+instruction metadata and access auditing while leaving production login,
+frontend, real key reveal, invoice generation and guest claim flow disabled.
+
 ## Phase 09 – Fraud and Support
 
 Risk rules, manual review, velocity limits, dispute evidence, support tickets and supplier claim workflow.

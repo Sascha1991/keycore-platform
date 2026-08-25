@@ -112,3 +112,11 @@ The known live fulfillment `fd61be5e-44ea-4914-98ae-c4404dc31779` must remain
 untouched by KS-07-06. Without cryptographically or operationally proven
 ownership it stays legacy/unclaimed and customer delivery authorization denies
 access.
+
+## Customer Account Reads
+
+KS-08-01 reuses this ownership model for customer account order history and
+order detail. Account reads are scoped by the authenticated principal's
+`customerId` and the PostgreSQL account read adapter filters with
+`keycore_orders.customer_id` in SQL. Wrong-customer, unknown and legacy
+unclaimed orders return the same customer-facing unavailable semantics.

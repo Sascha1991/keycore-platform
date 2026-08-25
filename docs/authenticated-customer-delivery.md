@@ -77,6 +77,11 @@ KS-07-05 secure delivery engine, which owns the decrypt and delivery boundary.
 Synthetic tests use a fake delivery port and fake encrypted key fixture to prove
 the path without enabling production customer delivery.
 
+KS-08-01 customer account key-vault metadata does not bypass this delivery
+boundary. Account pages may show key availability metadata, but any future key
+reveal must still use authenticated delivery transport, one-time capability,
+authorization and immediate pre-decrypt checks.
+
 ## Replay And Concurrency
 
 Successful execution consumes the one-time capability and transitions the

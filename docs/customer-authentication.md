@@ -31,6 +31,11 @@ If the assertion is valid but no binding exists, session creation fails closed
 with `IDENTITY_UNBOUND`. The service never accepts caller-supplied `customerId`
 as proof of authentication and never auto-binds by provider email.
 
+KS-08-01 customer account reads consume the resulting
+`AuthenticatedCustomerPrincipal`. The account service does not resolve raw
+session tokens itself and does not accept request-supplied `customerId` as an
+authorization source.
+
 ## Session Model
 
 `customer_auth_sessions` stores server-side sessions with:
