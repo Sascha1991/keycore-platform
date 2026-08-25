@@ -1,0 +1,9 @@
+DROP INDEX IF EXISTS customer_key_delivery_attempts_fulfillment_idx;
+DROP INDEX IF EXISTS customer_key_delivery_attempts_state_idx;
+DROP INDEX IF EXISTS customer_key_delivery_one_success_idx;
+DROP TABLE IF EXISTS customer_key_delivery_attempts;
+
+DROP INDEX IF EXISTS customer_key_delivery_approval_created_idx;
+DROP INDEX IF EXISTS customer_key_delivery_approval_lookup_idx;
+DROP INDEX IF EXISTS customer_key_delivery_one_active_approval_idx;
+DROP TABLE IF EXISTS customer_key_delivery_approvals;
