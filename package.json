@@ -24,6 +24,7 @@
     "format": "prettier --write \"{apps,docs,decisions,infra,packages,scripts,tasks,.github}/**/*.{md,json,yml,yaml,ts,js,cjs,mjs}\" \"*.md\" \"*.json\"",
     "customer:inspect": "node --import tsx scripts/customer-inspect.ts",
     "customer-delivery:inspect": "node --import tsx scripts/customer-delivery-inspect.ts",
+    "customer-registration:inspect": "node --import tsx scripts/customer-registration-inspect.ts",
     "customer-session:inspect": "node --import tsx scripts/customer-session-inspect.ts",
     "fulfillment:inspect": "node --import tsx scripts/fulfillment-inspect.ts",
     "kinguin:execute-approved-key-retrieval": "node --import tsx scripts/kinguin-execute-approved-key-retrieval.ts",
@@ -38,7 +39,7 @@
     "order:ownership-inspect": "node --import tsx scripts/order-ownership-inspect.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "secrets:scan": "node scripts/scan-secrets.mjs"
   },
   "dependencies": {

@@ -5,6 +5,11 @@ does not add a production HTTP server, frontend, registration provider,
 password login, OAuth, WooCommerce login, invoice generation, guest claim flow
 or product-key reveal endpoint.
 
+KS-08-02 adds the transport-neutral registration and verified account-linking
+foundation. Registration does not authenticate the customer and email
+verification does not create a session; account reads still require an
+authenticated principal.
+
 ## Trust Boundary
 
 Customer account reads are scoped only by
@@ -176,6 +181,10 @@ Unowned and legacy orders remain inaccessible. KS-08-01 does not claim orders
 by email equality, payment email, provider email, supplier data or historical
 fulfillment metadata. A future guest claim flow must require explicit verified
 ownership proof.
+
+KS-08-02 keeps this rule: verified customer email matching historical order
+email is still not enough to claim ownership. Guest claims require trusted
+`GuestOrderClaimAuthorityPort` evidence and remain production-not-ready.
 
 The known live fulfillment `fd61be5e-44ea-4914-98ae-c4404dc31779` remains
 legacy/unclaimed and must not be decrypted, displayed, delivered, ownership

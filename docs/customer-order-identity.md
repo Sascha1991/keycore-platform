@@ -120,3 +120,11 @@ order detail. Account reads are scoped by the authenticated principal's
 `customerId` and the PostgreSQL account read adapter filters with
 `keycore_orders.customer_id` in SQL. Wrong-customer, unknown and legacy
 unclaimed orders return the same customer-facing unavailable semantics.
+
+KS-08-02 adds the registration and verified account-linking lifecycle on top of
+this model. Registration still creates only `UNVERIFIED` customers; verified
+email requires the challenge flow and trusted `EmailVerificationAuthorityPort`.
+External identity linking requires an authenticated verified customer and
+trusted `CustomerIdentityBindingAuthorityPort` evidence. Guest order claiming
+remains fail-closed unless future trusted order-claim evidence is supplied; email
+equality alone is never ownership proof.
