@@ -78,6 +78,12 @@ Missing, unknown, wrong, unverified, unowned, wrong-order, unlinked, legacy and
 malformed contexts are denied. Public callers should receive the same generic
 unauthorized/not-ready response shape to avoid enumeration.
 
+KS-07-08 keeps `customerId` out of customer-facing delivery requests. The
+delivery transport resolves the customer from the authenticated session and then
+uses persisted order/fulfillment ownership checks. A request-supplied customer
+ID cannot escalate access and supplier order IDs are not accepted as customer
+delivery references.
+
 KS-07-07 adds a production session foundation that can provide this principal
 through `CustomerSessionPrincipalProvider` after a trusted authentication
 assertion resolves through a persisted identity binding. The fail-closed

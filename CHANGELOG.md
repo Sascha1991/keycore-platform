@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added KS-07-08 authenticated customer delivery transport foundation with a
+  transport-neutral POST-only handler, session principal resolution,
+  fulfillment/order object authorization, one-time capability requirement,
+  Origin and CSRF policy, in-memory rate-limit port, no-store response policy
+  and synthetic encrypted delivery tests while leaving production HTTP,
+  frontend, login provider, distributed rate limiting and real customer
+  delivery disabled.
 - Added KS-07-07 production customer authentication foundation with trusted
   authentication assertions, persisted server-side customer sessions, hash-only
   opaque tokens, session-backed authenticated principals, rotation/revocation,

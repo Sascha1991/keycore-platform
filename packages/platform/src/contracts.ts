@@ -20,6 +20,7 @@ export * from "./orders/order-orchestration.js";
 export * from "./procurement/supplier-procurement.js";
 export * from "./fulfillment/secure-key-fulfillment.js";
 export * from "./fulfillment/customer-key-delivery.js";
+export * from "./fulfillment/authenticated-customer-delivery.js";
 export * from "./queue/job.js";
 export * from "./queue/observability.js";
 export * from "./queue/retry.js";

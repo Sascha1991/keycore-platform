@@ -13,6 +13,7 @@ export class InMemoryCustomerKeyDeliveryRepository implements CustomerKeyDeliver
   public readonly approvals = new Map<string, CustomerKeyDeliveryApproval>();
   public readonly attempts = new Map<string, CustomerKeyDeliveryAttempt>();
   public readonly outbox: CustomerKeyDeliveryOutboxEvent[] = [];
+  private claimQueue: Promise<unknown> = Promise.resolve();
 
   public constructor(
     private readonly fulfillmentRepository: InMemoryFulfillmentRepository,
@@ -37,6 +38,18 @@ export class InMemoryCustomerKeyDeliveryRepository implements CustomerKeyDeliver
   }
 
   public async claimDelivery(input: {
+    readonly approvalId: string;
+    readonly tokenHash: string;
+    readonly contextFingerprint: string;
+    readonly channel: CustomerKeyDeliveryAttempt["channel"];
+    readonly executionToken: string;
+    readonly staleStartedBefore: Date;
+    readonly now: Date;
+  }) {
+    return this.serializedClaim(() => this.claimDeliveryUnlocked(input));
+  }
+
+  private async claimDeliveryUnlocked(input: {
     readonly approvalId: string;
     readonly tokenHash: string;
     readonly contextFingerprint: string;
@@ -116,6 +129,14 @@ export class InMemoryCustomerKeyDeliveryRepository implements CustomerKeyDeliver
     };
     this.attempts.set(attempt.id, attempt);
     return { approval: consumed, attempt, status: "CLAIMED" as const };
+  }
+
+  private async serializedClaim<TResult>(
+    callback: () => Promise<TResult>,
+  ): Promise<TResult> {
+    const run = this.claimQueue.then(callback);
+    this.claimQueue = run.catch(() => undefined);
+    return run;
   }
 
   public async markDelivered(input: {
