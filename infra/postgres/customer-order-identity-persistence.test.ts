@@ -156,7 +156,7 @@ describePostgres("PostgresCustomerOrderIdentityRepository", () => {
       await expect(
         new CustomerOrderIdentityService({
           identityBindingAuthority: new FakeIdentityBindingAuthority(
-            "bad subject",
+            " bad-subject",
           ),
           now: () => now,
           repository,
