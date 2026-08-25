@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added KS-07-05 secure customer key delivery foundation with one-time
+  capability authorization, customer/order authorization port, explicit
+  claim/acknowledge delivery attempts, fake/test delivery boundary, plaintext
+  zeroization, reversible PostgreSQL delivery persistence, safe inspect command
+  and live-delivery gate while leaving production email and customer HTTP
+  endpoints out of scope.
+- Hardened KS-07-05 post-dispatch delivery semantics so local persistence
+  failures after external delivery success become manual-review ambiguous
+  outcomes and cannot trigger blind customer redelivery.
 - Added KS-07-04 secure key retrieval and fulfillment foundation with durable
   fulfillment operations, AES-256-GCM encrypted fulfillment secrets, controlled
   Kinguin key-retrieval approval gates, retrieval leases, safe inspect command

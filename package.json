@@ -22,6 +22,7 @@
     "db:status": "node --import tsx infra/postgres/migrate.ts status",
     "format:check": "prettier --check \"{apps,docs,decisions,infra,packages,scripts,tasks,.github}/**/*.{md,json,yml,yaml,ts,js,cjs,mjs}\" \"*.md\" \"*.json\"",
     "format": "prettier --write \"{apps,docs,decisions,infra,packages,scripts,tasks,.github}/**/*.{md,json,yml,yaml,ts,js,cjs,mjs}\" \"*.md\" \"*.json\"",
+    "customer-delivery:inspect": "node --import tsx scripts/customer-delivery-inspect.ts",
     "fulfillment:inspect": "node --import tsx scripts/fulfillment-inspect.ts",
     "kinguin:execute-approved-key-retrieval": "node --import tsx scripts/kinguin-execute-approved-key-retrieval.ts",
     "kinguin:execute-approved-procurement": "node --import tsx scripts/kinguin-execute-approved-procurement.ts",

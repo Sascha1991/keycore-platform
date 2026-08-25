@@ -190,9 +190,11 @@ the secure storage boundary when customer delivery later needs decryption.
 
 ## Delivery Boundary
 
-KS-07-04 does not implement production customer email. It establishes the
-boundary where a future delivery service may decrypt only inside a narrow,
-authorized operation and then move fulfillment from `DELIVERY_PENDING` to
-`DELIVERED`.
+KS-07-04 does not implement production customer email. KS-07-05 adds the
+separate secure customer delivery foundation documented in
+`docs/secure-customer-delivery.md`: a short-lived one-time capability,
+customer/order authorization port, explicit claim/acknowledge delivery attempt,
+safe fake/test delivery boundary, plaintext zeroization and DB-only safe
+inspection.
 
 Broad admin plaintext listing is not implemented.
