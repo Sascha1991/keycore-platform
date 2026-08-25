@@ -4,6 +4,7 @@ export * from "./catalog/canonical-product-grouping.js";
 export * from "./catalog/search-operations.js";
 export * from "./catalog/synchronization.js";
 export * from "./customers/customer-authentication.js";
+export * from "./customers/customer-account.js";
 export * from "./customers/customer-order-identity.js";
 export * from "./domain/audit.js";
 export * from "./domain/brands.js";
