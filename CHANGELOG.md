@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added KS-07-06 customer order identity and ownership foundation with opaque
+  customer IDs, normalized/verified customer records, external identity binding
+  placeholders, immutable order ownership, persisted delivery authorization,
+  reversible PostgreSQL migration, safe inspect commands and fail-closed
+  production principal behavior.
 - Added KS-07-05 secure customer key delivery foundation with one-time
   capability authorization, customer/order authorization port, explicit
   claim/acknowledge delivery attempts, fake/test delivery boundary, plaintext
