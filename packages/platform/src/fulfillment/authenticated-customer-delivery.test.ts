@@ -20,10 +20,13 @@ import {
   encryptFulfillmentSecret,
   fulfillmentEncryptionContext,
   orderId,
+  parseAllowedOrigins,
   productId,
   supplierId,
   type AuditEvent,
   type AuditEventPort,
+  type AuthenticatedCustomerDeliveryCsrfPolicy,
+  type AuthenticatedCustomerDeliveryRateLimiter,
   type AuthenticatedDeliveryTransportRequest,
   type CorrelationId,
   type CustomerAuthenticationAuthorityPort,
@@ -228,6 +231,114 @@ describe("AuthenticatedCustomerDeliveryTransportHandler", () => {
     expect(() =>
       new HmacDoubleSubmitCsrfPolicy("short").createToken("session"),
     ).toThrow("CSRF secret is too short");
+    expect(parseAllowedOrigins("http://localhost:3000", "LOCAL")).toEqual([
+      "http://localhost:3000",
+    ]);
+    expect(() =>
+      parseAllowedOrigins("http://localhost:3000", "PRODUCTION"),
+    ).toThrow("KEYCORE_CUSTOMER_ALLOWED_ORIGINS_INVALID");
+    expect(() =>
+      parseAllowedOrigins("http://example.com", "PRODUCTION"),
+    ).toThrow("KEYCORE_CUSTOMER_ALLOWED_ORIGINS_INVALID");
+    expect(
+      parseAllowedOrigins("https://configured.example", "PRODUCTION"),
+    ).toEqual(["https://configured.example"]);
+    expect(() => parseAllowedOrigins("*", "PRODUCTION")).toThrow(
+      "KEYCORE_CUSTOMER_ALLOWED_ORIGINS_INVALID",
+    );
+    expect(() => parseAllowedOrigins("not-an-origin", "PRODUCTION")).toThrow(
+      "KEYCORE_CUSTOMER_ALLOWED_ORIGINS_INVALID",
+    );
+  });
+
+  it("denies invalid origin and csrf before session resolution", async () => {
+    const invalidOrigin = await deliveryHarness();
+    await expect(
+      invalidOrigin.handler.prepareDelivery(
+        invalidOrigin.request({
+          mode: "prepare",
+          origin: "https://evil.example.test",
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    expect(invalidOrigin.sessionService.resolveCalls).toBe(0);
+    expect(invalidOrigin.keyProvider.unwraps).toBe(0);
+    expect(invalidOrigin.deliveryPort.calls).toHaveLength(0);
+
+    const invalidCsrf = await deliveryHarness();
+    await expect(
+      invalidCsrf.handler.prepareDelivery(
+        invalidCsrf.request({ csrfHeader: "bad", mode: "prepare" }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    expect(invalidCsrf.sessionService.resolveCalls).toBe(0);
+    expect(invalidCsrf.keyProvider.unwraps).toBe(0);
+    expect(invalidCsrf.deliveryPort.calls).toHaveLength(0);
+  });
+
+  it("fails closed when csrf policy or rate limiter fails", async () => {
+    const csrfFailure = await deliveryHarness({
+      csrfPolicy: new ThrowingCsrfPolicy(),
+    });
+    await expect(
+      csrfFailure.handler.prepareDelivery(
+        csrfFailure.request({ mode: "prepare" }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    expect(csrfFailure.sessionService.resolveCalls).toBe(0);
+    expect(csrfFailure.keyProvider.unwraps).toBe(0);
+    expect(csrfFailure.deliveryPort.calls).toHaveLength(0);
+
+    const limiterFailure = await deliveryHarness({
+      rateLimiter: new ThrowingRateLimiter(),
+    });
+    await expect(
+      limiterFailure.handler.prepareDelivery(
+        limiterFailure.request({ mode: "prepare" }),
+      ),
+    ).resolves.toMatchObject({
+      body: { code: "TEMPORARILY_UNAVAILABLE", status: "ERROR" },
+      statusCode: 503,
+    });
+    expect(limiterFailure.keyProvider.unwraps).toBe(0);
+    expect(limiterFailure.deliveryPort.calls).toHaveLength(0);
+  });
+
+  it("validates body length, json content type parameters and limiter key privacy", async () => {
+    const capturedLimiter = new CapturingRateLimiter();
+    const harness = await deliveryHarness({ rateLimiter: capturedLimiter });
+    await expect(
+      harness.handler.prepareDelivery(
+        harness.request({ bodyByteLength: -1, mode: "prepare" }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 400 });
+    await expect(
+      harness.handler.prepareDelivery(
+        harness.request({
+          bodyByteLength: Number.MAX_SAFE_INTEGER + 1,
+          mode: "prepare",
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 400 });
+    await expect(
+      harness.handler.prepareDelivery(
+        harness.request({ contentType: "text/plain", mode: "prepare" }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 400 });
+
+    await expect(
+      harness.handler.prepareDelivery(
+        harness.request({
+          contentType: "application/json; charset=utf-8",
+          mode: "prepare",
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 201 });
+    expect(capturedLimiter.keys).toHaveLength(1);
+    expect(capturedLimiter.keys[0]).toMatch(/^[a-f0-9]{64}$/u);
+    expect(capturedLimiter.serialized()).not.toContain(
+      harness.sessionCredential,
+    );
   });
 });
 
@@ -239,6 +350,10 @@ const deliveryHarness = async (
     readonly rateLimitMax?: number;
     readonly fulfillmentId?: string;
     readonly protectedFulfillmentIds?: readonly string[];
+    readonly environment?: "LOCAL" | "CI" | "STAGING" | "PRODUCTION";
+    readonly allowedOrigins?: readonly string[];
+    readonly csrfPolicy?: AuthenticatedCustomerDeliveryCsrfPolicy;
+    readonly rateLimiter?: AuthenticatedCustomerDeliveryRateLimiter;
   } = {},
 ) => {
   const identityRepository = new InMemoryCustomerOrderIdentityRepository();
@@ -301,7 +416,7 @@ const deliveryHarness = async (
       identityRepository.findIdentityBindingByProviderSubject(input),
   });
   let authNow = now;
-  const sessionService = new CustomerAuthenticationService({
+  const sessionService = new InstrumentedCustomerAuthenticationService({
     authority: new FakeAuthenticationAuthority(
       assertion(subject, {
         expiresAt:
@@ -353,22 +468,26 @@ const deliveryHarness = async (
     protectedFulfillmentIds: options.protectedFulfillmentIds ?? [],
     now: () => now,
   });
+  const environment = options.environment ?? "CI";
+  const rateLimiter =
+    options.rateLimiter ??
+    new InMemoryAuthenticatedDeliveryRateLimiter({
+      max: options.rateLimitMax ?? 100,
+      windowMs: 60_000,
+    });
   const handler = new AuthenticatedCustomerDeliveryTransportHandler({
     audit,
     config: {
-      allowedOrigins: [allowedOrigin],
+      allowedOrigins: options.allowedOrigins ?? [allowedOrigin],
       maxBodyBytes: 4096,
       rateLimitMax: options.rateLimitMax ?? 100,
       rateLimitWindowMs: 60_000,
     },
-    csrfPolicy: csrf,
+    csrfPolicy: options.csrfPolicy ?? csrf,
     deliveryService,
-    environment: "CI",
+    environment,
     now: () => now,
-    rateLimiter: new InMemoryAuthenticatedDeliveryRateLimiter({
-      max: options.rateLimitMax ?? 100,
-      windowMs: 60_000,
-    }),
+    rateLimiter,
     sessionService,
   });
   return {
@@ -381,11 +500,15 @@ const deliveryHarness = async (
     fulfillment,
     handler,
     keyProvider,
+    sessionCredential,
+    sessionService,
     request: (input: {
       readonly mode: "prepare" | "execute";
       readonly sessionCredential?: string | null;
       readonly csrfHeader?: string | null;
       readonly origin?: string | null;
+      readonly contentType?: string;
+      readonly bodyByteLength?: number;
       readonly deliveryApprovalId?: string;
       readonly deliveryCapability?: string;
       readonly body?: AuthenticatedDeliveryTransportRequest["body"];
@@ -400,8 +523,8 @@ const deliveryHarness = async (
               orderId: order,
             }
           : { fulfillmentReference: fulfillment.id, orderId: order }),
-      bodyByteLength: 256,
-      contentType: "application/json",
+      bodyByteLength: input.bodyByteLength ?? 256,
+      contentType: input.contentType ?? "application/json",
       correlationIdHeader: "corr-transport",
       csrfCookie: csrfToken,
       csrfHeader: input.csrfHeader === undefined ? csrfToken : input.csrfHeader,
@@ -605,6 +728,45 @@ class CapturingAudit implements AuditEventPort {
 
   public async append(event: AuditEvent): Promise<void> {
     this.events.push(event);
+  }
+}
+
+class InstrumentedCustomerAuthenticationService extends CustomerAuthenticationService {
+  public resolveCalls = 0;
+
+  public override async resolveSession(
+    input: Parameters<CustomerAuthenticationService["resolveSession"]>[0],
+  ): ReturnType<CustomerAuthenticationService["resolveSession"]> {
+    this.resolveCalls += 1;
+    return super.resolveSession(input);
+  }
+}
+
+class ThrowingCsrfPolicy implements AuthenticatedCustomerDeliveryCsrfPolicy {
+  public validate(): never {
+    throw new Error("synthetic csrf outage");
+  }
+}
+
+class ThrowingRateLimiter implements AuthenticatedCustomerDeliveryRateLimiter {
+  public async check(): Promise<never> {
+    throw new Error("synthetic limiter outage");
+  }
+}
+
+class CapturingRateLimiter implements AuthenticatedCustomerDeliveryRateLimiter {
+  public readonly keys: string[] = [];
+
+  public async check(input: {
+    readonly key: string;
+    readonly now: Date;
+  }): Promise<{ readonly status: "ALLOWED" }> {
+    this.keys.push(input.key);
+    return { status: "ALLOWED" };
+  }
+
+  public serialized(): string {
+    return JSON.stringify(this.keys);
   }
 }
 

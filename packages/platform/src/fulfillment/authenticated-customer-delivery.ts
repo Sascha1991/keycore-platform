@@ -47,6 +47,7 @@ export interface AuthenticatedDeliveryTransportRequest {
     readonly deliveryCapability?: string;
     readonly customerId?: string;
     readonly externalSupplierOrderId?: string;
+    readonly supplierId?: string;
   };
 }
 
@@ -99,7 +100,10 @@ export interface AuthenticatedCustomerDeliveryTransportConfig {
 export const authenticatedCustomerDeliveryConfigFromEnv = (
   env: Readonly<Record<string, string | undefined>>,
 ): AuthenticatedCustomerDeliveryTransportConfig => ({
-  allowedOrigins: parseAllowedOrigins(env.KEYCORE_CUSTOMER_ALLOWED_ORIGINS),
+  allowedOrigins: parseAllowedOrigins(
+    env.KEYCORE_CUSTOMER_ALLOWED_ORIGINS,
+    deliveryEnvironmentFromEnv(env),
+  ),
   maxBodyBytes: readPositiveInt(
     env.KEYCORE_CUSTOMER_DELIVERY_MAX_BODY_BYTES,
     4096,
@@ -136,11 +140,16 @@ export class AuthenticatedCustomerDeliveryTransportHandler {
   ) {
     this.now = options.now ?? (() => new Date());
     this.environment = options.environment ?? "LOCAL";
-    this.allowedOrigins = new Set(options.config.allowedOrigins);
+    this.allowedOrigins = new Set(
+      options.config.allowedOrigins.map((origin) =>
+        requiredOrigin(normalizeOrigin(origin, this.environment)),
+      ),
+    );
     if (
       options.config.allowedOrigins.length === 0 ||
       !Number.isSafeInteger(options.config.maxBodyBytes) ||
-      options.config.maxBodyBytes <= 0
+      options.config.maxBodyBytes <= 0 ||
+      this.allowedOrigins.size === 0
     ) {
       throw new Error("Authenticated delivery transport config is invalid");
     }
@@ -169,7 +178,10 @@ export class AuthenticatedCustomerDeliveryTransportHandler {
       resource.fulfillmentId,
       request.remoteAddress,
     );
-    if (!limited) {
+    if (limited === "UNAVAILABLE") {
+      return this.error(503, "TEMPORARILY_UNAVAILABLE");
+    }
+    if (limited === "LIMITED") {
       await this.auditDenied(
         common.correlationId,
         resource.fulfillmentId,
@@ -237,7 +249,10 @@ export class AuthenticatedCustomerDeliveryTransportHandler {
       resource.fulfillmentId,
       request.remoteAddress,
     );
-    if (!limited) {
+    if (limited === "UNAVAILABLE") {
+      return this.error(503, "TEMPORARILY_UNAVAILABLE");
+    }
+    if (limited === "LIMITED") {
       await this.auditDenied(
         common.correlationId,
         resource.fulfillmentId,
@@ -269,7 +284,9 @@ export class AuthenticatedCustomerDeliveryTransportHandler {
   > {
     if (
       request.method !== "POST" ||
-      request.contentType.toLowerCase() !== "application/json" ||
+      !isJsonContentType(request.contentType) ||
+      !Number.isSafeInteger(request.bodyByteLength) ||
+      request.bodyByteLength < 0 ||
       request.bodyByteLength > this.options.config.maxBodyBytes
     ) {
       return { code: "BAD_REQUEST", status: "INVALID", statusCode: 400 };
@@ -284,13 +301,18 @@ export class AuthenticatedCustomerDeliveryTransportHandler {
     if (!this.originAllowed(request.origin)) {
       return { code: "ACCESS_DENIED", status: "INVALID", statusCode: 403 };
     }
-    if (
-      this.options.csrfPolicy.validate({
+    let csrfResult:
+      { readonly status: "VALID" } | { readonly status: "INVALID" };
+    try {
+      csrfResult = this.options.csrfPolicy.validate({
         csrfCookie: request.csrfCookie,
         csrfHeader: request.csrfHeader,
         sessionCredential: request.sessionCredential,
-      }).status !== "VALID"
-    ) {
+      });
+    } catch {
+      return { code: "ACCESS_DENIED", status: "INVALID", statusCode: 403 };
+    }
+    if (csrfResult.status !== "VALID") {
       return { code: "ACCESS_DENIED", status: "INVALID", statusCode: 403 };
     }
     return {
@@ -330,7 +352,7 @@ export class AuthenticatedCustomerDeliveryTransportHandler {
     if (!origin) {
       return false;
     }
-    const normalized = normalizeOrigin(origin);
+    const normalized = normalizeOrigin(origin, this.environment);
     return Boolean(normalized && this.allowedOrigins.has(normalized));
   }
 
@@ -338,7 +360,7 @@ export class AuthenticatedCustomerDeliveryTransportHandler {
     sessionId: string,
     fulfillmentId: string,
     remoteAddress: string | null | undefined,
-  ): Promise<boolean> {
+  ): Promise<"ALLOWED" | "LIMITED" | "UNAVAILABLE"> {
     const key = stableHash(
       JSON.stringify({
         fulfillmentId,
@@ -346,11 +368,15 @@ export class AuthenticatedCustomerDeliveryTransportHandler {
         sessionId,
       }),
     );
-    const result = await this.options.rateLimiter.check({
-      key,
-      now: this.now(),
-    });
-    return result.status === "ALLOWED";
+    try {
+      const result = await this.options.rateLimiter.check({
+        key,
+        now: this.now(),
+      });
+      return result.status === "ALLOWED" ? "ALLOWED" : "LIMITED";
+    } catch {
+      return "UNAVAILABLE";
+    }
   }
 
   private mapPrepareFailure(
@@ -575,13 +601,14 @@ export const secretResponseHeaders = {
 
 export const parseAllowedOrigins = (
   raw: string | undefined,
+  environment: AuditEvent["environment"] = "PRODUCTION",
 ): readonly string[] => {
   if (!raw) {
     throw new Error("KEYCORE_CUSTOMER_ALLOWED_ORIGINS_REQUIRED");
   }
   const origins = raw
     .split(",")
-    .map((origin) => normalizeOrigin(origin.trim()))
+    .map((origin) => normalizeOrigin(origin.trim(), environment))
     .filter((origin): origin is string => Boolean(origin));
   if (origins.length === 0 || origins.some((origin) => origin === "*")) {
     throw new Error("KEYCORE_CUSTOMER_ALLOWED_ORIGINS_INVALID");
@@ -595,7 +622,9 @@ const parseResource = (
   if (
     !isSafeUuid(request.body.orderId) ||
     !isSafeUuid(request.body.fulfillmentReference) ||
-    request.body.externalSupplierOrderId
+    request.body.externalSupplierOrderId ||
+    request.body.supplierId ||
+    request.body.customerId
   ) {
     return null;
   }
@@ -612,7 +641,10 @@ const safeCorrelationId = (raw: string | null | undefined): CorrelationId => {
   return correlationId(`cust-delivery-${randomUUID()}`);
 };
 
-const normalizeOrigin = (origin: string): string | null => {
+const normalizeOrigin = (
+  origin: string,
+  environment: AuditEvent["environment"],
+): string | null => {
   try {
     const parsed = new URL(origin);
     if (
@@ -621,13 +653,46 @@ const normalizeOrigin = (origin: string): string | null => {
     ) {
       return null;
     }
-    if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") {
+    if (parsed.protocol === "https:") {
+      return parsed.origin;
+    }
+    if (
+      parsed.protocol !== "http:" ||
+      !localHttpOriginsAllowed(environment) ||
+      parsed.hostname !== "localhost"
+    ) {
       return null;
     }
     return parsed.origin;
   } catch {
     return null;
   }
+};
+
+const localHttpOriginsAllowed = (
+  environment: AuditEvent["environment"],
+): boolean => environment === "LOCAL" || environment === "CI";
+
+const isJsonContentType = (contentType: string): boolean => {
+  const [mediaType = "", ...parameters] = contentType
+    .split(";")
+    .map((part) => part.trim().toLowerCase());
+  return (
+    mediaType === "application/json" &&
+    parameters.every((parameter) => /^charset=[a-z0-9._-]+$/u.test(parameter))
+  );
+};
+
+const deliveryEnvironmentFromEnv = (
+  env: Readonly<Record<string, string | undefined>>,
+): AuditEvent["environment"] => {
+  const raw = env.KEYCORE_ENVIRONMENT ?? env.NODE_ENV;
+  return raw === "PRODUCTION" ||
+    raw === "STAGING" ||
+    raw === "CI" ||
+    raw === "LOCAL"
+    ? raw
+    : "PRODUCTION";
 };
 
 const readPositiveInt = (
@@ -677,6 +742,13 @@ const constantTimeEqual = (left: string, right: string): boolean => {
 const required = (value: string | undefined): string => {
   if (!value) {
     throw new Error("Expected authenticated delivery value");
+  }
+  return value;
+};
+
+const requiredOrigin = (value: string | null): string => {
+  if (!value) {
+    throw new Error("Authenticated delivery origin is invalid");
   }
   return value;
 };

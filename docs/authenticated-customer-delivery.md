@@ -43,8 +43,15 @@ Credentialed delivery mutations require:
 - rate-limit check by hashed session/resource/IP dimensions.
 
 `KEYCORE_CUSTOMER_ALLOWED_ORIGINS` is required for production composition and
-does not accept wildcard `*`. Same-origin deployment may configure exactly that
-origin. CORS must never combine wildcard origin with credentials.
+does not accept wildcard `*`. Local development may use `http://localhost`.
+Staging and production accept HTTPS origins only, including for localhost. CORS
+must never combine wildcard origin with credentials.
+
+Invalid Origin is rejected before CSRF validation, session resolution,
+authorization, decrypt or delivery. Invalid or failing CSRF validation is
+rejected before session resolution. If the rate limiter backend fails, delivery
+fails closed with `TEMPORARILY_UNAVAILABLE`; it must not bypass abuse
+protection.
 
 ## Capability Decision
 
