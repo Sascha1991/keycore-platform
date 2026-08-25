@@ -63,6 +63,9 @@ Order history is bounded:
 - opaque HMAC-signed cursor.
 
 Malformed, tampered or cross-customer cursors fail safely with `BAD_REQUEST`.
+Explicit invalid limits such as zero, negative, fractional, `NaN`, infinity or
+unsafe integers also fail with `BAD_REQUEST` before a repository query runs.
+Values greater than `100` are clamped to the documented maximum.
 The order history DTO excludes supplier credentials, supplier payloads,
 supplier internal errors, product keys, ciphertext, wrapped DEKs, nonces,
 authentication tags and delivery capabilities.
@@ -113,6 +116,7 @@ capability or master-key details.
 
 - the order is owned by the authenticated customer;
 - fulfillment is linked to that order;
+- `fulfillment.orderId` exactly equals the projected `orderId`;
 - retrieval state is `RETRIEVED`;
 - fulfillment status is `DELIVERY_PENDING`;
 - delivery state is `PENDING`;
@@ -121,6 +125,10 @@ capability or master-key details.
 The account service never decrypts to calculate metadata and never calls the
 delivery port. Future key reveal must still route through the KS-07-05/08
 secure delivery pipeline.
+
+If a defensive domain projection contains fulfillment metadata whose `orderId`
+does not match the projected order, account metadata may remain visible but the
+key is not reported as available for access.
 
 Customer-facing delivery mapping:
 

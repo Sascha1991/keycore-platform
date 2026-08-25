@@ -265,6 +265,9 @@ export class CustomerAccountService {
       return { code: "AUTHENTICATION_REQUIRED", status: "DENIED" };
     }
     const limit = normalizeLimit(input.limit);
+    if (limit === "INVALID") {
+      return { code: "BAD_REQUEST", status: "DENIED" };
+    }
     const cursor = input.cursor
       ? this.decodeCursor(input.cursor, principal.customerId)
       : null;
@@ -430,7 +433,10 @@ export class CustomerAccountService {
         return "INVALID";
       }
       const createdAt = new Date(parsed.createdAt);
-      if (Number.isNaN(createdAt.getTime())) {
+      if (
+        Number.isNaN(createdAt.getTime()) ||
+        createdAt.toISOString() !== parsed.createdAt
+      ) {
         return "INVALID";
       }
       return { createdAt, orderId: orderId(parsed.orderId) };
@@ -481,6 +487,7 @@ export const customerAccountCacheHeaders = {
 } as const;
 
 export const keyAccessAvailable = (input: {
+  readonly orderId: OrderId;
   readonly orderCustomerId: CustomerId;
   readonly principalCustomerId: CustomerId;
   readonly fulfillment: CustomerAccountFulfillmentProjection | null | undefined;
@@ -489,7 +496,7 @@ export const keyAccessAvailable = (input: {
   return Boolean(
     input.orderCustomerId === input.principalCustomerId &&
     fulfillment &&
-    fulfillment.orderId &&
+    fulfillment.orderId === input.orderId &&
     fulfillment.retrievalState === "RETRIEVED" &&
     fulfillment.status === "DELIVERY_PENDING" &&
     fulfillment.deliveryState === "PENDING" &&
@@ -504,8 +511,8 @@ export const keyVaultMetadata = (
   if (!fulfillment) {
     return undefined;
   }
-  const deliveryStatus = customerDeliveryStatus(fulfillment);
-  const status = keyVaultStatus(fulfillment);
+  const deliveryStatus = customerDeliveryStatus(order, fulfillment);
+  const status = keyVaultStatus(order, fulfillment);
   return {
     ...(fulfillment.deliveredAt
       ? { deliveredAt: fulfillment.deliveredAt.toISOString() }
@@ -515,6 +522,7 @@ export const keyVaultMetadata = (
     hasEncryptedSecret: fulfillment.hasEncryptedSecret,
     keyAccessAvailable: keyAccessAvailable({
       fulfillment,
+      orderId: order.orderId,
       orderCustomerId: order.customerId,
       principalCustomerId: order.customerId,
     }),
@@ -567,7 +575,7 @@ const orderHistoryItem = (
   currency: order.currency,
   fulfillmentAvailable: Boolean(keyVaultMetadata(order)?.keyAccessAvailable),
   fulfillmentStatus: order.fulfillment
-    ? customerDeliveryStatus(order.fulfillment)
+    ? customerDeliveryStatus(order, order.fulfillment)
     : "UNAVAILABLE",
   orderId: order.orderId,
   paymentStatus: order.paymentStatus,
@@ -599,6 +607,7 @@ const orderDetail = (
 };
 
 const keyVaultStatus = (
+  order: CustomerAccountOrderProjection,
   fulfillment: CustomerAccountFulfillmentProjection,
 ): CustomerKeyVaultStatus => {
   if (
@@ -616,7 +625,8 @@ const keyVaultStatus = (
   if (
     fulfillment.retrievalState === "RETRIEVED" &&
     fulfillment.deliveryState === "PENDING" &&
-    fulfillment.hasEncryptedSecret
+    fulfillment.hasEncryptedSecret &&
+    fulfillment.orderId === order.orderId
   ) {
     return "KEY_AVAILABLE";
   }
@@ -630,6 +640,7 @@ const keyVaultStatus = (
 };
 
 const customerDeliveryStatus = (
+  order: CustomerAccountOrderProjection,
   fulfillment: CustomerAccountFulfillmentProjection,
 ): CustomerFacingDeliveryStatus => {
   if (
@@ -647,7 +658,8 @@ const customerDeliveryStatus = (
   if (
     fulfillment.retrievalState === "RETRIEVED" &&
     fulfillment.deliveryState === "PENDING" &&
-    fulfillment.hasEncryptedSecret
+    fulfillment.hasEncryptedSecret &&
+    fulfillment.orderId === order.orderId
   ) {
     return "AVAILABLE";
   }
@@ -700,12 +712,12 @@ const activationInstructions = (
   };
 };
 
-const normalizeLimit = (limit: number | undefined): number => {
+const normalizeLimit = (limit: number | undefined): number | "INVALID" => {
   if (limit === undefined) {
     return 20;
   }
   if (!Number.isSafeInteger(limit) || limit <= 0) {
-    return 20;
+    return "INVALID";
   }
   return Math.min(limit, 100);
 };

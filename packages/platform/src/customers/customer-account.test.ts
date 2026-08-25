@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { InMemoryCustomerAccountReadRepository } from "../../../../infra/customers/in-memory-customer-account-repository.js";
@@ -116,6 +116,46 @@ describe("customer account foundation", () => {
     ).toBeUndefined();
   });
 
+  it("validates explicit pagination limits before querying the repository", async () => {
+    const acceptedCases = [
+      { expected: 20, limit: undefined },
+      { expected: 20, limit: 20 },
+      { expected: 100, limit: 100 },
+      { expected: 100, limit: 1000 },
+    ] as const;
+    for (const testCase of acceptedCases) {
+      const harness = accountHarness();
+      const result = await harness.service.listOwnedOrders({
+        correlationId: correlationId(`limit-${String(testCase.limit)}`),
+        ...(testCase.limit === undefined ? {} : { limit: testCase.limit }),
+        principal: principal(harness.customerA),
+      });
+      expect(result.status).toBe("OK");
+      expect(harness.repository.listOwnedOrdersCalls).toEqual([
+        testCase.expected,
+      ]);
+    }
+
+    for (const invalidLimit of [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      const harness = accountHarness();
+      await expect(
+        harness.service.listOwnedOrders({
+          correlationId: correlationId(`invalid-limit-${String(invalidLimit)}`),
+          limit: invalidLimit,
+          principal: principal(harness.customerA),
+        }),
+      ).resolves.toEqual({ code: "BAD_REQUEST", status: "DENIED" });
+      expect(harness.repository.listOwnedOrdersCalls).toEqual([]);
+    }
+  });
+
   it("rejects malformed and cross-customer cursors safely", async () => {
     const harness = accountHarness();
     const page = await harness.service.listOwnedOrders({
@@ -139,6 +179,17 @@ describe("customer account foundation", () => {
         correlationId: correlationId("cross-cursor"),
         cursor: page.page.nextCursor,
         principal: principal(harness.customerB),
+      }),
+    ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "DENIED" });
+    await expect(
+      harness.service.listOwnedOrders({
+        correlationId: correlationId("non-canonical-cursor"),
+        cursor: signedCursor({
+          createdAt: "2026-08-25T09:00:00.000+00:00",
+          customerId: harness.customerA,
+          orderId: harness.orders.available.orderId,
+        }),
+        principal: principal(harness.customerA),
       }),
     ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "DENIED" });
   });
@@ -238,6 +289,45 @@ describe("customer account foundation", () => {
     expect(harness.capabilityConsumptions).toBe(0);
   });
 
+  it("does not mark key access available when fulfillment metadata points to another order", async () => {
+    const harness = accountHarness();
+    const mismatchedOrder = orderFixture(
+      harness.customerA,
+      "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      {
+        createdAt: new Date("2026-08-25T09:45:00.000Z"),
+        fulfillment: fulfillmentFixture(
+          "ffffffff-ffff-4fff-8fff-fffffffffff5",
+          {
+            encrypted: true,
+            orderIdValue: harness.orders.available.orderId,
+          },
+        ),
+      },
+    );
+    harness.repository.addOrder(mismatchedOrder);
+
+    const result = await harness.service.getOwnedOrderDetail({
+      correlationId: correlationId("mismatched-fulfillment"),
+      orderId: mismatchedOrder.orderId,
+      principal: principal(harness.customerA),
+    });
+
+    expect(result.status).toBe("OK");
+    if (result.status !== "OK") {
+      throw new Error("expected mismatched detail");
+    }
+    expect(result.order.fulfillment).toMatchObject({
+      deliveryStatus: "UNAVAILABLE",
+      hasEncryptedSecret: true,
+      keyAccessAvailable: false,
+      status: "NO_KEY",
+    });
+    expect(harness.decryptCalls).toBe(0);
+    expect(harness.deliveryCalls).toBe(0);
+    expect(harness.capabilityConsumptions).toBe(0);
+  });
+
   it("keeps invoice metadata safe and title-only activation non-authoritative", async () => {
     const harness = accountHarness();
     const detailResult = await detail(
@@ -307,7 +397,7 @@ const detail = async (
 };
 
 const accountHarness = () => {
-  const repository = new InMemoryCustomerAccountReadRepository();
+  const repository = new CountingCustomerAccountReadRepository();
   const audit = new CollectingAudit();
   const customerA = customerId("11111111-1111-4111-8111-111111111111");
   const customerB = customerId("22222222-2222-4222-8222-222222222222");
@@ -426,6 +516,7 @@ const accountHarness = () => {
     decryptCalls: 0,
     deliveryCalls: 0,
     orders,
+    repository,
     repositorySnapshot: (fulfillmentId: string) =>
       Object.values(orders)
         .map((order) => order.fulfillment)
@@ -506,6 +597,40 @@ class CollectingAudit {
     this.events.push(event);
   }
 }
+
+class CountingCustomerAccountReadRepository extends InMemoryCustomerAccountReadRepository {
+  public readonly listOwnedOrdersCalls: number[] = [];
+
+  public override async listOwnedOrders(
+    input: Parameters<
+      InMemoryCustomerAccountReadRepository["listOwnedOrders"]
+    >[0],
+  ): ReturnType<InMemoryCustomerAccountReadRepository["listOwnedOrders"]> {
+    this.listOwnedOrdersCalls.push(input.limit);
+    return super.listOwnedOrders(input);
+  }
+}
+
+const signedCursor = (input: {
+  readonly createdAt: string;
+  readonly customerId: CustomerId;
+  readonly orderId: OrderId;
+}): string => {
+  const payload = Buffer.from(
+    JSON.stringify({
+      createdAt: input.createdAt,
+      customerId: input.customerId,
+      orderId: input.orderId,
+      purpose: "customer-account-orders",
+      version: 1,
+    }),
+    "utf8",
+  ).toString("base64url");
+  const signature = createHmac("sha256", cursorSigningFixture)
+    .update(payload)
+    .digest("base64url");
+  return `v1.${payload}.${signature}`;
+};
 
 const safeJson = (value: unknown): string =>
   JSON.stringify(value, (_key, child) =>

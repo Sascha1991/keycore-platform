@@ -5,8 +5,9 @@
 - Added KS-08-01 customer account foundation with a transport-neutral
   `CustomerAccountService`, authenticated-principal account scoping, SQL-level
   owned order-history/detail projections, bounded signed cursor pagination,
-  safe key-vault metadata, invoice metadata, structured activation instruction
-  metadata, private no-store cache policy and account access audit events while
+  explicit pagination validation, fail-closed fulfillment/order-link key-vault
+  metadata, invoice metadata, structured activation instruction metadata,
+  private no-store cache policy and account access audit events while
   leaving production login, frontend, real key reveal, invoice generation,
   guest order claiming, Kinguin retrieval/purchase and live Stripe mutation out
   of scope.
