@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added KS-07-07 production customer authentication foundation with trusted
+  authentication assertions, persisted server-side customer sessions, hash-only
+  opaque tokens, session-backed authenticated principals, rotation/revocation,
+  safe inspect command, reversible PostgreSQL migration and cookie/transport
+  policy documentation while leaving login UI, OAuth/WooCommerce adapters,
+  checkout, email delivery, Kinguin procurement and key retrieval out of scope.
 - Added KS-07-06 customer order identity and ownership foundation with opaque
   customer IDs, normalized/verified customer records, external identity binding
   placeholders, immutable order ownership, persisted delivery authorization,

@@ -78,11 +78,13 @@ Missing, unknown, wrong, unverified, unowned, wrong-order, unlinked, legacy and
 malformed contexts are denied. Public callers should receive the same generic
 unauthorized/not-ready response shape to avoid enumeration.
 
-Production authentication is represented by
-`FailClosedProductionPrincipalProvider`, which always returns no principal until
-a real auth integration is explicitly added in a later task. Test principals are
-rejected by persisted delivery authorization unless the composition root
-explicitly enables `allowTestPrincipal` for tests.
+KS-07-07 adds a production session foundation that can provide this principal
+through `CustomerSessionPrincipalProvider` after a trusted authentication
+assertion resolves through a persisted identity binding. The fail-closed
+production provider remains available for composition roots that have not wired
+session authentication. Test principals are rejected by persisted delivery
+authorization unless the composition root explicitly enables
+`allowTestPrincipal` for tests.
 
 ## Safe Inspect
 
@@ -91,6 +93,7 @@ DB-only inspection:
 ```sh
 npm run customer:inspect -- <customerId>
 npm run order:ownership-inspect -- <orderId>
+npm run customer-session:inspect -- <sessionId>
 ```
 
 The customer command masks email. Neither command decrypts secrets, calls
