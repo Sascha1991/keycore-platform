@@ -464,12 +464,40 @@ export class CustomerRegistrationService {
       repository: this.options.identityRepository,
       ...(this.options.audit ? { audit: this.options.audit } : {}),
     });
-    const result = await identityService.bindOrderOwnership({
+    let expectedOrderVersion = authority.evidence.expectedOrderVersion;
+    let result = await identityService.bindOrderOwnership({
       correlationId: input.correlationId,
       customerId: principalCheck.customer.id,
-      expectedOrderVersion: authority.evidence.expectedOrderVersion,
+      expectedOrderVersion,
       orderId: authority.evidence.orderId,
     });
+    for (
+      let attempt = 0;
+      result.status === "STALE_WRITER" && attempt < 2;
+      attempt += 1
+    ) {
+      if (result.order?.customerId === principalCheck.customer.id) {
+        result = { order: result.order, status: "ALREADY_BOUND" };
+        break;
+      }
+      if (result.order?.customerId) {
+        break;
+      }
+      expectedOrderVersion =
+        result.order?.recordVersion ??
+        (
+          await this.options.identityRepository.inspectOrderOwnership(
+            authority.evidence.orderId,
+          )
+        )?.recordVersion ??
+        expectedOrderVersion;
+      result = await identityService.bindOrderOwnership({
+        correlationId: input.correlationId,
+        customerId: principalCheck.customer.id,
+        expectedOrderVersion,
+        orderId: authority.evidence.orderId,
+      });
+    }
     if (result.status === "BOUND" || result.status === "ALREADY_BOUND") {
       await this.audit({
         correlationId: input.correlationId,

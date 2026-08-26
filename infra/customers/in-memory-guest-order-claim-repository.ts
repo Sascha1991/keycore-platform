@@ -35,6 +35,20 @@ export class InMemoryGuestOrderClaimRepository implements GuestOrderClaimReposit
         status: "ORDER_NOT_CLAIMABLE" as const,
       };
     }
+    if (!order.checkoutEmailNormalized) {
+      return {
+        reasonCode: "CHECKOUT_EMAIL_SNAPSHOT_REQUIRED",
+        status: "ORDER_NOT_CLAIMABLE" as const,
+      };
+    }
+    if (
+      order.checkoutEmailNormalized !== input.challenge.emailNormalizedSnapshot
+    ) {
+      return {
+        reasonCode: "CHECKOUT_EMAIL_SNAPSHOT_MISMATCH",
+        status: "ORDER_NOT_CLAIMABLE" as const,
+      };
+    }
     for (const challenge of this.challenges.values()) {
       if (challenge.tokenHash === input.challenge.tokenHash) {
         return { status: "TOKEN_HASH_COLLISION" as const };
@@ -189,7 +203,7 @@ export class InMemoryGuestOrderClaimRepository implements GuestOrderClaimReposit
         ).length,
         revoked: challenges.filter((challenge) => challenge.revokedAt).length,
       },
-      hasCheckoutEmailSnapshot: challenges.length > 0,
+      hasCheckoutEmailSnapshot: Boolean(order.checkoutEmailNormalized),
       isOwned: order.ownershipBound,
       lastClaimCreatedAt:
         [...challenges].sort(

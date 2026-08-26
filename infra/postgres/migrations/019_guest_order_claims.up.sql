@@ -19,8 +19,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF OLD.checkout_email_normalized IS NOT NULL
-    AND NEW.checkout_email_normalized IS DISTINCT FROM OLD.checkout_email_normalized THEN
+  IF NEW.checkout_email_normalized IS DISTINCT FROM OLD.checkout_email_normalized THEN
     RAISE EXCEPTION 'KeyCore order checkout email snapshot is immutable';
   END IF;
   RETURN NEW;

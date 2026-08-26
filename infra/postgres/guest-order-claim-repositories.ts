@@ -87,22 +87,10 @@ export class PostgresGuestOrderClaimRepository implements GuestOrderClaimReposit
         };
       }
       if (!order.checkout_email_normalized) {
-        await client.query(
-          `
-            UPDATE keycore_orders
-            SET checkout_email_normalized = $2,
-              updated_at = $3,
-              record_version = record_version + 1
-            WHERE id = $1
-              AND customer_id IS NULL
-              AND checkout_email_normalized IS NULL
-          `,
-          [
-            input.challenge.orderId,
-            input.challenge.emailNormalizedSnapshot,
-            input.now,
-          ],
-        );
+        return {
+          reasonCode: "CHECKOUT_EMAIL_SNAPSHOT_REQUIRED",
+          status: "ORDER_NOT_CLAIMABLE" as const,
+        };
       }
       await client.query(
         `

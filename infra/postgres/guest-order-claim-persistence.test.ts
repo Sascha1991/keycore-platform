@@ -9,8 +9,8 @@ import {
   FakeCustomerEmailVerificationDeliveryPort,
   FakeGuestOrderClaimDeliveryPort,
   GuestOrderClaimService,
+  PersistedGuestOrderClaimIssuanceAuthority,
   PersistedGuestOrderClaimAuthority,
-  TrustedGuestOrderClaimIssuanceAuthority,
   correlationId,
   orderId,
   productId,
@@ -45,7 +45,9 @@ describePostgres("PostgresGuestOrderClaimRepository", () => {
       const claimService = new GuestOrderClaimService({
         claimTtlMs: 604_800_000,
         delivery: claimDelivery,
-        issuanceAuthority: new TrustedGuestOrderClaimIssuanceAuthority(),
+        issuanceAuthority: new PersistedGuestOrderClaimIssuanceAuthority(
+          identityRepository,
+        ),
         now: () => now,
         repository: claimRepository,
         tokenFactory: () => claimCode,
@@ -55,7 +57,10 @@ describePostgres("PostgresGuestOrderClaimRepository", () => {
         challengeRepository,
         claimRepository,
       );
-      const guestOrder = await insertGuestOrder(database);
+      const guestOrder = await insertGuestOrder(
+        database,
+        "pg-guest@example.com",
+      );
       const buyer = await createVerifiedCustomer(
         identityRepository,
         "pg-guest@example.com",
@@ -121,19 +126,21 @@ describePostgres("PostgresGuestOrderClaimRepository", () => {
     }
   }, 30_000);
 
-  it("keeps legacy null-email orders unclaimable and enforces token hash uniqueness", async () => {
+  it("keeps legacy null-email orders unclaimable, enforces immutable snapshots and token hash uniqueness", async () => {
     const database = await initDatabase();
     try {
       const boundary = new TestTransactionBoundary(database);
       const claimRepository = new PostgresGuestOrderClaimRepository(boundary);
       const claimService = new GuestOrderClaimService({
         delivery: new FakeGuestOrderClaimDeliveryPort(),
-        issuanceAuthority: new TrustedGuestOrderClaimIssuanceAuthority(),
+        issuanceAuthority: new PersistedGuestOrderClaimIssuanceAuthority(
+          new PostgresCustomerOrderIdentityRepository(boundary),
+        ),
         now: () => now,
         repository: claimRepository,
         tokenFactory: () => claimCode,
       });
-      const legacyOrder = await insertGuestOrder(database);
+      const legacyOrder = await insertGuestOrder(database, null);
       await expect(
         claimService.inspectOrderClaim({ orderId: legacyOrder }),
       ).resolves.toMatchObject({
@@ -141,6 +148,51 @@ describePostgres("PostgresGuestOrderClaimRepository", () => {
         hasCheckoutEmailSnapshot: false,
         isOwned: false,
       });
+      await expect(
+        claimService.issueGuestOrderClaim({
+          checkoutEmail: "legacy@example.com",
+          correlationId: correlationId("ks0805-pg-legacy-backfill-denied"),
+          orderId: legacyOrder,
+        }),
+      ).resolves.toMatchObject({
+        reasonCode: "CHECKOUT_EMAIL_SNAPSHOT_REQUIRED",
+        status: "ORDER_NOT_CLAIMABLE",
+      });
+      await expect(
+        database.query(
+          `
+            UPDATE keycore_orders
+            SET checkout_email_normalized = 'legacy@example.com'
+            WHERE id = $1
+          `,
+          [legacyOrder],
+        ),
+      ).rejects.toThrow(/immutable/u);
+
+      const snapshottedOrder = await insertGuestOrder(
+        database,
+        "snapshot@example.com",
+      );
+      await expect(
+        database.query(
+          `
+            UPDATE keycore_orders
+            SET checkout_email_normalized = 'changed@example.com'
+            WHERE id = $1
+          `,
+          [snapshottedOrder],
+        ),
+      ).rejects.toThrow(/immutable/u);
+      await expect(
+        database.query(
+          `
+            UPDATE keycore_orders
+            SET checkout_email_normalized = NULL
+            WHERE id = $1
+          `,
+          [snapshottedOrder],
+        ),
+      ).rejects.toThrow(/immutable/u);
       await expect(
         database.query(
           `
@@ -214,6 +266,7 @@ const createVerifiedCustomer = async (
 
 const insertGuestOrder = async (
   database: PostgresTestDatabase,
+  checkoutEmailNormalized: string | null,
 ): Promise<OrderId> => {
   const targetProduct = await insertProduct(database);
   const lockId = await insertPriceLock(database, targetProduct);
@@ -221,22 +274,24 @@ const insertGuestOrder = async (
   await database.query(
     `
       INSERT INTO keycore_orders(
-        id, product_id, price_lock_id, customer_amount_minor, currency,
+        id, product_id, price_lock_id, checkout_email_normalized,
+        customer_amount_minor, currency,
         quantity, status, payment_status, procurement_status,
         fulfillment_status, risk_status, refund_status, record_version,
         idempotency_key, idempotency_fingerprint, correlation_id,
         created_at, updated_at
       )
       VALUES (
-        $1, $2, $3, 1300, 'EUR', 1, 'FULFILLMENT_PENDING', 'CAPTURED',
+        $1, $2, $3, $4, 1300, 'EUR', 1, 'FULFILLMENT_PENDING', 'CAPTURED',
         'SUCCEEDED', 'PENDING', 'APPROVED', 'NOT_REQUESTED', 1,
-        $4, $5, $6, $7, $7
+        $5, $6, $7, $8, $8
       )
     `,
     [
       id,
       targetProduct,
       lockId,
+      checkoutEmailNormalized,
       `order-idem-${id}`,
       `order-fingerprint-${id}`,
       "ks0805-pg-order",

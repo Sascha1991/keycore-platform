@@ -1,6 +1,6 @@
 # KeyRaNo Account Policy
 
-Public customer-facing brand: KeyRaNo - Rapid Access. No Waiting.
+Public customer-facing brand: KeyRaNo — Rapid Access. No Waiting.
 
 German brand message: Dein Key. Direkt. Ohne Warten.
 
@@ -47,6 +47,10 @@ This state alone is not claim proof. Secure claim requires:
 
 Email equality alone is never ownership proof. Order ID alone is not a claim
 secret. Order ID plus email is still not sufficient.
+
+The checkout email snapshot is written from trusted checkout/order creation
+evidence. Guest claim issuance must not fabricate or backfill it later for
+legacy orders.
 
 Successful claim permanently binds `keycore_orders.customer_id` to the KeyCore
 `CustomerId`. After that, normal KS-08-04 key access and secure delivery rules

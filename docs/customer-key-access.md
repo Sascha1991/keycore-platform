@@ -5,7 +5,7 @@ customer delivery foundation. It adds a transport-neutral application boundary;
 it does not expose production HTTP, install WooCommerce, add a frontend or
 enable real customer key reveal.
 
-The public/customer-facing brand is KeyRaNo - Rapid Access. No Waiting.
+The public/customer-facing brand is KeyRaNo — Rapid Access. No Waiting.
 Internal platform modules and package identifiers remain KeyCore.
 
 ## Flow

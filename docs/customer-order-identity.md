@@ -49,8 +49,9 @@ not trust boundaries. Existing legacy orders may remain unowned.
 
 KS-08-05 adds an optional immutable guest-checkout email snapshot on
 `keycore_orders.checkout_email_normalized`. The snapshot is purchase-time
-contact context, not ownership proof. PostgreSQL prevents changing a non-null
-snapshot, and secure guest claim uses it only together with an authenticated
+contact context, not ownership proof. PostgreSQL prevents changing the snapshot
+after insert, including `NULL -> value`, `value A -> value B` and
+`value -> NULL`. Secure guest claim uses it only together with an authenticated
 verified account, a one-time claim credential and trusted claim authority.
 
 Ownership binding is concurrency-safe:

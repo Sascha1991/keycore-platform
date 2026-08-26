@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Hardened KS-08-05 guest order claim before merge by preventing claim-time
+  checkout email snapshot backfill, making snapshot updates fully immutable,
+  replacing permissive test issuance authority with persisted order/snapshot
+  checks, adding delivery-exception/reissue-failure/token-entropy/WooCommerce
+  bypass tests and clarifying claim-email copy.
 - Added KS-08-05 account-required guest order claim foundation with
   purchase-time checkout email snapshots, hash-only one-time Kaufcode
   credentials, trusted claim issuance/consume authority, authenticated

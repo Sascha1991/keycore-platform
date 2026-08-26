@@ -306,6 +306,7 @@ export class PostgresCustomerOrderIdentityRepository implements CustomerOrderIde
     const order = await findOrder(this.db, requestedOrderId);
     return order
       ? {
+          checkoutEmailNormalized: order.checkoutEmailNormalized ?? null,
           fulfillmentStatus: order.fulfillmentStatus,
           orderId: order.orderId,
           ownerCustomerId: order.customerId,

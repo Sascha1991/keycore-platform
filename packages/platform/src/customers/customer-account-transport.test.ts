@@ -660,6 +660,24 @@ describe("CustomerAccountTransportHandler", () => {
         },
         statusCode: 400,
       },
+      {
+        body: {
+          billingEmail: "guest@example.com",
+        },
+        statusCode: 400,
+      },
+      {
+        body: {
+          stripePaymentEmail: "guest@example.com",
+        },
+        statusCode: 400,
+      },
+      {
+        body: {
+          wooCommerceCustomerId: "12345",
+        },
+        statusCode: 400,
+      },
     ]) {
       const denied = await transportHarness({ claimCode: guestClaimCode });
       const response = await denied.handler.claimGuestOrder(

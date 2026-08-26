@@ -31,7 +31,7 @@ Issuance:
 ```text
 trusted order evidence
 -> unclaimed KeyCore order
--> checkout email snapshot
+-> existing purchase-time checkout email snapshot
 -> persist hash-only claim challenge
 -> send fake/local claim email in this task
 ```
@@ -39,6 +39,11 @@ trusted order evidence
 Reissue revokes older active challenges for the same order and purpose. If
 delivery of the replacement email definitively fails or throws, the newly
 persisted challenge is revoked and remains unusable.
+
+Claim issuance must not backfill legacy orders. Orders with no persisted
+checkout email snapshot remain unclaimable until a future approved support flow
+defines separate evidence. The normal trusted path writes the snapshot at order
+creation/checkout time, not during later claim issuance.
 
 ## Verification
 
@@ -60,7 +65,7 @@ and cannot deliver a key.
 Future claim email subject:
 
 ```text
-Dein KeyRaNo-Kauf ist bereit
+Deinen KeyRaNo-Kauf zum Konto hinzufuegen
 ```
 
 Required German message:
@@ -73,6 +78,10 @@ The email may contain KeyRaNo branding, order-safe metadata, account-required
 instructions, the Kaufcode or a secure claim link. It must not contain Product
 Keys, encrypted secret material, delivery capability, session token, supplier
 order IDs where unnecessary or payment credentials.
+
+This is an ownership-claim email, not Product Key delivery and not a promise
+that procurement or fulfillment has completed unless a future flow explicitly
+issues it only after fulfillment readiness.
 
 Future UX:
 

@@ -259,6 +259,7 @@ export class InMemoryCustomerOrderIdentityRepository implements CustomerOrderIde
     const order = this.orders.get(requestedOrderId);
     return order
       ? {
+          checkoutEmailNormalized: order.checkoutEmailNormalized ?? null,
           fulfillmentStatus: order.fulfillmentStatus,
           orderId: order.orderId,
           ownerCustomerId: order.customerId,

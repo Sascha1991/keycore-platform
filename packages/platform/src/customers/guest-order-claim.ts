@@ -7,7 +7,10 @@ import type {
   OrderId,
 } from "../domain/identifiers.js";
 import type { AuditEventPort } from "../ports/core.js";
-import type { AuthenticatedCustomerPrincipal } from "./customer-order-identity.js";
+import type {
+  AuthenticatedCustomerPrincipal,
+  CustomerOrderIdentityRepository,
+} from "./customer-order-identity.js";
 import type {
   GuestOrderClaimAuthorityPort,
   GuestOrderClaimEvidence,
@@ -437,12 +440,35 @@ export const validateGuestOrderClaimTtlMs = (ttlMs: number): number => {
   return ttlMs;
 };
 
-export class TrustedGuestOrderClaimIssuanceAuthority implements GuestOrderClaimIssuanceAuthorityPort {
+export class PersistedGuestOrderClaimIssuanceAuthority implements GuestOrderClaimIssuanceAuthorityPort {
+  public constructor(
+    private readonly repository: CustomerOrderIdentityRepository,
+  ) {}
+
   public async verifiedGuestOrderClaimIssuance(input: {
     readonly orderId: OrderId;
     readonly checkoutEmailNormalized: string;
     readonly correlationId: CorrelationId;
   }) {
+    const order = await this.repository.inspectOrderOwnership(input.orderId);
+    if (!order) {
+      return { reasonCode: "ORDER_NOT_FOUND", status: "DENIED" as const };
+    }
+    if (order.ownerCustomerId) {
+      return { reasonCode: "ORDER_ALREADY_OWNED", status: "DENIED" as const };
+    }
+    if (!order.checkoutEmailNormalized) {
+      return {
+        reasonCode: "CHECKOUT_EMAIL_SNAPSHOT_REQUIRED",
+        status: "DENIED" as const,
+      };
+    }
+    if (order.checkoutEmailNormalized !== input.checkoutEmailNormalized) {
+      return {
+        reasonCode: "CHECKOUT_EMAIL_SNAPSHOT_MISMATCH",
+        status: "DENIED" as const,
+      };
+    }
     return {
       providerEvidenceId: `trusted-guest-claim:${input.orderId}:${input.correlationId}:${hashGuestOrderClaimCode(input.checkoutEmailNormalized).slice(0, 16)}`,
       status: "AUTHORIZED" as const,
@@ -455,6 +481,6 @@ export const guestOrderClaimEmailPolicy = {
   germanAccountRequirement:
     "Wichtig: Erstelle dein KeyRaNo-Konto mit derselben E-Mail-Adresse, die du bei deiner Bestellung angegeben hast. Nur so koennen wir deinen Kauf sicher deinem Konto zuordnen.",
   publicBrand: "KeyRaNo",
-  publicBrandLine: "KeyRaNo - Rapid Access. No Waiting.",
+  publicBrandLine: "KeyRaNo — Rapid Access. No Waiting.",
   rawClaimCodeVisibility: "TRUSTED_DELIVERY_ADAPTER_ONLY",
 } as const;

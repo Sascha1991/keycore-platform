@@ -11,9 +11,10 @@ import {
   FakeCustomerEmailVerificationDeliveryPort,
   FakeGuestOrderClaimDeliveryPort,
   GuestOrderClaimService,
+  PersistedGuestOrderClaimIssuanceAuthority,
   PersistedGuestOrderClaimAuthority,
-  TrustedGuestOrderClaimIssuanceAuthority,
   correlationId,
+  generateGuestOrderClaimCode,
   orderId,
   type AuditEvent,
   type AuditEventPort,
@@ -33,12 +34,23 @@ const productKeyMarker = "KEYRANO_KS0805_PRODUCT_KEY_DO_NOT_EMAIL_842913";
 const realFulfillmentId = "fd61be5e-44ea-4914-98ae-c4404dc31779";
 
 describe("guest order claim foundation", () => {
+  it("generates high-entropy claim codes without reducing the raw random space", () => {
+    const generated = Array.from({ length: 20 }, () =>
+      generateGuestOrderClaimCode(),
+    );
+
+    expect(new Set(generated).size).toBe(generated.length);
+    for (const code of generated) {
+      expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    }
+  });
+
   it("issues a trusted guest claim challenge with hash-only persistence and no product key email", async () => {
     const harness = claimHarness({ tokenFactory: () => claimMarker });
     const guestOrder = addGuestOrder(harness, "buyer@example.com");
 
     const issued = await harness.claimService.issueGuestOrderClaim({
-      checkoutEmail: "Buyer@Example.com",
+      checkoutEmail: "buyer@Example.com",
       correlationId: correlationId("ks0805-issue"),
       orderId: guestOrder,
     });
@@ -46,7 +58,7 @@ describe("guest order claim foundation", () => {
     expect(issued).toEqual({ status: "ISSUED" });
     expect(harness.claimDelivery.deliveries).toHaveLength(1);
     expect(harness.claimDelivery.deliveries[0]).toMatchObject({
-      emailNormalized: "Buyer@example.com",
+      emailNormalized: "buyer@example.com",
       orderId: guestOrder,
       rawClaimCode: claimMarker,
     });
@@ -89,7 +101,10 @@ describe("guest order claim foundation", () => {
         correlationId: correlationId("ks0805-owned-issue"),
         orderId: ownedOrder,
       }),
-    ).resolves.toMatchObject({ status: "ORDER_NOT_CLAIMABLE" });
+    ).resolves.toMatchObject({
+      reasonCode: "ORDER_ALREADY_OWNED",
+      status: "CLAIM_ISSUE_DENIED",
+    });
 
     const missingEmail = claimHarness();
     const missingEmailOrder = addGuestOrder(missingEmail, null);
@@ -100,6 +115,24 @@ describe("guest order claim foundation", () => {
         orderId: missingEmailOrder,
       }),
     ).resolves.toMatchObject({ status: "ORDER_NOT_CLAIMABLE" });
+    await expect(
+      missingEmail.claimService.issueGuestOrderClaim({
+        checkoutEmail: "legacy@example.com",
+        correlationId: correlationId("ks0805-legacy-backfill-denied"),
+        orderId: missingEmailOrder,
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "CHECKOUT_EMAIL_SNAPSHOT_REQUIRED",
+      status: "CLAIM_ISSUE_DENIED",
+    });
+    expect(
+      await missingEmail.claimService.inspectOrderClaim({
+        orderId: missingEmailOrder,
+      }),
+    ).toMatchObject({
+      activeClaimCount: 0,
+      hasCheckoutEmailSnapshot: false,
+    });
 
     const failed = claimHarness({
       claimDelivery: new FailingGuestOrderClaimDeliveryPort("FAILED"),
@@ -116,6 +149,23 @@ describe("guest order claim foundation", () => {
     expect(
       [...failed.claimRepository.challenges.values()][0]?.revokedAt,
     ).toEqual(now);
+
+    const thrown = claimHarness({
+      claimDelivery: new FailingGuestOrderClaimDeliveryPort("THROW"),
+      tokenFactory: () => claimMarker,
+    });
+    const thrownOrder = addGuestOrder(thrown, "buyer@example.com");
+    await expect(
+      thrown.claimService.issueGuestOrderClaim({
+        checkoutEmail: "buyer@example.com",
+        correlationId: correlationId("ks0805-delivery-throw"),
+        orderId: thrownOrder,
+      }),
+    ).resolves.toMatchObject({ status: "DELIVERY_FAILED" });
+    expect(
+      [...thrown.claimRepository.challenges.values()][0]?.revokedAt,
+    ).toEqual(now);
+    expect(safeJson(thrown.audit.events)).not.toContain(claimMarker);
   });
 
   it("claims only with authenticated verified matching email plus active claim code", async () => {
@@ -185,6 +235,16 @@ describe("guest order claim foundation", () => {
       }),
     ).resolves.toEqual({ status: "EMAIL_NOT_VERIFIED" });
 
+    const buyer = await registerAndVerify(harness, "buyer@example.com");
+    await expect(
+      harness.registrationService.claimGuestOrder({
+        claimCode: "missing-claim-code-with-enough-entropy",
+        correlationId: correlationId("ks0805-order-id-email-no-token"),
+        orderId: guestOrder,
+        principal: principal(buyer),
+      }),
+    ).resolves.toEqual({ status: "CLAIM_DENIED" });
+
     const verified = await registerAndVerify(
       claimHarness(),
       "other@example.com",
@@ -222,6 +282,42 @@ describe("guest order claim foundation", () => {
         principal: principal(reissueBuyer),
       }),
     ).resolves.toEqual({ orderId: reissueOrder, status: "CLAIMED" });
+
+    const reissueFailure = claimHarness({
+      claimDelivery: new FailingSecondDeliveryPort(),
+      tokenSequence: [
+        "first-delivery-code-with-enough-entropy-842913",
+        "second-delivery-code-with-enough-entropy-842913",
+      ],
+    });
+    const failedReissueOrder = addGuestOrder(
+      reissueFailure,
+      "buyer@example.com",
+    );
+    const failedReissueBuyer = await registerAndVerify(
+      reissueFailure,
+      "buyer@example.com",
+    );
+    await expect(
+      issue(reissueFailure, failedReissueOrder, "buyer@example.com"),
+    ).resolves.toEqual({ status: "ISSUED" });
+    await expect(
+      issue(reissueFailure, failedReissueOrder, "buyer@example.com"),
+    ).resolves.toMatchObject({ status: "DELIVERY_FAILED" });
+    await expect(
+      reissueFailure.registrationService.claimGuestOrder({
+        claimCode: "first-delivery-code-with-enough-entropy-842913",
+        correlationId: correlationId("ks0805-old-code-stays-revoked"),
+        principal: principal(failedReissueBuyer),
+      }),
+    ).resolves.toEqual({ status: "CLAIM_DENIED" });
+    await expect(
+      reissueFailure.registrationService.claimGuestOrder({
+        claimCode: "second-delivery-code-with-enough-entropy-842913",
+        correlationId: correlationId("ks0805-undelivered-code-revoked"),
+        principal: principal(failedReissueBuyer),
+      }),
+    ).resolves.toEqual({ status: "CLAIM_DENIED" });
   });
 
   it("allows only one concurrent claim with one active code and never touches real fulfillment", async () => {
@@ -263,7 +359,10 @@ describe("guest order claim foundation", () => {
         correlationId: correlationId("ks0805-real-untouched"),
         orderId: orderId(realFulfillmentId),
       }),
-    ).resolves.toMatchObject({ status: "ORDER_NOT_CLAIMABLE" });
+    ).resolves.toMatchObject({
+      reasonCode: "ORDER_NOT_FOUND",
+      status: "CLAIM_ISSUE_DENIED",
+    });
   });
 });
 
@@ -292,7 +391,11 @@ const claimHarness = (
     repository: claimRepository,
     ...(options.trustedIssuance === false
       ? {}
-      : { issuanceAuthority: new TrustedGuestOrderClaimIssuanceAuthority() }),
+      : {
+          issuanceAuthority: new PersistedGuestOrderClaimIssuanceAuthority(
+            identityRepository,
+          ),
+        }),
     ...(options.tokenFactory || options.tokenSequence
       ? {
           tokenFactory:
@@ -438,6 +541,21 @@ class FailingGuestOrderClaimDeliveryPort implements GuestOrderClaimDeliveryPort 
       throw new Error("synthetic claim delivery failure");
     }
     return { status: "FAILED" as const };
+  }
+}
+
+class FailingSecondDeliveryPort implements GuestOrderClaimDeliveryPort {
+  public readonly deliveries: Parameters<
+    GuestOrderClaimDeliveryPort["sendGuestOrderClaim"]
+  >[0][] = [];
+
+  public async sendGuestOrderClaim(
+    input: Parameters<GuestOrderClaimDeliveryPort["sendGuestOrderClaim"]>[0],
+  ) {
+    this.deliveries.push(input);
+    return this.deliveries.length === 1
+      ? { status: "ACCEPTED" as const }
+      : { status: "FAILED" as const };
   }
 }
 

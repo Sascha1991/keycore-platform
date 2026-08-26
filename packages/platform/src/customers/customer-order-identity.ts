@@ -249,6 +249,7 @@ export interface OrderOwnershipInspection {
   readonly orderId: OrderId;
   readonly ownershipBound: boolean;
   readonly ownerCustomerId: CustomerId | null;
+  readonly checkoutEmailNormalized?: string | null;
   readonly recordVersion: number;
   readonly status: string;
   readonly fulfillmentStatus: string;
