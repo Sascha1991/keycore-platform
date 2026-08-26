@@ -101,16 +101,18 @@ sensitive authenticated mutations.
 These routes are future route contracts. KS-08-03 does not expose production
 HTTP.
 
-| Method | Path                         | Auth | CSRF | Cache                   |
-| ------ | ---------------------------- | ---- | ---- | ----------------------- |
-| GET    | `/v1/customer/account`       | Yes  | No   | `private, no-store`     |
-| GET    | `/v1/customer/orders`        | Yes  | No   | `private, no-store`     |
-| GET    | `/v1/customer/orders/{id}`   | Yes  | No   | `private, no-store`     |
-| POST   | `/v1/customer/register`      | No   | No   | `no-store`              |
-| POST   | `/v1/customer/verify-email`  | No   | No   | `no-store`, no-referrer |
-| POST   | `/v1/customer/link-identity` | Yes  | Yes  | `no-store`              |
-| POST   | `/v1/customer/key-access`    | Yes  | Yes  | `no-store`, no-referrer |
-| POST   | `/v1/customer/orders/claim`  | Yes  | Yes  | `no-store`, no-referrer |
+| Method | Path                                               | Auth | CSRF | Cache                   |
+| ------ | -------------------------------------------------- | ---- | ---- | ----------------------- |
+| GET    | `/v1/customer/account`                             | Yes  | No   | `private, no-store`     |
+| GET    | `/v1/customer/orders`                              | Yes  | No   | `private, no-store`     |
+| GET    | `/v1/customer/orders/{id}`                         | Yes  | No   | `private, no-store`     |
+| GET    | `/v1/customer/orders/{id}/invoice`                 | Yes  | No   | `private, no-store`     |
+| GET    | `/v1/customer/orders/{id}/activation-instructions` | Yes  | No   | `private, no-store`     |
+| POST   | `/v1/customer/register`                            | No   | No   | `no-store`              |
+| POST   | `/v1/customer/verify-email`                        | No   | No   | `no-store`, no-referrer |
+| POST   | `/v1/customer/link-identity`                       | Yes  | Yes  | `no-store`              |
+| POST   | `/v1/customer/key-access`                          | Yes  | Yes  | `no-store`, no-referrer |
+| POST   | `/v1/customer/orders/claim`                        | Yes  | Yes  | `no-store`, no-referrer |
 
 ## Account Summary
 
@@ -159,6 +161,50 @@ keys and decrypt endpoints are forbidden.
 Order detail never reveals a key automatically. A future UI may display
 `keyAccessAvailable=true` and let the customer explicitly start the KS-07-08
 authenticated delivery flow.
+
+## Invoice Metadata
+
+`GET /v1/customer/orders/{id}/invoice`
+
+The path ID is the only accepted lookup context. Body fields, query parameters,
+request-supplied invoice owner IDs, invoice references, storage IDs and download
+URLs are rejected. The handler resolves the current session and delegates to
+`CustomerInvoiceAccessService`.
+
+Successful responses contain:
+
+- `orderId`;
+- `invoice.status`;
+- `invoice.downloadAvailable`;
+- optional customer-safe `invoice.invoiceReference`;
+- optional `invoice.issuedAt`.
+
+The route does not create invoices, render PDFs, expose storage internals,
+calculate tax or reveal Product Keys.
+
+## Activation Instructions
+
+`GET /v1/customer/orders/{id}/activation-instructions`
+
+The path ID is the only accepted lookup context. Body fields, query parameters,
+platform overrides and instruction-code overrides are rejected. The handler
+resolves the current session and delegates to
+`CustomerActivationInstructionsService`.
+
+Successful responses contain:
+
+- `orderId`;
+- `activationInstructions.status`;
+- `activationInstructions.platform`;
+- `activationInstructions.instructionCode`;
+- `activationInstructions.version`;
+- `activationInstructions.title`;
+- safe ordered instruction steps;
+- optional trusted HTTPS `helpUrl`.
+
+Instructions are returned only from curated structured metadata. Product title
+text, supplier free text, WooCommerce metadata and customer request fields do
+not create authoritative instructions.
 
 ## Key Access
 

@@ -186,6 +186,13 @@ projected only from structured metadata:
 Product title text alone is never treated as authoritative instructions.
 Unknown or title-only metadata uses generic safe `NOT_AVAILABLE` behavior.
 
+KS-08-06 adds explicit, account-owned read services for invoice metadata and
+curated activation instructions. These services use the same
+`AuthenticatedCustomerPrincipal.customerId` plus order UUID ownership boundary
+as order detail, but they expose only their narrow metadata documents. They do
+not create invoices, render PDFs, infer activation platforms from product
+titles, decrypt keys, deliver keys or call WooCommerce.
+
 ## Guest And Legacy Orders
 
 Unowned and legacy orders remain inaccessible. KS-08-01 does not claim orders
@@ -212,7 +219,9 @@ Account reads produce safe audit events:
 - `CUSTOMER_ORDER_VIEW_DENIED`;
 - `CUSTOMER_KEY_VAULT_VIEWED`;
 - `CUSTOMER_INVOICE_METADATA_VIEWED`;
+- `CUSTOMER_INVOICE_METADATA_DENIED`;
 - `CUSTOMER_ACTIVATION_INSTRUCTIONS_VIEWED`.
+- `CUSTOMER_ACTIVATION_INSTRUCTIONS_DENIED`.
 
 Audit metadata contains safe IDs, reason codes and counts only. It must not
 contain product keys, session tokens, delivery capabilities, provider
@@ -226,6 +235,8 @@ production HTTP and frontend exposure disabled. Future HTTP mappings may use:
 - `GET /v1/customer/account`;
 - `GET /v1/customer/orders`;
 - `GET /v1/customer/orders/{orderId}`.
+- `GET /v1/customer/orders/{orderId}/invoice`;
+- `GET /v1/customer/orders/{orderId}/activation-instructions`;
 - `POST /v1/customer/orders/claim`.
 
 The transport resolves an opaque session credential through KS-07-07 before it
@@ -238,6 +249,8 @@ only and never performs automatic key reveal.
 
 See `docs/customer-account-api.md` for the route contract and
 `docs/customer-key-access.md` for the explicit key access flow.
+See `docs/customer-invoices.md` and `docs/activation-instructions.md` for the
+KS-08-06 invoice and activation-instruction foundations.
 `docs/woocommerce-customer-account-integration.md` describes the future
 WooCommerce adapter boundary.
 

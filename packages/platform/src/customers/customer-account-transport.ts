@@ -7,10 +7,15 @@ import type { CustomerAuthenticationService } from "./customer-authentication.js
 import type {
   CustomerAccountService,
   CustomerAccountFailureCode,
+  InvoiceSummary,
   CustomerOrderDetail,
   CustomerOrderHistoryPage,
   CustomerAccountSummary,
 } from "./customer-account.js";
+import type {
+  CustomerInvoiceAccessService,
+  CustomerInvoiceMetadataResult,
+} from "./customer-invoices.js";
 import type {
   CustomerRegistrationService,
   CustomerEmailVerificationPublicResult,
@@ -18,6 +23,11 @@ import type {
   CustomerOrderClaimResult,
   CustomerRegistrationResult,
 } from "./customer-registration.js";
+import type {
+  CustomerActivationInstructionDocument,
+  CustomerActivationInstructionsResult,
+  CustomerActivationInstructionsService,
+} from "./activation-instructions.js";
 import type {
   CustomerKeyAccessExecuteResult,
   CustomerKeyAccessPrepareResult,
@@ -87,6 +97,18 @@ export interface CustomerAccountTransportResponse {
         readonly status: "OK";
         readonly apiVersion: typeof customerAccountTransportApiVersion;
         readonly order: CustomerOrderDetail;
+      }
+    | {
+        readonly status: "OK";
+        readonly apiVersion: typeof customerAccountTransportApiVersion;
+        readonly orderId: string;
+        readonly invoice: InvoiceSummary;
+      }
+    | {
+        readonly status: "OK";
+        readonly apiVersion: typeof customerAccountTransportApiVersion;
+        readonly orderId: string;
+        readonly activationInstructions: CustomerActivationInstructionDocument;
       }
     | {
         readonly status: "REGISTRATION_ACCEPTED";
@@ -161,6 +183,8 @@ export class CustomerAccountTransportHandler {
       readonly sessionService: CustomerAuthenticationService;
       readonly accountService: CustomerAccountService;
       readonly registrationService: CustomerRegistrationService;
+      readonly invoiceAccessService?: CustomerInvoiceAccessService;
+      readonly activationInstructionsService?: CustomerActivationInstructionsService;
       readonly keyAccessService?: CustomerKeyAccessService;
       readonly csrfPolicy: AuthenticatedCustomerDeliveryCsrfPolicy;
       readonly rateLimiter: AuthenticatedCustomerDeliveryRateLimiter;
@@ -309,6 +333,112 @@ export class CustomerAccountTransportHandler {
       body: {
         apiVersion: customerAccountTransportApiVersion,
         order: result.order,
+        status: "OK",
+      },
+      headers: accountReadHeaders,
+      statusCode: 200,
+    };
+  }
+
+  public async getInvoiceMetadata(
+    request: CustomerAccountTransportRequest,
+  ): Promise<CustomerAccountTransportResponse> {
+    const common = this.validateReadRequest(request, "invoice-metadata");
+    if (common.status !== "VALID") {
+      return common.response;
+    }
+    const rawOrderId = request.path?.orderId;
+    if (
+      !isSafeUuid(rawOrderId) ||
+      !onlyFields(request.body, []) ||
+      !onlyStringFields(request.query, []) ||
+      !onlyStringFields(request.path, ["orderId"])
+    ) {
+      return this.error(400, "BAD_REQUEST", common.correlationId);
+    }
+    const principal = await this.resolvePrincipal(
+      common.sessionCredential,
+      common.correlationId,
+    );
+    if (!principal) {
+      return this.error(401, "AUTHENTICATION_REQUIRED", common.correlationId);
+    }
+    const service = this.options.invoiceAccessService;
+    if (!service) {
+      return this.error(503, "TEMPORARILY_UNAVAILABLE", common.correlationId);
+    }
+    const result = await this.safeInvoiceMetadataCall(
+      service.getInvoiceMetadata({
+        correlationId: common.correlationId,
+        orderId: rawOrderId,
+        principal,
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
+    if (result.status !== "OK") {
+      return this.mapCustomerReadFailure(result.code, common.correlationId);
+    }
+    return {
+      body: {
+        apiVersion: customerAccountTransportApiVersion,
+        invoice: result.invoice,
+        orderId: result.orderId,
+        status: "OK",
+      },
+      headers: accountReadHeaders,
+      statusCode: 200,
+    };
+  }
+
+  public async getActivationInstructions(
+    request: CustomerAccountTransportRequest,
+  ): Promise<CustomerAccountTransportResponse> {
+    const common = this.validateReadRequest(request, "activation-instructions");
+    if (common.status !== "VALID") {
+      return common.response;
+    }
+    const rawOrderId = request.path?.orderId;
+    if (
+      !isSafeUuid(rawOrderId) ||
+      !onlyFields(request.body, []) ||
+      !onlyStringFields(request.query, []) ||
+      !onlyStringFields(request.path, ["orderId"])
+    ) {
+      return this.error(400, "BAD_REQUEST", common.correlationId);
+    }
+    const principal = await this.resolvePrincipal(
+      common.sessionCredential,
+      common.correlationId,
+    );
+    if (!principal) {
+      return this.error(401, "AUTHENTICATION_REQUIRED", common.correlationId);
+    }
+    const service = this.options.activationInstructionsService;
+    if (!service) {
+      return this.error(503, "TEMPORARILY_UNAVAILABLE", common.correlationId);
+    }
+    const result = await this.safeActivationInstructionsCall(
+      service.getActivationInstructions({
+        correlationId: common.correlationId,
+        orderId: rawOrderId,
+        principal,
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
+    if (result.status !== "OK") {
+      return this.mapCustomerReadFailure(result.code, common.correlationId);
+    }
+    return {
+      body: {
+        activationInstructions: result.instructions,
+        apiVersion: customerAccountTransportApiVersion,
+        orderId: result.orderId,
         status: "OK",
       },
       headers: accountReadHeaders,
@@ -995,6 +1125,54 @@ export class CustomerAccountTransportHandler {
     }
   }
 
+  private async safeInvoiceMetadataCall(
+    operation: Promise<CustomerInvoiceMetadataResult>,
+    correlationIdValue: CorrelationId,
+  ): Promise<
+    | CustomerInvoiceMetadataResult
+    | {
+        readonly status: "TRANSPORT_FAILURE";
+        readonly response: CustomerAccountTransportResponse;
+      }
+  > {
+    try {
+      return await operation;
+    } catch {
+      return {
+        response: this.error(
+          503,
+          "TEMPORARILY_UNAVAILABLE",
+          correlationIdValue,
+        ),
+        status: "TRANSPORT_FAILURE",
+      };
+    }
+  }
+
+  private async safeActivationInstructionsCall(
+    operation: Promise<CustomerActivationInstructionsResult>,
+    correlationIdValue: CorrelationId,
+  ): Promise<
+    | CustomerActivationInstructionsResult
+    | {
+        readonly status: "TRANSPORT_FAILURE";
+        readonly response: CustomerAccountTransportResponse;
+      }
+  > {
+    try {
+      return await operation;
+    } catch {
+      return {
+        response: this.error(
+          503,
+          "TEMPORARILY_UNAVAILABLE",
+          correlationIdValue,
+        ),
+        status: "TRANSPORT_FAILURE",
+      };
+    }
+  }
+
   private originAllowed(origin: string | null | undefined): boolean {
     if (!origin) {
       return false;
@@ -1122,6 +1300,15 @@ export class CustomerAccountTransportHandler {
       : this.error(409, "KEY_ACCESS_NOT_AVAILABLE", correlationIdValue);
   }
 
+  private mapCustomerReadFailure(
+    code: "AUTHENTICATION_REQUIRED" | "RESOURCE_NOT_AVAILABLE",
+    correlationIdValue: CorrelationId,
+  ): CustomerAccountTransportResponse {
+    return code === "AUTHENTICATION_REQUIRED"
+      ? this.error(401, "AUTHENTICATION_REQUIRED", correlationIdValue)
+      : this.error(404, "RESOURCE_NOT_AVAILABLE", correlationIdValue);
+  }
+
   private error(
     statusCode: CustomerAccountTransportResponse["statusCode"],
     code: CustomerAccountTransportFailureCode,
@@ -1235,6 +1422,17 @@ const onlyFields = (
   return Object.keys(body).every((key) => allowedSet.has(key));
 };
 
+const onlyStringFields = (
+  input: Readonly<Record<string, string | undefined>> | undefined,
+  allowed: readonly string[],
+): boolean => {
+  if (!input || Object.getPrototypeOf(input) !== Object.prototype) {
+    return allowed.length === 0;
+  }
+  const allowedSet = new Set(allowed);
+  return Object.keys(input).every((key) => allowedSet.has(key));
+};
+
 const hasDangerousAuthorityFields = (
   body: Readonly<Record<string, unknown>> | undefined,
   allowedAuthorityFields: readonly string[] = [],
@@ -1252,6 +1450,15 @@ const hasDangerousAuthorityFields = (
     "externalSupplierOrderId",
     "fulfillmentId",
     "fulfillmentReference",
+    "invoiceOwnerId",
+    "invoiceReference",
+    "invoiceStorageId",
+    "invoiceDownloadUrl",
+    "platform",
+    "platformOverride",
+    "activationInstructions",
+    "activationInstructionsOverride",
+    "instructionCode",
     "verificationState",
     "emailVerificationState",
     "authenticatedPrincipal",

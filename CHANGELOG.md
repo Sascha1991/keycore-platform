@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Hardened KS-08-06 before merge by sanitizing customer-visible invoice
+  references/timestamps, enforcing invoice state/download consistency, failing
+  fast on duplicate activation registry keys, defensively copying registry
+  entries, tightening trusted help URL policy, adding transport error redaction
+  coverage and documenting Phase 08 backend/application foundation closure.
+- Added KS-08-06 customer invoice and activation-instruction foundation with
+  explicit owned-order read services, transport-neutral invoice and activation
+  endpoints, curated structured activation registry validation, authority-field
+  rejection tests and documentation while leaving production invoice generation,
+  PDF rendering, tax/legal accounting, WooCommerce/frontend exposure and real
+  key reveal disabled.
 - Hardened KS-08-05 guest order claim before merge by preventing claim-time
   checkout email snapshot backfill, making snapshot updates fully immutable,
   replacing permissive test issuance authority with persisted order/snapshot
