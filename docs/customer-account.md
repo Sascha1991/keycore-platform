@@ -208,19 +208,30 @@ credentials, ciphertext or decrypted material.
 
 ## Transport And Cache Policy
 
-KS-08-01 remains transport-neutral. Future HTTP mappings may use:
+KS-08-03 adds a transport-neutral account API boundary while still leaving
+production HTTP and frontend exposure disabled. Future HTTP mappings may use:
 
-- `GET /account`;
-- `GET /account/orders`;
-- `GET /account/orders/{orderId}`.
+- `GET /v1/customer/account`;
+- `GET /v1/customer/orders`;
+- `GET /v1/customer/orders/{orderId}`.
 
-Future HTTP responses for account resources must use private non-cacheable
-headers, including `Cache-Control: private, no-store`.
+The transport resolves an opaque session credential through KS-07-07 before it
+calls account services. Request-supplied `customerId`, supplier order IDs and
+delivery capability fields are rejected rather than treated as authority.
+
+Account responses use private non-cacheable headers, including
+`Cache-Control: private, no-store`. Order detail returns safe key-vault metadata
+only and never performs automatic key reveal.
+
+See `docs/customer-account-api.md` for the route contract and
+`docs/woocommerce-customer-account-integration.md` for the future WooCommerce
+adapter boundary.
 
 ## Production Readiness
 
 - REAL LOGIN PROVIDER CONNECTED: NO
 - PRODUCTION CUSTOMER ACCOUNT HTTP EXPOSED: NO
+- WOOCOMMERCE CONNECTED: NO
 - PRODUCTION FRONTEND CONNECTED: NO
 - REAL KEY REVEAL ENABLED: NO
 - PRODUCTION INVOICE GENERATION READY: NO

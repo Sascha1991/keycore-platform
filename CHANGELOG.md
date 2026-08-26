@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Hardened KS-08-03 customer account transport boundaries with deterministic
+  fail-closed credential-source extraction, broader authority-field rejection,
+  redacted internal-failure mapping, origin/content/body/correlation regression
+  tests, token-leakage tests and pagination clamp preservation.
+- Added KS-08-03 customer account transport and shop integration foundation
+  with transport-neutral v1 account/registration handlers, session-backed
+  principal resolution, strict request DTO validation, Origin/CSRF/rate-limit
+  policy reuse, safe cache/response headers, WooCommerce trust-boundary
+  documentation and synthetic transport tests while leaving production HTTP,
+  WordPress/WooCommerce installation, frontend, real key reveal, Kinguin and
+  live Stripe mutation out of scope.
 - Added KS-08-02 customer registration and verified account-linking foundation
   with enumeration-safe registration, hash-only one-time email verification
   challenges, single-active challenge reissue, trusted verification authority

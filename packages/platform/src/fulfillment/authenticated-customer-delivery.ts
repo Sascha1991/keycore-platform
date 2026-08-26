@@ -142,7 +142,9 @@ export class AuthenticatedCustomerDeliveryTransportHandler {
     this.environment = options.environment ?? "LOCAL";
     this.allowedOrigins = new Set(
       options.config.allowedOrigins.map((origin) =>
-        requiredOrigin(normalizeOrigin(origin, this.environment)),
+        requiredOrigin(
+          normalizeCustomerTransportOrigin(origin, this.environment),
+        ),
       ),
     );
     if (
@@ -352,7 +354,10 @@ export class AuthenticatedCustomerDeliveryTransportHandler {
     if (!origin) {
       return false;
     }
-    const normalized = normalizeOrigin(origin, this.environment);
+    const normalized = normalizeCustomerTransportOrigin(
+      origin,
+      this.environment,
+    );
     return Boolean(normalized && this.allowedOrigins.has(normalized));
   }
 
@@ -608,7 +613,9 @@ export const parseAllowedOrigins = (
   }
   const origins = raw
     .split(",")
-    .map((origin) => normalizeOrigin(origin.trim(), environment))
+    .map((origin) =>
+      normalizeCustomerTransportOrigin(origin.trim(), environment),
+    )
     .filter((origin): origin is string => Boolean(origin));
   if (origins.length === 0 || origins.some((origin) => origin === "*")) {
     throw new Error("KEYCORE_CUSTOMER_ALLOWED_ORIGINS_INVALID");
@@ -641,7 +648,7 @@ const safeCorrelationId = (raw: string | null | undefined): CorrelationId => {
   return correlationId(`cust-delivery-${randomUUID()}`);
 };
 
-const normalizeOrigin = (
+export const normalizeCustomerTransportOrigin = (
   origin: string,
   environment: AuditEvent["environment"],
 ): string | null => {

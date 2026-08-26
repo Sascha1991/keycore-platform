@@ -107,6 +107,17 @@ credential, configured allowed origins and an HMAC double-submit CSRF token
 bound to the session credential hash. The CSRF token is not an authentication
 credential and cannot create a principal.
 
+KS-08-03 reuses that session-resolution chain for account transport:
+
+```text
+request cookie/header -> opaque session token -> KS-07-07 session resolver
+-> AuthenticatedCustomerPrincipal -> account or registration application handler
+```
+
+Request `customerId` is never accepted as a principal source. The browser cookie
+contract remains `HttpOnly; Secure; SameSite=Lax; Path=/`, with no session token
+in URLs or localStorage.
+
 ## Audit And Inspect
 
 Safe audit events include authentication failure and session create, rotate and
