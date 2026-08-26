@@ -17,6 +17,11 @@ import type {
   CustomerIdentityLinkResult,
   CustomerRegistrationResult,
 } from "./customer-registration.js";
+import type {
+  CustomerKeyAccessExecuteResult,
+  CustomerKeyAccessPrepareResult,
+  CustomerKeyAccessService,
+} from "./customer-key-access.js";
 import type { AuthenticatedCustomerPrincipal } from "./customer-order-identity.js";
 import type {
   AuthenticatedCustomerDeliveryCsrfPolicy,
@@ -34,6 +39,7 @@ export type CustomerAccountTransportFailureCode =
   | "AUTHENTICATION_REQUIRED"
   | "ACCESS_DENIED"
   | "RESOURCE_NOT_AVAILABLE"
+  | "KEY_ACCESS_NOT_AVAILABLE"
   | "CONFLICT"
   | "RATE_LIMITED"
   | "TEMPORARILY_UNAVAILABLE";
@@ -61,7 +67,8 @@ export interface CustomerAccountCredentialSources {
 }
 
 export interface CustomerAccountTransportResponse {
-  readonly statusCode: 200 | 202 | 400 | 401 | 403 | 404 | 409 | 429 | 503;
+  readonly statusCode:
+    200 | 201 | 202 | 400 | 401 | 403 | 404 | 409 | 429 | 503;
   readonly headers: Readonly<Record<string, string>>;
   readonly body:
     | {
@@ -93,6 +100,22 @@ export interface CustomerAccountTransportResponse {
           "BOUND" | "ALREADY_BOUND"
         >;
         readonly apiVersion: typeof customerAccountTransportApiVersion;
+      }
+    | {
+        readonly status: "KEY_ACCESS_AUTHORIZED";
+        readonly apiVersion: typeof customerAccountTransportApiVersion;
+        readonly deliveryApprovalId: string;
+        readonly deliveryCapability: string;
+        readonly expiresAt: string;
+      }
+    | {
+        readonly status:
+          | "KEY_DELIVERED"
+          | "KEY_ALREADY_DELIVERED"
+          | "KEY_DELIVERY_IN_FLIGHT"
+          | "KEY_MANUAL_REVIEW_REQUIRED";
+        readonly apiVersion: typeof customerAccountTransportApiVersion;
+        readonly fulfillmentId?: string;
       }
     | {
         readonly status: "ERROR";
@@ -131,6 +154,7 @@ export class CustomerAccountTransportHandler {
       readonly sessionService: CustomerAuthenticationService;
       readonly accountService: CustomerAccountService;
       readonly registrationService: CustomerRegistrationService;
+      readonly keyAccessService?: CustomerKeyAccessService;
       readonly csrfPolicy: AuthenticatedCustomerDeliveryCsrfPolicy;
       readonly rateLimiter: AuthenticatedCustomerDeliveryRateLimiter;
       readonly config: CustomerAccountTransportConfig;
@@ -425,6 +449,159 @@ export class CustomerAccountTransportHandler {
     return this.error(403, "ACCESS_DENIED", common.correlationId);
   }
 
+  public async prepareKeyAccess(
+    request: CustomerAccountTransportRequest,
+  ): Promise<CustomerAccountTransportResponse> {
+    const common = await this.validateAuthenticatedMutation(
+      request,
+      "prepare-key-access",
+      ["fulfillmentReference"],
+    );
+    if (common.status !== "VALID") {
+      return common.response;
+    }
+    if (
+      !onlyFields(request.body, ["orderId", "fulfillmentReference"]) ||
+      typeof request.body?.orderId !== "string" ||
+      typeof request.body.fulfillmentReference !== "string"
+    ) {
+      return this.error(400, "BAD_REQUEST", common.correlationId);
+    }
+    const principal = await this.resolvePrincipal(
+      common.sessionCredential,
+      common.correlationId,
+    );
+    if (!principal) {
+      return this.error(401, "AUTHENTICATION_REQUIRED", common.correlationId);
+    }
+    const limited = await this.rateLimiterAllows(
+      "prepare-key-access",
+      `${principal.customerId}:${request.body.orderId}:${request.body.fulfillmentReference}`,
+      request,
+    );
+    if (limited !== "ALLOWED") {
+      return this.limiterError(limited, common.correlationId);
+    }
+    const service = this.options.keyAccessService;
+    if (!service) {
+      return this.error(503, "TEMPORARILY_UNAVAILABLE", common.correlationId);
+    }
+    const result = await this.safeKeyAccessPrepareCall(
+      service.prepareKeyAccess({
+        correlationId: common.correlationId,
+        fulfillmentReference: request.body.fulfillmentReference,
+        orderId: request.body.orderId,
+        principal,
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
+    if (result.status !== "AUTHORIZED") {
+      return this.mapKeyAccessFailure(result.code, common.correlationId);
+    }
+    return {
+      body: {
+        apiVersion: customerAccountTransportApiVersion,
+        deliveryApprovalId: result.deliveryApprovalId,
+        deliveryCapability: result.deliveryCapability,
+        expiresAt: result.expiresAt,
+        status: "KEY_ACCESS_AUTHORIZED",
+      },
+      headers: mutationHeaders,
+      statusCode: 201,
+    };
+  }
+
+  public async executeKeyAccess(
+    request: CustomerAccountTransportRequest,
+  ): Promise<CustomerAccountTransportResponse> {
+    const common = await this.validateAuthenticatedMutation(
+      request,
+      "execute-key-access",
+      ["deliveryCapability", "fulfillmentReference"],
+    );
+    if (common.status !== "VALID") {
+      return common.response;
+    }
+    if (
+      !onlyFields(request.body, [
+        "orderId",
+        "fulfillmentReference",
+        "deliveryApprovalId",
+        "deliveryCapability",
+      ]) ||
+      typeof request.body?.orderId !== "string" ||
+      typeof request.body.fulfillmentReference !== "string" ||
+      typeof request.body.deliveryApprovalId !== "string" ||
+      typeof request.body.deliveryCapability !== "string" ||
+      !isSafeOpaqueId(request.body.deliveryApprovalId) ||
+      !isSafeSecretInput(request.body.deliveryCapability)
+    ) {
+      return this.error(400, "BAD_REQUEST", common.correlationId);
+    }
+    const principal = await this.resolvePrincipal(
+      common.sessionCredential,
+      common.correlationId,
+    );
+    if (!principal) {
+      return this.error(401, "AUTHENTICATION_REQUIRED", common.correlationId);
+    }
+    const limited = await this.rateLimiterAllows(
+      "execute-key-access",
+      `${principal.customerId}:${request.body.orderId}:${request.body.fulfillmentReference}`,
+      request,
+    );
+    if (limited !== "ALLOWED") {
+      return this.limiterError(limited, common.correlationId);
+    }
+    const service = this.options.keyAccessService;
+    if (!service) {
+      return this.error(503, "TEMPORARILY_UNAVAILABLE", common.correlationId);
+    }
+    const result = await this.safeKeyAccessExecuteCall(
+      service.executeKeyAccess({
+        correlationId: common.correlationId,
+        deliveryApprovalId: request.body.deliveryApprovalId,
+        deliveryCapability: request.body.deliveryCapability,
+        fulfillmentReference: request.body.fulfillmentReference,
+        orderId: request.body.orderId,
+        principal,
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
+    if (result.status === "DENIED") {
+      return this.mapKeyAccessFailure(result.code, common.correlationId);
+    }
+    const statusByResult = {
+      ALREADY_DELIVERED: "KEY_ALREADY_DELIVERED",
+      DELIVERED: "KEY_DELIVERED",
+      IN_FLIGHT: "KEY_DELIVERY_IN_FLIGHT",
+      MANUAL_REVIEW_REQUIRED: "KEY_MANUAL_REVIEW_REQUIRED",
+    } as const satisfies Record<
+      Exclude<CustomerKeyAccessExecuteResult["status"], "DENIED">,
+      | "KEY_ALREADY_DELIVERED"
+      | "KEY_DELIVERED"
+      | "KEY_DELIVERY_IN_FLIGHT"
+      | "KEY_MANUAL_REVIEW_REQUIRED"
+    >;
+    return {
+      body: {
+        apiVersion: customerAccountTransportApiVersion,
+        ...(result.fulfillmentId
+          ? { fulfillmentId: result.fulfillmentId }
+          : {}),
+        status: statusByResult[result.status],
+      },
+      headers: mutationHeaders,
+      statusCode: result.status === "DELIVERED" ? 200 : 409,
+    };
+  }
+
   private validateReadRequest(
     request: CustomerAccountTransportRequest,
     route: string,
@@ -472,6 +649,7 @@ export class CustomerAccountTransportHandler {
   private validatePublicMutation(
     request: CustomerAccountTransportRequest,
     route: string,
+    allowedAuthorityFields: readonly string[] = [],
   ):
     | { readonly status: "VALID"; readonly correlationId: CorrelationId }
     | {
@@ -483,7 +661,7 @@ export class CustomerAccountTransportHandler {
       request.method !== "POST" ||
       !isJsonContentType(request.contentType) ||
       !this.validBodySize(request.bodyByteLength) ||
-      hasDangerousAuthorityFields(request.body)
+      hasDangerousAuthorityFields(request.body, allowedAuthorityFields)
     ) {
       return {
         response: this.error(400, "BAD_REQUEST", correlation),
@@ -502,6 +680,7 @@ export class CustomerAccountTransportHandler {
   private validateAuthenticatedMutation(
     request: CustomerAccountTransportRequest,
     route: string,
+    allowedAuthorityFields: readonly string[] = [],
   ):
     | {
         readonly status: "VALID";
@@ -512,7 +691,11 @@ export class CustomerAccountTransportHandler {
         readonly status: "INVALID";
         readonly response: CustomerAccountTransportResponse;
       } {
-    const mutation = this.validatePublicMutation(request, route);
+    const mutation = this.validatePublicMutation(
+      request,
+      route,
+      allowedAuthorityFields,
+    );
     if (mutation.status !== "VALID") {
       return mutation;
     }
@@ -666,6 +849,54 @@ export class CustomerAccountTransportHandler {
     }
   }
 
+  private async safeKeyAccessPrepareCall(
+    operation: Promise<CustomerKeyAccessPrepareResult>,
+    correlationIdValue: CorrelationId,
+  ): Promise<
+    | CustomerKeyAccessPrepareResult
+    | {
+        readonly status: "TRANSPORT_FAILURE";
+        readonly response: CustomerAccountTransportResponse;
+      }
+  > {
+    try {
+      return await operation;
+    } catch {
+      return {
+        response: this.error(
+          503,
+          "TEMPORARILY_UNAVAILABLE",
+          correlationIdValue,
+        ),
+        status: "TRANSPORT_FAILURE",
+      };
+    }
+  }
+
+  private async safeKeyAccessExecuteCall(
+    operation: Promise<CustomerKeyAccessExecuteResult>,
+    correlationIdValue: CorrelationId,
+  ): Promise<
+    | CustomerKeyAccessExecuteResult
+    | {
+        readonly status: "TRANSPORT_FAILURE";
+        readonly response: CustomerAccountTransportResponse;
+      }
+  > {
+    try {
+      return await operation;
+    } catch {
+      return {
+        response: this.error(
+          503,
+          "TEMPORARILY_UNAVAILABLE",
+          correlationIdValue,
+        ),
+        status: "TRANSPORT_FAILURE",
+      };
+    }
+  }
+
   private originAllowed(origin: string | null | undefined): boolean {
     if (!origin) {
       return false;
@@ -743,6 +974,29 @@ export class CustomerAccountTransportHandler {
       return this.error(503, "TEMPORARILY_UNAVAILABLE", correlationIdValue);
     }
     return this.error(400, "BAD_REQUEST", correlationIdValue);
+  }
+
+  private mapKeyAccessFailure(
+    code:
+      | "AUTHENTICATION_REQUIRED"
+      | "RESOURCE_NOT_AVAILABLE"
+      | "KEY_ACCESS_NOT_AVAILABLE"
+      | "CONFLICT"
+      | "TEMPORARILY_UNAVAILABLE",
+    correlationIdValue: CorrelationId,
+  ): CustomerAccountTransportResponse {
+    if (code === "AUTHENTICATION_REQUIRED") {
+      return this.error(401, "AUTHENTICATION_REQUIRED", correlationIdValue);
+    }
+    if (code === "RESOURCE_NOT_AVAILABLE") {
+      return this.error(404, "RESOURCE_NOT_AVAILABLE", correlationIdValue);
+    }
+    if (code === "TEMPORARILY_UNAVAILABLE") {
+      return this.error(503, "TEMPORARILY_UNAVAILABLE", correlationIdValue);
+    }
+    return code === "CONFLICT"
+      ? this.error(409, "CONFLICT", correlationIdValue)
+      : this.error(409, "KEY_ACCESS_NOT_AVAILABLE", correlationIdValue);
   }
 
   private error(
@@ -860,10 +1114,12 @@ const onlyFields = (
 
 const hasDangerousAuthorityFields = (
   body: Readonly<Record<string, unknown>> | undefined,
+  allowedAuthorityFields: readonly string[] = [],
 ): boolean => {
   if (!body || Object.getPrototypeOf(body) !== Object.prototype) {
     return false;
   }
+  const allowed = new Set(allowedAuthorityFields);
   return [
     "customerId",
     "providerSubject",
@@ -879,7 +1135,11 @@ const hasDangerousAuthorityFields = (
     "sessionPrincipal",
     "deliveryCapability",
     "rawSessionToken",
-  ].some((field) => field in body);
+    "rawKey",
+    "encryptedSecret",
+    "ciphertext",
+    "encryptionKey",
+  ].some((field) => field in body && !allowed.has(field));
 };
 
 const safeCorrelationId = (
@@ -915,6 +1175,12 @@ const isSafeCursor = (value: string): boolean =>
 
 const isSafeSessionCredential = (value: string): boolean =>
   value.length >= 43 && value.length <= 128 && /^[A-Za-z0-9_-]+$/u.test(value);
+
+const isSafeOpaqueId = (value: string): boolean =>
+  /^[A-Za-z0-9_-]{1,128}$/u.test(value);
+
+const isSafeSecretInput = (value: string): boolean =>
+  /^[A-Za-z0-9_-]{43,128}$/u.test(value);
 
 const parseBearerCredential = (value: string): string =>
   value.startsWith("Bearer ") ? value.slice("Bearer ".length) : value;

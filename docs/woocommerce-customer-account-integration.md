@@ -76,11 +76,16 @@ Actual reveal remains a separate explicit customer action:
 ```text
 account order detail
 -> explicit customer reveal action
+-> KeyCore account key-access eligibility check
 -> secure delivery capability
 -> KS-07-08 authenticated delivery transport
 ```
 
 Order detail must not decrypt or reveal automatically.
+
+WooCommerce must not store product keys, delivery capabilities, encrypted key
+material or supplier key payloads in order/customer metadata. It may only render
+the result of a KeyCore-authorized key access action.
 
 ## Registration Flow
 

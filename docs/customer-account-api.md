@@ -2,6 +2,9 @@
 
 KS-08-03 defines a transport-neutral customer account API/application boundary.
 It is not a production HTTP service and does not expose a live frontend.
+Future public/customer-facing storefront copy should use the KeyRaNo brand line
+"Rapid Access. No Waiting." Internal service, package and repository identifiers
+remain KeyCore.
 
 ## Architecture
 
@@ -105,6 +108,7 @@ HTTP.
 | POST   | `/v1/customer/register`      | No   | No   | `no-store`              |
 | POST   | `/v1/customer/verify-email`  | No   | No   | `no-store`, no-referrer |
 | POST   | `/v1/customer/link-identity` | Yes  | Yes  | `no-store`              |
+| POST   | `/v1/customer/key-access`    | Yes  | Yes  | `no-store`, no-referrer |
 
 ## Account Summary
 
@@ -153,6 +157,22 @@ keys and decrypt endpoints are forbidden.
 Order detail never reveals a key automatically. A future UI may display
 `keyAccessAvailable=true` and let the customer explicitly start the KS-07-08
 authenticated delivery flow.
+
+## Key Access
+
+`POST /v1/customer/key-access`
+
+KS-08-04 models explicit transport-neutral prepare and execute actions for
+future key access. The request must include the KeyCore order UUID and
+fulfillment reference. Execute also requires the one-time delivery approval and
+capability from prepare. The transport rejects authority fields such as
+`customerId`, supplier IDs, external supplier order IDs, raw key material,
+ciphertext and encryption fields.
+
+The handler re-resolves the current session, validates Origin and CSRF, applies
+rate limiting and delegates to `CustomerKeyAccessService`, which then delegates
+to the KS-07 secure customer delivery service. Account GET reads never prepare,
+decrypt or deliver.
 
 ## Registration
 

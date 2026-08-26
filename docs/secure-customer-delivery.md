@@ -32,6 +32,11 @@ engine. It keeps the KS-07-05 one-time capability requirement, resolves the
 customer from a KS-07-07 session and calls this service only after Origin, CSRF,
 rate-limit and object-authorization checks pass.
 
+KS-08-04 adds the customer account integration above this engine. Account
+metadata may report key access availability, but explicit key access still
+delegates to this delivery service for capability creation, claim,
+authorization recheck, decrypt, delivery and acknowledgement.
+
 ## Authorization
 
 Delivery authorization is delegated to `CustomerOrderAuthorizationPort`.

@@ -5,23 +5,33 @@ import { InMemoryCustomerAccountReadRepository } from "../../../../infra/custome
 import { InMemoryCustomerAuthSessionRepository } from "../../../../infra/customers/in-memory-customer-authentication-repository.js";
 import { InMemoryCustomerOrderIdentityRepository } from "../../../../infra/customers/in-memory-customer-order-identity-repository.js";
 import { InMemoryCustomerRegistrationChallengeRepository } from "../../../../infra/customers/in-memory-customer-registration-repository.js";
+import { InMemoryCustomerKeyDeliveryRepository } from "../../../../infra/fulfillment/in-memory-customer-key-delivery-repository.js";
+import { InMemoryFulfillmentRepository } from "../../../../infra/fulfillment/in-memory-fulfillment-repository.js";
 import {
   CustomerAccountService,
   CustomerAccountTransportHandler,
   type CustomerAccountTransportRequest,
   CustomerAuthenticationService,
+  CustomerKeyAccessService,
+  CustomerKeyDeliveryService,
   CustomerOrderIdentityService,
   CustomerRegistrationService,
   FakeCustomerEmailVerificationDeliveryPort,
   HmacDoubleSubmitCsrfPolicy,
   InMemoryAuthenticatedDeliveryRateLimiter,
+  PersistedCustomerOrderAuthorizationPort,
+  StaticAuthenticatedCustomerPrincipalProvider,
   correlationId,
   currency,
   customerAccountTransportCookiePolicy,
   customerId,
+  encryptFulfillmentSecret,
   extractCustomerAccountSessionCredential,
+  fulfillmentEncryptionContext,
   money,
   orderId,
+  productId,
+  supplierId,
   woocommerceCustomerAccountTrustBoundary,
   type AuditEvent,
   type AuditEventPort,
@@ -29,10 +39,15 @@ import {
   type CorrelationId,
   type CustomerAccountOrderProjection,
   type CustomerAuthenticationAuthorityPort,
+  type CustomerDeliveryAuthorization,
   type CustomerId,
   type CustomerIdentityBindingAuthorityPort,
   type CustomerIdentityProvider,
+  type CustomerKeyDeliveryPort,
+  type CustomerKeyDeliveryPortResult,
   type EmailVerificationAuthorityPort,
+  type FulfillmentOperation,
+  type KeyManagementProvider,
   type OrderId,
   type VerifiedCustomerAuthenticationAssertion,
 } from "../contracts.js";
@@ -46,6 +61,8 @@ const sessionMarker =
   "KEYCORE_KS0803_SESSION_TOKEN_DO_NOT_LEAK_918273_abcdefghi";
 const internalFailureMarker =
   "SQL constraint customer_sessions_token_hash_key C:\\secret\\stack TRACE_MARKER provider-error";
+const keyAccessMarker =
+  "KEYCORE_KS0804_SYNTHETIC_PRODUCT_KEY_DO_NOT_USE_918273";
 const realFulfillmentId = "fd61be5e-44ea-4914-98ae-c4404dc31779";
 
 describe("CustomerAccountTransportHandler", () => {
@@ -636,6 +653,98 @@ describe("CustomerAccountTransportHandler", () => {
     ).resolves.toMatchObject({ statusCode: 400 });
   });
 
+  it("prepares and executes explicit key access through the secure delivery boundary", async () => {
+    const harness = await transportHarness();
+    const body = {
+      fulfillmentReference: harness.ownedFulfillmentId,
+      orderId: String(harness.ownedOrder),
+    };
+
+    const prepared = await harness.handler.prepareKeyAccess(
+      harness.request("POST", { body, route: "prepare-key-access" }),
+    );
+    expect(prepared).toMatchObject({
+      body: { status: "KEY_ACCESS_AUTHORIZED" },
+      statusCode: 201,
+    });
+    expect(harness.keyAccessKeyProvider.unwraps).toBe(0);
+    expect(harness.keyAccessDeliveryPort.calls).toHaveLength(0);
+
+    const delivered = await harness.handler.executeKeyAccess(
+      harness.request("POST", {
+        body: {
+          ...body,
+          deliveryApprovalId:
+            prepared.body.status === "KEY_ACCESS_AUTHORIZED"
+              ? prepared.body.deliveryApprovalId
+              : "",
+          deliveryCapability:
+            prepared.body.status === "KEY_ACCESS_AUTHORIZED"
+              ? prepared.body.deliveryCapability
+              : "",
+        },
+        route: "execute-key-access",
+      }),
+    );
+
+    expect(delivered).toMatchObject({
+      body: { status: "KEY_DELIVERED" },
+      statusCode: 200,
+    });
+    expect(harness.keyAccessDeliveryPort.calls).toHaveLength(1);
+    expect(harness.keyAccessDeliveryPort.lastPlaintextSeen).toBe(
+      keyAccessMarker,
+    );
+    expect(harness.keyAccessKeyProvider.unwraps).toBe(1);
+    expect(safeJson([prepared, delivered, harness.audit.events])).not.toContain(
+      keyAccessMarker,
+    );
+  });
+
+  it("denies key access origin, csrf, limiter and authority-field failures before decrypt", async () => {
+    for (const request of [
+      { origin: "https://evil.example.test" },
+      { csrfHeader: "bad" },
+      { body: { customerId: "forged", orderId: "forged" } },
+    ]) {
+      const harness = await transportHarness();
+      const requestInput = {
+        body: {
+          fulfillmentReference: harness.ownedFulfillmentId,
+          orderId: String(harness.ownedOrder),
+          ...(request.body ?? {}),
+        },
+        route: "deny-key-access",
+        ...("csrfHeader" in request ? { csrfHeader: request.csrfHeader } : {}),
+        ...("origin" in request ? { origin: request.origin } : {}),
+      };
+      await expect(
+        harness.handler.prepareKeyAccess(harness.request("POST", requestInput)),
+      ).resolves.toMatchObject({
+        statusCode: request.origin || request.csrfHeader ? 403 : 400,
+      });
+      expect(harness.keyAccessKeyProvider.unwraps).toBe(0);
+      expect(harness.keyAccessDeliveryPort.calls).toHaveLength(0);
+    }
+
+    const limited = await transportHarness({
+      rateLimiter: new AlwaysLimitedRateLimiter(),
+    });
+    await expect(
+      limited.handler.prepareKeyAccess(
+        limited.request("POST", {
+          body: {
+            fulfillmentReference: limited.ownedFulfillmentId,
+            orderId: String(limited.ownedOrder),
+          },
+          route: "rate-limited-key-access",
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 429 });
+    expect(limited.keyAccessKeyProvider.unwraps).toBe(0);
+    expect(limited.keyAccessDeliveryPort.calls).toHaveLength(0);
+  });
+
   it("defines secure browser cookie and explicit production origin policy", () => {
     expect(customerAccountTransportCookiePolicy).toContain("HttpOnly");
     expect(customerAccountTransportCookiePolicy).toContain("Secure");
@@ -688,14 +797,12 @@ const transportHarness = async (
       options.verifiedCustomer === false ? "UNVERIFIED" : "VERIFIED",
   });
   const ownedOrder = orderId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1");
+  const ownedFulfillmentId = "ffffffff-ffff-4fff-8fff-fffffffffff1";
   const wrongOwnerOrder = orderId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
   const legacyRealOrder = orderId("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
   accountRepository.addOrder(
     orderFixture(created.customerId, ownedOrder, {
-      fulfillment: fulfillmentFixture(
-        "ffffffff-ffff-4fff-8fff-fffffffffff1",
-        ownedOrder,
-      ),
+      fulfillment: fulfillmentFixture(ownedFulfillmentId, ownedOrder),
     }),
   );
   accountRepository.addOrder(
@@ -743,6 +850,84 @@ const transportHarness = async (
   }
   const csrf = new HmacDoubleSubmitCsrfPolicy(csrfSecret);
   const csrfToken = csrf.createToken(sessionToken);
+  const fulfillmentRepository = new InMemoryFulfillmentRepository();
+  const deliveryRepository = new InMemoryCustomerKeyDeliveryRepository(
+    fulfillmentRepository,
+  );
+  const keyAccessKeyProvider = new CountingKeyProvider(
+    "ks0804-transport-mk-v1",
+  );
+  const keyAccessFulfillment = fulfillmentOperationFixture(
+    ownedOrder,
+    ownedFulfillmentId,
+  );
+  const keyAccessMaterial = await encryptFulfillmentSecret(
+    Buffer.from(keyAccessMarker, "utf8"),
+    fulfillmentEncryptionContext(keyAccessFulfillment),
+    keyAccessKeyProvider,
+  );
+  await fulfillmentRepository.createIdempotent({
+    now,
+    operation: keyAccessFulfillment,
+  });
+  await fulfillmentRepository.markRetrieved({
+    executionToken: keyAccessFulfillment.retrievalExecutionToken ?? "",
+    fulfillmentId: keyAccessFulfillment.id,
+    material: keyAccessMaterial,
+    now,
+  });
+  const retrievedFulfillment =
+    await fulfillmentRepository.findById(ownedFulfillmentId);
+  if (!retrievedFulfillment?.encryptedSecretId) {
+    throw new Error("Expected KS-08-04 transport fulfillment fixture");
+  }
+  identityRepository.addOrder({
+    customerId: created.customerId,
+    fulfillmentStatus: "PENDING",
+    orderId: ownedOrder,
+    paymentStatus: "CAPTURED",
+    procurementStatus: "SUCCEEDED",
+    recordVersion: 1,
+    status: "FULFILLMENT_PENDING",
+    updatedAt: now,
+  });
+  identityRepository.addFulfillment({
+    deliveryState: "PENDING",
+    encryptedSecretId: retrievedFulfillment.encryptedSecretId,
+    fulfillmentId: ownedFulfillmentId,
+    orderId: ownedOrder,
+    retrievalState: "RETRIEVED",
+    status: "DELIVERY_PENDING",
+  });
+  const principalProvider = new StaticAuthenticatedCustomerPrincipalProvider({
+    authenticationContext: { assurance: "AUTHENTICATED", provider: "TEST" },
+    customerId: created.customerId,
+  });
+  const keyAccessDeliveryPort = new FakeKeyAccessDeliveryPort();
+  const keyAccessService = new CustomerKeyAccessService({
+    accountRepository,
+    audit,
+    deliveryService: new CustomerKeyDeliveryService({
+      approvalTtlMs: 300_000,
+      audit,
+      deliveryLeaseStaleAfterMs: 60_000,
+      deliveryPort: keyAccessDeliveryPort,
+      deliveryRepository,
+      environment: "CI",
+      fulfillmentRepository,
+      keyManagementProvider: keyAccessKeyProvider,
+      now: () => now,
+      orderAuthorization: new PersistedCustomerOrderAuthorizationPort({
+        audit,
+        environment: "CI",
+        principalProvider,
+        repository: identityRepository,
+      }),
+      protectedFulfillmentIds: [realFulfillmentId],
+    }),
+    environment: "CI",
+    now: () => now,
+  });
   const delivery = new FakeCustomerEmailVerificationDeliveryPort();
   const registrationService = new CustomerRegistrationService({
     audit,
@@ -772,6 +957,7 @@ const transportHarness = async (
       now: () => now,
       repository: accountRepository,
     }),
+    keyAccessService,
     config: {
       allowedOrigins: options.allowedOrigins ?? [allowedOrigin],
       maxBodyBytes: 4096,
@@ -798,7 +984,10 @@ const transportHarness = async (
     handler,
     identityRepository,
     legacyRealOrder,
+    keyAccessDeliveryPort,
+    keyAccessKeyProvider,
     otherCustomerId: other.customerId,
+    ownedFulfillmentId,
     ownedOrder,
     sessionCredential: sessionToken,
     sessionService,
@@ -814,6 +1003,7 @@ const transportHarness = async (
         readonly contentType?: string;
         readonly correlationIdHeader?: string;
         readonly credentialSources?: CustomerAccountTransportRequest["credentialSources"];
+        readonly csrfHeader?: string | null;
         readonly origin?: string | null;
         readonly sessionCredential?: string | null;
       } = {},
@@ -825,7 +1015,7 @@ const transportHarness = async (
         input.correlationIdHeader ??
         `corr-${input.route ?? method.toLowerCase()}`,
       csrfCookie: csrfToken,
-      csrfHeader: csrfToken,
+      csrfHeader: input.csrfHeader === undefined ? csrfToken : input.csrfHeader,
       method,
       origin: input.origin === undefined ? allowedOrigin : input.origin,
       remoteAddress: "203.0.113.11",
@@ -955,6 +1145,31 @@ const fulfillmentFixture = (
   retrievedAt: now,
   retrievalState: "RETRIEVED",
   status: "DELIVERY_PENDING",
+});
+
+const fulfillmentOperationFixture = (
+  fixtureOrderId: OrderId,
+  fulfillmentId: string,
+): FulfillmentOperation => ({
+  approvalExpiresAt: new Date(now.getTime() + 300_000),
+  controlledProcurementApprovalId: null,
+  correlationId: correlationId("ks0804-account-transport-fulfillment"),
+  createdAt: now,
+  deliveryState: "NOT_READY",
+  expectedQuantity: 1,
+  externalSupplierOrderId: "synthetic-ks0804-supplier-order",
+  id: fulfillmentId,
+  orderId: fixtureOrderId,
+  procurementOperationId: randomUUID(),
+  recordVersion: 1,
+  retrievalExecutionToken: randomUUID(),
+  retrievalStartedAt: now,
+  retrievalState: "IN_FLIGHT",
+  status: "RETRIEVAL_IN_FLIGHT",
+  supplierId: supplierId("mock-supplier"),
+  supplierItemReference: productId(randomUUID()),
+  tokenHash: "a".repeat(64),
+  updatedAt: now,
 });
 
 const assertion = (
@@ -1126,6 +1341,57 @@ class CapturingRateLimiter implements AuthenticatedCustomerDeliveryRateLimiter {
   }): Promise<{ readonly status: "ALLOWED" }> {
     this.keys.push(input.key);
     return { status: "ALLOWED" };
+  }
+}
+
+class FakeKeyAccessDeliveryPort implements CustomerKeyDeliveryPort {
+  public readonly calls: CustomerDeliveryAuthorization[] = [];
+  public lastPlaintextSeen: string | null = null;
+
+  public async deliver(input: {
+    readonly authorization: CustomerDeliveryAuthorization;
+    readonly plaintext: Buffer;
+  }): Promise<CustomerKeyDeliveryPortResult> {
+    this.calls.push(input.authorization);
+    this.lastPlaintextSeen = input.plaintext.toString("utf8");
+    return {
+      channel: "FAKE",
+      deliveredAt: now,
+      deliveryReference: `ks0804-transport-delivery-${this.calls.length}`,
+      status: "DELIVERED",
+    };
+  }
+}
+
+class CountingKeyProvider implements KeyManagementProvider {
+  public unwraps = 0;
+
+  public constructor(private readonly keyId: string) {}
+
+  public async activeMasterKeyVersion(): Promise<string> {
+    return this.keyId;
+  }
+
+  public async wrapDataKey(request: { readonly dataKey: Uint8Array }) {
+    return {
+      keyVersion: this.keyId,
+      wrappedDataKey: Buffer.from(request.dataKey).map((byte) => byte ^ 0xa5),
+    };
+  }
+
+  public async unwrapDataKey(request: {
+    readonly wrappedDataKey: Uint8Array;
+    readonly keyVersion: string;
+  }) {
+    this.unwraps += 1;
+    if (request.keyVersion !== this.keyId) {
+      throw new Error("wrong KS-08-04 transport key");
+    }
+    return Buffer.from(request.wrappedDataKey).map((byte) => byte ^ 0xa5);
+  }
+
+  public async getKeyVersionMetadata() {
+    return { provider: "memory", version: this.keyId };
   }
 }
 
