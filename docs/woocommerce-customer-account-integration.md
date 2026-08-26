@@ -1,6 +1,6 @@
 # WooCommerce Customer Account Integration
 
-KS-08-03 documents the future WooCommerce/Keyrano account integration boundary.
+KS-08-03 documents the future WooCommerce/KeyRaNo account integration boundary.
 It does not install WordPress, add WooCommerce dependencies, build a frontend or
 expose a production API.
 
@@ -44,9 +44,15 @@ and verified provider assertion to a trusted KeyCore authority port. That
 assertion must be validated server-side and must not be accepted directly from
 browser request fields.
 
+KS-08-05 also denies email-only guest order claiming. WooCommerce may pass a
+purchase-time checkout email snapshot through a trusted checkout bridge, but it
+cannot decide claim success. A guest order is claimable only through a verified
+KeyRaNo account plus high-entropy one-time Kaufcode, exact unclaimed order
+context and KeyCore trusted claim authority.
+
 ## Customer Account Rendering
 
-A future adapter may render the Keyrano account area by calling the
+A future adapter may render the KeyRaNo account area by calling the
 transport-neutral handlers:
 
 - account summary;
@@ -55,6 +61,7 @@ transport-neutral handlers:
 - registration request;
 - email verification;
 - identity linking.
+- guest order claim.
 
 The adapter must pass only an extracted session credential and request metadata.
 It must not pass caller-selected `customerId` as authorization input.
@@ -87,6 +94,9 @@ WooCommerce must not store product keys, delivery capabilities, encrypted key
 material or supplier key payloads in order/customer metadata. It may only render
 the result of a KeyCore-authorized key access action.
 
+Guest checkout emails must not contain Product Keys. They may contain only safe
+claim instructions and the one-time Kaufcode or future secure claim link.
+
 ## Registration Flow
 
 Registration uses enumeration-safe public responses. Existing and new emails
@@ -107,4 +117,5 @@ issued by server-side trusted integration code and consumed through
 - WOOCOMMERCE DEPENDENCY ADDED BY KS-08-03: NO
 - PRODUCTION CUSTOMER ACCOUNT API EXPOSED: NO
 - EMAIL-ONLY ACCOUNT LINKING ALLOWED: NO
+- EMAIL-ONLY GUEST ORDER CLAIMING ALLOWED: NO
 - REAL KEY REVEAL ENABLED: NO

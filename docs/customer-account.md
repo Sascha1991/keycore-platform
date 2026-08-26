@@ -2,8 +2,8 @@
 
 KS-08-01 adds the transport-neutral customer account backend foundation. It
 does not add a production HTTP server, frontend, registration provider,
-password login, OAuth, WooCommerce login, invoice generation, guest claim flow
-or product-key reveal endpoint.
+password login, OAuth, WooCommerce login, invoice generation, production guest
+claim HTTP or product-key reveal endpoint.
 
 KS-08-02 adds the transport-neutral registration and verified account-linking
 foundation. Registration does not authenticate the customer and email
@@ -136,6 +136,12 @@ new application service rechecks order ownership, fulfillment linkage and
 eligibility before delegating to the existing KS-07 secure delivery boundary.
 It does not add automatic reveal to account reads.
 
+KS-08-05 keeps Product Key access account-required. A guest checkout order can
+become eligible for the normal KS-08-04 key access path only after it has been
+claimed by an authenticated verified KeyRaNo account through the secure
+Kaufcode flow. Guest orders never receive Product Keys by ordinary email and no
+separate guest reveal path is introduced.
+
 If a defensive domain projection contains fulfillment metadata whose `orderId`
 does not match the projected order, account metadata may remain visible but the
 key is not reported as available for access.
@@ -184,12 +190,13 @@ Unknown or title-only metadata uses generic safe `NOT_AVAILABLE` behavior.
 
 Unowned and legacy orders remain inaccessible. KS-08-01 does not claim orders
 by email equality, payment email, provider email, supplier data or historical
-fulfillment metadata. A future guest claim flow must require explicit verified
-ownership proof.
+fulfillment metadata. Guest claim requires explicit verified ownership proof.
 
-KS-08-02 keeps this rule: verified customer email matching historical order
-email is still not enough to claim ownership. Guest claims require trusted
-`GuestOrderClaimAuthorityPort` evidence and remain production-not-ready.
+KS-08-05 keeps this rule: verified customer email matching historical order
+email is still not enough to claim ownership. Guest claims require a
+high-entropy one-time Kaufcode, matching verified account email and
+purchase-time checkout email snapshot, exact unclaimed order context and
+trusted `GuestOrderClaimAuthorityPort` evidence.
 
 The known live fulfillment `fd61be5e-44ea-4914-98ae-c4404dc31779` remains
 legacy/unclaimed and must not be decrypted, displayed, delivered, ownership
@@ -219,6 +226,7 @@ production HTTP and frontend exposure disabled. Future HTTP mappings may use:
 - `GET /v1/customer/account`;
 - `GET /v1/customer/orders`;
 - `GET /v1/customer/orders/{orderId}`.
+- `POST /v1/customer/orders/claim`.
 
 The transport resolves an opaque session credential through KS-07-07 before it
 calls account services. Request-supplied `customerId`, supplier order IDs and
@@ -241,4 +249,5 @@ WooCommerce adapter boundary.
 - PRODUCTION FRONTEND CONNECTED: NO
 - REAL KEY REVEAL ENABLED: NO
 - PRODUCTION INVOICE GENERATION READY: NO
-- GUEST ORDER CLAIM FLOW READY: NO
+- PRODUCTION GUEST CLAIM EMAIL CONNECTED: NO
+- PRODUCTION GUEST CLAIM HTTP EXPOSED: NO

@@ -140,21 +140,23 @@ manual account-merge workflow is required if the platform later needs it.
 
 ## Guest Order Claim Foundation
 
-`GuestOrderClaimAuthorityPort` represents future trusted claim evidence. The
-default authority fails closed. A future trusted adapter may use evidence such
-as:
+KS-08-05 implements the secure guest-order claim credential foundation. The
+default authority still fails closed unless a persisted trusted claim repository
+is injected.
 
-- one-time order claim secret generated at checkout;
-- authenticated payment-provider verified context;
-- signed WooCommerce order claim token;
-- secure claim link issued at order creation.
+Claim requires an authenticated verified customer, a high-entropy one-time
+Kaufcode, matching verified account email and purchase-time checkout email
+snapshot, exact order binding and an unclaimed order. Normalized order email
+equal to verified customer email is not sufficient to claim an order. Existing
+ownership is immutable: same customer ownership remains safe, different
+customer attempts conflict, and no overwrite occurs.
 
-Normalized order email equal to verified customer email is not sufficient to
-claim an order. Existing ownership is immutable: same customer retries are
-idempotent, different customer attempts conflict, and no overwrite occurs.
+Guest claim tokens are hash-only, single-use, purpose-bound and expiring.
+Reissue revokes older active claim credentials for the same order. Definitive
+claim-email delivery failure revokes the newly persisted token.
 
 The known live fulfillment `fd61be5e-44ea-4914-98ae-c4404dc31779` remains
-legacy/unclaimed. KS-08-02 does not generate retroactive claim evidence and does
+legacy/unclaimed. KS-08-05 does not generate retroactive claim evidence and does
 not bind it to any customer.
 
 ## Audit
@@ -168,7 +170,10 @@ Safe audit events include:
 - `CUSTOMER_IDENTITY_LINKED`;
 - `CUSTOMER_IDENTITY_LINK_DENIED`;
 - `CUSTOMER_ORDER_CLAIM_DENIED`;
-- `CUSTOMER_ORDER_CLAIMED` for synthetic/future trusted evidence only.
+- `CUSTOMER_ORDER_CLAIMED` for trusted claim evidence only;
+- `CUSTOMER_GUEST_ORDER_CLAIM_ISSUED`;
+- `CUSTOMER_GUEST_ORDER_CLAIM_REVOKED`;
+- `CUSTOMER_GUEST_ORDER_CLAIM_DELIVERY_FAILED`.
 
 Audit metadata uses customer IDs, challenge IDs, provider names and safe reason
 codes. It must not include raw tokens, token hashes, raw emails when customer ID
@@ -203,4 +208,5 @@ resolution, Origin validation and CSRF protection.
 - PRODUCTION REGISTRATION HTTP EXPOSED: NO
 - PRODUCTION FRONTEND CONNECTED: NO
 - PRODUCTION DISTRIBUTED RATE LIMITER READY: NO
-- GUEST ORDER CLAIM FLOW READY: NO
+- PRODUCTION GUEST CLAIM EMAIL CONNECTED: NO
+- PRODUCTION GUEST CLAIM HTTP EXPOSED: NO

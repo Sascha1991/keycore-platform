@@ -9,6 +9,7 @@ export * from "./customers/customer-account-transport.js";
 export * from "./customers/customer-key-access.js";
 export * from "./customers/customer-order-identity.js";
 export * from "./customers/customer-registration.js";
+export * from "./customers/guest-order-claim.js";
 export * from "./domain/audit.js";
 export * from "./domain/brands.js";
 export * from "./domain/catalog.js";

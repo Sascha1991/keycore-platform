@@ -48,7 +48,7 @@ production email delivery, login provider, frontend, automatic login, account
 merge and production guest claim flow disabled.
 
 KS-08-03 adds the transport-neutral customer account API and future
-WooCommerce/Keyrano integration contract for account summary, owned order
+WooCommerce/KeyRaNo integration contract for account summary, owned order
 history/detail, registration, email verification and identity linking while
 leaving production HTTP, WordPress/WooCommerce installation, frontend, real
 login provider and real key reveal disabled.
@@ -57,6 +57,12 @@ KS-08-04 adds the secure customer key access application integration, connecting
 account key-vault metadata to the existing KS-07 secure delivery boundary with
 explicit prepare/execute actions while leaving production HTTP, WooCommerce,
 frontend, real key reveal, Kinguin retrieval and live Stripe mutation disabled.
+
+KS-08-05 adds the account-required guest order claim foundation with hash-only
+one-time Kaufcode credentials, purchase-time checkout email snapshots,
+authenticated verified-account claim checks, immutable order ownership binding
+and a transport-neutral claim handler while leaving production guest claim
+email, production HTTP, WooCommerce, frontend and real key reveal disabled.
 
 ## Phase 09 – Fraud and Support
 

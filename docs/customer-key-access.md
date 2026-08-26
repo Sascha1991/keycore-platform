@@ -39,6 +39,11 @@ Request-supplied `customerId`, WooCommerce user ID, email, provider subject,
 supplier ID, external supplier order ID and arbitrary headers are never
 authorization inputs.
 
+Product Key access is always account-required. For guest checkout, KS-08-05
+must first bind the order to a verified KeyRaNo account through the secure
+Kaufcode claim flow. A checkout email match, WooCommerce email match, order ID
+or claim code alone cannot authorize key access.
+
 ## Delivery Reuse
 
 KS-08-04 reuses the existing KS-07-05 and KS-07-08 architecture:
@@ -70,7 +75,8 @@ WooCommerce remains a non-authoritative storefront adapter. WooCommerce email,
 customer ID, order ID, billing email, user meta or order meta cannot
 authenticate, claim ownership, issue a delivery capability, decrypt or deliver a
 product key. Future WooCommerce code may only present KeyCore-authorized
-results.
+results. Guest checkout may receive only a claim credential email, never the
+Product Key itself.
 
 ## Production Status
 

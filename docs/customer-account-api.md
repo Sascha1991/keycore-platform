@@ -47,7 +47,8 @@ Common safe error codes:
 - `RESOURCE_NOT_AVAILABLE`;
 - `CONFLICT`;
 - `RATE_LIMITED`;
-- `TEMPORARILY_UNAVAILABLE`.
+- `TEMPORARILY_UNAVAILABLE`;
+- `CLAIM_INVALID`.
 
 ## Headers
 
@@ -109,6 +110,7 @@ HTTP.
 | POST   | `/v1/customer/verify-email`  | No   | No   | `no-store`, no-referrer |
 | POST   | `/v1/customer/link-identity` | Yes  | Yes  | `no-store`              |
 | POST   | `/v1/customer/key-access`    | Yes  | Yes  | `no-store`, no-referrer |
+| POST   | `/v1/customer/orders/claim`  | Yes  | Yes  | `no-store`, no-referrer |
 
 ## Account Summary
 
@@ -173,6 +175,37 @@ The handler re-resolves the current session, validates Origin and CSRF, applies
 rate limiting and delegates to `CustomerKeyAccessService`, which then delegates
 to the KS-07 secure customer delivery service. Account GET reads never prepare,
 decrypt or deliver.
+
+## Guest Order Claim
+
+`POST /v1/customer/orders/claim`
+
+KS-08-05 models an authenticated account-required claim action for guest
+checkout orders. The request body may contain:
+
+- `claimCode`;
+- optional `orderId` as context.
+
+The `claimCode` is secret input. It is never echoed, logged, audited or used as
+a raw limiter key. The order ID is not authority and may only narrow the claim
+context. The handler resolves the current session, requires a verified
+authenticated customer, validates Origin and CSRF, applies rate limiting and
+delegates to `CustomerRegistrationService.claimGuestOrder()`.
+
+Request-supplied `customerId`, email, ownership flags, checkout email,
+provider subject, WooCommerce user ID, supplier IDs, fulfillment IDs, delivery
+capabilities and Product Key material are rejected. Invalid, expired,
+consumed, revoked, wrong-email, wrong-order and malformed claim credentials map
+to `CLAIM_INVALID` without revealing which case occurred.
+
+Successful responses contain only:
+
+- `ORDER_CLAIMED` or `ORDER_ALREADY_OWNED`;
+- the KeyCore `orderId`.
+
+After a successful claim, the customer uses the ordinary owned-order and
+KS-08-04 key access paths. Guest claim does not decrypt, deliver, retrieve or
+email Product Keys.
 
 ## Registration
 
@@ -246,4 +279,4 @@ Tests assert that:
 - invalid request syntax does not call session resolution;
 - invalid or denied sessions do not call account repositories;
 - wrong-owner and legacy reads do not decrypt, deliver or consume capabilities;
-- verification tokens are not echoed or audited.
+- verification and guest-claim tokens are not echoed or audited.

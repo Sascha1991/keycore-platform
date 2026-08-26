@@ -17,6 +17,7 @@ import {
   CustomerOrderIdentityService,
   CustomerRegistrationService,
   FakeCustomerEmailVerificationDeliveryPort,
+  FailClosedGuestOrderClaimAuthority,
   HmacDoubleSubmitCsrfPolicy,
   InMemoryAuthenticatedDeliveryRateLimiter,
   PersistedCustomerOrderAuthorizationPort,
@@ -36,11 +37,14 @@ import {
   type AuditEvent,
   type AuditEventPort,
   type AuthenticatedCustomerDeliveryRateLimiter,
+  type AuthenticatedCustomerPrincipal,
   type CorrelationId,
   type CustomerAccountOrderProjection,
   type CustomerAuthenticationAuthorityPort,
   type CustomerDeliveryAuthorization,
   type CustomerId,
+  type GuestOrderClaimAuthorityPort,
+  type GuestOrderClaimEvidence,
   type CustomerIdentityBindingAuthorityPort,
   type CustomerIdentityProvider,
   type CustomerKeyDeliveryPort,
@@ -63,6 +67,7 @@ const internalFailureMarker =
   "SQL constraint customer_sessions_token_hash_key C:\\secret\\stack TRACE_MARKER provider-error";
 const keyAccessMarker =
   "KEYCORE_KS0804_SYNTHETIC_PRODUCT_KEY_DO_NOT_USE_918273";
+const guestClaimCode = "KEYRANO_KS0805_CLAIM_CODE_DO_NOT_LEAK_842913";
 const realFulfillmentId = "fd61be5e-44ea-4914-98ae-c4404dc31779";
 
 describe("CustomerAccountTransportHandler", () => {
@@ -614,6 +619,107 @@ describe("CustomerAccountTransportHandler", () => {
     expect(harness.identityRepository.orderOwnershipBindingCount).toBe(0);
   });
 
+  it("claims guest orders only through authenticated POST, CSRF, limiter and claim code", async () => {
+    const limiter = new CapturingRateLimiter();
+    const harness = await transportHarness({
+      claimCode: guestClaimCode,
+      rateLimiter: limiter,
+    });
+    const claimed = await harness.handler.claimGuestOrder(
+      harness.request("POST", {
+        body: {
+          claimCode: guestClaimCode,
+          orderId: String(harness.guestOrder),
+        },
+        route: "claim-guest-order",
+      }),
+    );
+    expect(claimed).toMatchObject({
+      body: {
+        orderId: harness.guestOrder,
+        status: "ORDER_CLAIMED",
+      },
+      headers: { "Cache-Control": "no-store" },
+      statusCode: 200,
+    });
+    expect(limiter.keys).toHaveLength(1);
+    expect(
+      safeJson([claimed, limiter.keys, harness.audit.events]),
+    ).not.toContain(guestClaimCode);
+    expect(harness.identityRepository.orderOwnershipBindingCount).toBe(1);
+    expect(harness.keyAccessKeyProvider.unwraps).toBe(0);
+    expect(harness.keyAccessDeliveryPort.calls).toHaveLength(0);
+
+    for (const request of [
+      { origin: "https://evil.example.test", statusCode: 403 },
+      { csrfHeader: "bad", statusCode: 403 },
+      {
+        body: {
+          claimCode: guestClaimCode,
+          customerId: harness.otherCustomerId,
+        },
+        statusCode: 400,
+      },
+      {
+        body: {
+          billingEmail: "guest@example.com",
+        },
+        statusCode: 400,
+      },
+      {
+        body: {
+          stripePaymentEmail: "guest@example.com",
+        },
+        statusCode: 400,
+      },
+      {
+        body: {
+          wooCommerceCustomerId: "12345",
+        },
+        statusCode: 400,
+      },
+    ]) {
+      const denied = await transportHarness({ claimCode: guestClaimCode });
+      const response = await denied.handler.claimGuestOrder(
+        denied.request("POST", {
+          body: {
+            claimCode: guestClaimCode,
+            orderId: String(denied.guestOrder),
+            ...(request.body ?? {}),
+          },
+          route: "claim-denied",
+          ...("csrfHeader" in request
+            ? { csrfHeader: request.csrfHeader }
+            : {}),
+          ...("origin" in request ? { origin: request.origin } : {}),
+        }),
+      );
+      expect(response.statusCode).toBe(request.statusCode);
+      expect(denied.identityRepository.orderOwnershipBindingCount).toBe(0);
+      expect(denied.keyAccessKeyProvider.unwraps).toBe(0);
+    }
+
+    const limited = await transportHarness({
+      claimCode: guestClaimCode,
+      rateLimiter: new AlwaysLimitedRateLimiter(),
+    });
+    await expect(
+      limited.handler.claimGuestOrder(
+        limited.request("POST", {
+          body: {
+            claimCode: guestClaimCode,
+            orderId: String(limited.guestOrder),
+          },
+          route: "claim-limited",
+        }),
+      ),
+    ).resolves.toMatchObject({
+      body: { code: "RATE_LIMITED", status: "ERROR" },
+      statusCode: 429,
+    });
+    expect(limited.identityRepository.orderOwnershipBindingCount).toBe(0);
+  });
+
   it("preserves account pagination semantics and delegates opaque cursor validation", async () => {
     for (const invalidLimit of [
       "0",
@@ -774,6 +880,7 @@ const transportHarness = async (
     readonly allowedOrigins?: readonly string[];
     readonly throwingAccountRepository?: boolean;
     readonly throwingChallengeRepository?: boolean;
+    readonly claimCode?: string;
   } = {},
 ) => {
   const audit = new CapturingAudit();
@@ -800,6 +907,7 @@ const transportHarness = async (
   const ownedFulfillmentId = "ffffffff-ffff-4fff-8fff-fffffffffff1";
   const wrongOwnerOrder = orderId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
   const legacyRealOrder = orderId("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  const guestOrder = orderId("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
   accountRepository.addOrder(
     orderFixture(created.customerId, ownedOrder, {
       fulfillment: fulfillmentFixture(ownedFulfillmentId, ownedOrder),
@@ -883,8 +991,20 @@ const transportHarness = async (
   }
   identityRepository.addOrder({
     customerId: created.customerId,
+    checkoutEmailNormalized: "buyer@example.test",
     fulfillmentStatus: "PENDING",
     orderId: ownedOrder,
+    paymentStatus: "CAPTURED",
+    procurementStatus: "SUCCEEDED",
+    recordVersion: 1,
+    status: "FULFILLMENT_PENDING",
+    updatedAt: now,
+  });
+  identityRepository.addOrder({
+    checkoutEmailNormalized: "buyer@example.test",
+    customerId: null,
+    fulfillmentStatus: "PENDING",
+    orderId: guestOrder,
     paymentStatus: "CAPTURED",
     procurementStatus: "SUCCEEDED",
     recordVersion: 1,
@@ -945,6 +1065,13 @@ const transportHarness = async (
       repository: identityRepository,
     }),
     now: () => now,
+    claimAuthority: options.claimCode
+      ? new FakeGuestOrderClaimAuthority({
+          claimCode: options.claimCode,
+          customerId: created.customerId,
+          orderId: guestOrder,
+        })
+      : new FailClosedGuestOrderClaimAuthority(),
     ...(options.registrationTokenFactory
       ? { tokenFactory: options.registrationTokenFactory }
       : {}),
@@ -982,6 +1109,7 @@ const transportHarness = async (
     delivery,
     deliveryCalls: 0,
     handler,
+    guestOrder,
     identityRepository,
     legacyRealOrder,
     keyAccessDeliveryPort,
@@ -1220,6 +1348,42 @@ class FakeIdentityAuthority implements CustomerIdentityBindingAuthorityPort {
       provider: "TEST" as CustomerIdentityProvider,
       providerEvidenceId: `identity:${this.providerSubject}`,
       providerSubject: this.providerSubject,
+      status: "AUTHORIZED" as const,
+    };
+  }
+}
+
+class FakeGuestOrderClaimAuthority implements GuestOrderClaimAuthorityPort {
+  public constructor(
+    private readonly expected: {
+      readonly claimCode: string;
+      readonly customerId: CustomerId;
+      readonly orderId: OrderId;
+    },
+  ) {}
+
+  public async verifiedGuestOrderClaim(input: {
+    readonly principal: AuthenticatedCustomerPrincipal;
+    readonly claimCode: string;
+    readonly orderId?: OrderId;
+    readonly correlationId: CorrelationId;
+  }) {
+    if (
+      input.claimCode !== this.expected.claimCode ||
+      input.principal.customerId !== this.expected.customerId ||
+      (input.orderId !== undefined && input.orderId !== this.expected.orderId)
+    ) {
+      return { reasonCode: "CLAIM_INVALID", status: "DENIED" as const };
+    }
+    return {
+      evidence: {
+        actorId: "transport-guest-claim",
+        actorType: "SERVICE",
+        customerId: this.expected.customerId,
+        expectedOrderVersion: 1,
+        orderId: this.expected.orderId,
+        providerEvidenceId: `transport-claim:${input.correlationId}`,
+      } satisfies GuestOrderClaimEvidence,
       status: "AUTHORIZED" as const,
     };
   }

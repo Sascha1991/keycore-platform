@@ -86,6 +86,7 @@ export interface KeyCoreOrder {
   readonly productId: ProductId;
   readonly priceLockId: string;
   readonly customerId?: CustomerId | null;
+  readonly checkoutEmailNormalized?: string | null;
   readonly customerAmount: Money;
   readonly currency: Money["currency"];
   readonly quantity: number;
@@ -237,6 +238,7 @@ export class OrderOrchestrationService {
     readonly correlationId: CorrelationId;
     readonly expectedCustomerAmount?: Money;
     readonly expectedCurrency?: Money["currency"];
+    readonly checkoutEmailNormalized?: string | null;
   }): Promise<OrderCreateResult> {
     const now = this.now();
     if (input.quantity !== 1) {
@@ -252,6 +254,7 @@ export class OrderOrchestrationService {
     }
     const mismatch = validatePriceLockCommercialMatch(input, lock);
     const fingerprint = orderIdempotencyFingerprint({
+      checkoutEmailNormalized: input.checkoutEmailNormalized ?? null,
       expectedCustomerAmount:
         input.expectedCustomerAmount ?? lock.lockedSellPrice,
       expectedCurrency: input.expectedCurrency ?? lock.currency,
@@ -310,6 +313,7 @@ export class OrderOrchestrationService {
       lock,
       now,
       quantity: input.quantity,
+      checkoutEmailNormalized: input.checkoutEmailNormalized ?? null,
     });
     const result = await this.options.repository.createFromActivePriceLock({
       history: historyEntry({
@@ -785,6 +789,7 @@ export class OrderOrchestrationService {
 }
 
 export const orderIdempotencyFingerprint = (input: {
+  readonly checkoutEmailNormalized?: string | null;
   readonly productId: ProductId;
   readonly priceLockId: string;
   readonly quantity: number;
@@ -795,6 +800,7 @@ export const orderIdempotencyFingerprint = (input: {
     .update(
       JSON.stringify({
         amountMinor: input.expectedCustomerAmount.amountMinor.toString(),
+        checkoutEmailNormalized: input.checkoutEmailNormalized ?? null,
         currency: input.expectedCurrency,
         priceLockId: input.priceLockId,
         productId: input.productId,
@@ -835,8 +841,10 @@ const createInitialOrder = (input: {
   readonly idempotencyKey: string;
   readonly idempotencyFingerprint: string;
   readonly correlationId: CorrelationId;
+  readonly checkoutEmailNormalized?: string | null;
   readonly now: Date;
 }): KeyCoreOrder => ({
+  checkoutEmailNormalized: input.checkoutEmailNormalized ?? null,
   correlationId: input.correlationId,
   createdAt: input.now,
   currency: input.lock.currency,
