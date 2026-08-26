@@ -12,7 +12,6 @@ import {
   CustomerKeyDeliveryService,
   CustomerOrderIdentityService,
   PersistedCustomerOrderAuthorizationPort,
-  StaticAuthenticatedCustomerPrincipalProvider,
   correlationId,
   currency,
   encryptFulfillmentSecret,
@@ -24,6 +23,7 @@ import {
   type AuditEvent,
   type AuditEventPort,
   type AuthenticatedCustomerPrincipal,
+  type AuthenticatedCustomerPrincipalProvider,
   type CorrelationId,
   type CustomerAccountFulfillmentProjection,
   type CustomerAccountOrderProjection,
@@ -215,6 +215,144 @@ describe("CustomerKeyAccessService", () => {
     });
   });
 
+  it("re-checks current persisted authorization after stale account metadata and before decrypt", async () => {
+    const harness = await keyAccessHarness();
+    const accountService = new CustomerAccountService({
+      cursorSigningSecret: "customer-key-access-cursor-secret-32",
+      repository: harness.accountRepository,
+    });
+
+    await expect(
+      accountService.getOwnedOrderDetail({
+        correlationId: correlationId("ks0804-stale-detail"),
+        orderId: harness.orderId,
+        principal: harness.principal,
+      }),
+    ).resolves.toMatchObject({
+      order: { fulfillment: { keyAccessAvailable: true } },
+      status: "OK",
+    });
+
+    const prepared = await prepare(harness);
+    expect(prepared.status).toBe("AUTHORIZED");
+    const encryptedSecretId = harness.fulfillment.encryptedSecretId;
+    if (!encryptedSecretId) {
+      throw new Error("Expected KS-08-04 stale-state encrypted secret fixture");
+    }
+
+    harness.identityRepository.addFulfillment({
+      deliveryState: "PENDING",
+      encryptedSecretId,
+      fulfillmentId: harness.fulfillment.id,
+      orderId: orderId(randomUUID()),
+      retrievalState: "RETRIEVED",
+      status: "DELIVERY_PENDING",
+    });
+
+    await expect(execute(harness, prepared)).resolves.toMatchObject({
+      code: "CONFLICT",
+      status: "DENIED",
+    });
+    expect(harness.keyProvider.unwraps).toBe(0);
+    expect(harness.deliveryPort.calls).toHaveLength(0);
+    expect(harness.supplierCalls).toBe(0);
+  });
+
+  it("fails closed for cross-customer sessions, capability context mismatch and order/fulfillment confusion", async () => {
+    const crossCustomer = await keyAccessHarness();
+    const prepared = await prepare(crossCustomer);
+    crossCustomer.authorizationPrincipalProvider.setPrincipal({
+      authenticationContext: {
+        assurance: "AUTHENTICATED",
+        provider: "TEST",
+      },
+      customerId: crossCustomer.otherCustomerId,
+    });
+
+    await expect(execute(crossCustomer, prepared)).resolves.toMatchObject({
+      code: "CONFLICT",
+      status: "DENIED",
+    });
+    expect(crossCustomer.keyProvider.unwraps).toBe(0);
+    expect(crossCustomer.deliveryPort.calls).toHaveLength(0);
+
+    const confused = await keyAccessHarness();
+    const otherOwnedOrder = orderId(randomUUID());
+    const otherFulfillment = fulfillmentFixture(otherOwnedOrder);
+    confused.accountRepository.addOrder({
+      activation: null,
+      createdAt: now,
+      currency: currency("EUR"),
+      customerId: confused.customerId,
+      fulfillment: accountFulfillment(
+        otherFulfillment,
+        otherOwnedOrder,
+        "ready",
+      ),
+      fulfillmentStatus: "PENDING",
+      invoice: null,
+      orderId: otherOwnedOrder,
+      paymentStatus: "CAPTURED",
+      procurementStatus: "SUCCEEDED",
+      productTitle: "Second owned synthetic product",
+      refundStatus: "NOT_REQUESTED",
+      status: "FULFILLMENT_PENDING",
+      total: money(1999n, currency("EUR")),
+      updatedAt: now,
+    });
+
+    await expect(
+      confused.keyAccessService.prepareKeyAccess({
+        correlationId: correlationId("ks0804-confused-pairing"),
+        fulfillmentReference: otherFulfillment.id,
+        orderId: confused.orderId,
+        principal: confused.principal,
+      }),
+    ).resolves.toMatchObject({
+      code: "RESOURCE_NOT_AVAILABLE",
+      status: "DENIED",
+    });
+    expect(confused.keyProvider.unwraps).toBe(0);
+    expect(confused.deliveryPort.calls).toHaveLength(0);
+  });
+
+  it("does not leak synthetic key, session or capability material through denied and failure observations", async () => {
+    const capabilityMarker =
+      "KS0804CapabilityMarker_abcdefghijklmnopqrstuvwxyzABCDEFGHI";
+    const sessionMarker =
+      "KEYCORE_KS0804_HARDENING_SESSION_TOKEN_DO_NOT_LEAK_731946";
+    const harness = await keyAccessHarness();
+    const prepared = await prepare(harness);
+    const delivered = await execute(harness, prepared);
+    const replay = await execute(harness, prepared);
+    const wrongCapability = await harness.keyAccessService.executeKeyAccess({
+      correlationId: correlationId("ks0804-wrong-capability"),
+      deliveryApprovalId:
+        prepared.status === "AUTHORIZED" ? prepared.deliveryApprovalId : "",
+      deliveryCapability: capabilityMarker,
+      fulfillmentReference: harness.fulfillment.id,
+      orderId: harness.orderId,
+      principal: harness.principal,
+    });
+
+    const observable = safeJson({
+      audit: harness.audit.events,
+      deliveryRepository: harness.deliveryRepository,
+      delivered,
+      replay,
+      sessionMarkerHashOnly: sessionMarker.length,
+      wrongCapability,
+    });
+    expect(observable).not.toContain(markerSecret);
+    expect(observable).not.toContain(sessionMarker);
+    expect(observable).not.toContain(capabilityMarker);
+    expect(observable).not.toMatch(
+      /deliveryCapability|sessionCredential|ciphertext|nonce|wrapped/iu,
+    );
+    expect(harness.deliveryPort.calls).toHaveLength(1);
+    expect(harness.supplierCalls).toBe(0);
+  });
+
   it("does not let WooCommerce-style authority fields or title text affect eligibility", async () => {
     const harness = await keyAccessHarness({
       productTitle: "Steam key activation says use title only",
@@ -403,6 +541,8 @@ const keyAccessHarness = async (
           customerId: created.customerId,
         };
   const deliveryPort = options.deliveryPort ?? new FakeDeliveryPort();
+  const authorizationPrincipalProvider =
+    new MutableAuthenticatedCustomerPrincipalProvider(principal);
   const commonDelivery = {
     approvalTtlMs: 300_000,
     audit,
@@ -415,9 +555,7 @@ const keyAccessHarness = async (
     orderAuthorization: new PersistedCustomerOrderAuthorizationPort({
       audit,
       environment: "CI",
-      principalProvider: new StaticAuthenticatedCustomerPrincipalProvider(
-        principal,
-      ),
+      principalProvider: authorizationPrincipalProvider,
       repository: identityRepository,
     }),
     protectedFulfillmentIds: [realFulfillmentId],
@@ -455,14 +593,17 @@ const keyAccessHarness = async (
       ),
     accountRepository,
     audit,
+    authorizationPrincipalProvider,
     customerId: created.customerId,
     deliveryPort,
     deliveryRepository,
     executeService,
     fulfillment: retrieved,
+    identityRepository,
     keyAccessService,
     keyProvider,
     orderId: order,
+    otherCustomerId: other.customerId,
     principal,
     supplierCalls: 0,
   };
@@ -635,6 +776,20 @@ class CountingKeyProvider implements KeyManagementProvider {
 
   public async getKeyVersionMetadata() {
     return { provider: "memory", version: this.keyId };
+  }
+}
+
+class MutableAuthenticatedCustomerPrincipalProvider implements AuthenticatedCustomerPrincipalProvider {
+  public constructor(
+    private principal: AuthenticatedCustomerPrincipal | null,
+  ) {}
+
+  public setPrincipal(principal: AuthenticatedCustomerPrincipal | null): void {
+    this.principal = principal;
+  }
+
+  public async currentPrincipal(): Promise<AuthenticatedCustomerPrincipal | null> {
+    return this.principal;
   }
 }
 

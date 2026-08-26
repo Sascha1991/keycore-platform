@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Hardened KS-08-04 customer key access review coverage for stale account
+  metadata, current persisted delivery authorization, cross-customer capability
+  execution, order/fulfillment confusion, synthetic secret/capability/session
+  leakage checks and KeyRaNo public-brand documentation alignment.
 - Added KS-08-04 secure customer key access integration with a transport-neutral
   `CustomerKeyAccessService`, explicit prepare/execute account transport
   actions, KS-07 secure delivery reuse, fulfillment/order eligibility checks,

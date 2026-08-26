@@ -2,6 +2,9 @@
 
 KS-08-03 defines a transport-neutral customer account API/application boundary.
 It is not a production HTTP service and does not expose a live frontend.
+Future public/customer-facing storefront copy should use the KeyRaNo brand line
+"Rapid Access. No Waiting." Internal service, package and repository identifiers
+remain KeyCore.
 
 ## Architecture
 
