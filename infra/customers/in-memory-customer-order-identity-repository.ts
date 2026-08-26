@@ -75,6 +75,21 @@ export class InMemoryCustomerOrderIdentityRepository implements CustomerOrderIde
     }
   }
 
+  public countIdentityBindingsForCustomer(customerId: CustomerId): number {
+    return [...this.bindings.values()].filter(
+      (binding) => binding.customerId === customerId,
+    ).length;
+  }
+
+  public replaceCustomer(customer: KeyCoreCustomer): void {
+    const existing = this.customers.get(customer.id);
+    if (existing) {
+      this.customerByEmail.delete(existing.emailNormalized);
+    }
+    this.customers.set(customer.id, customer);
+    this.customerByEmail.set(customer.emailNormalized, customer.id);
+  }
+
   public replaceIdentityBinding(binding: CustomerIdentityBinding): void {
     this.removeIdentityBindingById(binding.id);
     this.bindings.set(

@@ -42,6 +42,11 @@ owned order history, safe key-vault metadata, invoice metadata, activation
 instruction metadata and access auditing while leaving production login,
 frontend, real key reveal, invoice generation and guest claim flow disabled.
 
+KS-08-02 adds the registration, email verification challenge, verified external
+identity linking and fail-closed guest-order claim foundation while leaving
+production email delivery, login provider, frontend, automatic login, account
+merge and production guest claim flow disabled.
+
 ## Phase 09 – Fraud and Support
 
 Risk rules, manual review, velocity limits, dispute evidence, support tickets and supplier claim workflow.

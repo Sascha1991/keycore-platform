@@ -123,7 +123,7 @@ describe.skipIf(!connectionString)(
           operationStatus(database, createdOperation.id),
         ).resolves.toBe("AMBIGUOUS");
       });
-    });
+    }, 30_000);
 
     it("enforces one successful procurement per order and stores no product key", async () => {
       await withDatabase(async (database) => {

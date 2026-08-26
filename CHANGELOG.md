@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added KS-08-02 customer registration and verified account-linking foundation
+  with enumeration-safe registration, hash-only one-time email verification
+  challenges, single-active challenge reissue, trusted verification authority
+  integration, authenticated verified external identity linking, fail-closed
+  guest-order claim foundation, safe registration inspect command and
+  PostgreSQL migration 018 while leaving production email, login, frontend,
+  account merge, email-only order claiming, Kinguin and live Stripe mutation out
+  of scope.
 - Added KS-08-01 customer account foundation with a transport-neutral
   `CustomerAccountService`, authenticated-principal account scoping, SQL-level
   owned order-history/detail projections, bounded signed cursor pagination,

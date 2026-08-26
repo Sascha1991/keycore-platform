@@ -36,6 +36,10 @@ KS-08-01 customer account reads consume the resulting
 session tokens itself and does not accept request-supplied `customerId` as an
 authorization source.
 
+KS-08-02 registration and email verification do not create a session. Future
+registration transports must still authenticate through the KS-07-07 assertion
+and session flow after a trusted identity binding exists.
+
 ## Session Model
 
 `customer_auth_sessions` stores server-side sessions with:
