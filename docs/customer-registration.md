@@ -191,6 +191,13 @@ token, product key or order/customer secret material.
 
 ## Production Readiness
 
+KS-08-03 adds transport-neutral handlers for registration request, email
+verification and identity linking. They are not production HTTP endpoints.
+Registration remains enumeration-safe, verification tokens are POST secret
+input and are not echoed, and identity linking rejects browser-supplied
+`providerSubject` fields. Authenticated identity-link mutations require session
+resolution, Origin validation and CSRF protection.
+
 - REAL LOGIN PROVIDER CONNECTED: NO
 - PRODUCTION EMAIL VERIFICATION DELIVERY CONNECTED: NO
 - PRODUCTION REGISTRATION HTTP EXPOSED: NO

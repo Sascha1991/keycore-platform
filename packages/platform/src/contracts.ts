@@ -5,6 +5,7 @@ export * from "./catalog/search-operations.js";
 export * from "./catalog/synchronization.js";
 export * from "./customers/customer-authentication.js";
 export * from "./customers/customer-account.js";
+export * from "./customers/customer-account-transport.js";
 export * from "./customers/customer-order-identity.js";
 export * from "./customers/customer-registration.js";
 export * from "./domain/audit.js";

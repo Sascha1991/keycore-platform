@@ -47,6 +47,12 @@ identity linking and fail-closed guest-order claim foundation while leaving
 production email delivery, login provider, frontend, automatic login, account
 merge and production guest claim flow disabled.
 
+KS-08-03 adds the transport-neutral customer account API and future
+WooCommerce/Keyrano integration contract for account summary, owned order
+history/detail, registration, email verification and identity linking while
+leaving production HTTP, WordPress/WooCommerce installation, frontend, real
+login provider and real key reveal disabled.
+
 ## Phase 09 – Fraud and Support
 
 Risk rules, manual review, velocity limits, dispute evidence, support tickets and supplier claim workflow.

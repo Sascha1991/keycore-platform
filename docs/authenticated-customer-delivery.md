@@ -82,6 +82,11 @@ boundary. Account pages may show key availability metadata, but any future key
 reveal must still use authenticated delivery transport, one-time capability,
 authorization and immediate pre-decrypt checks.
 
+KS-08-03 documents that future account order detail may surface
+`keyAccessAvailable=true`, but loading the account page does not prepare,
+execute, decrypt or deliver a key. The explicit reveal action remains routed
+through this KS-07-08 transport.
+
 ## Replay And Concurrency
 
 Successful execution consumes the one-time capability and transitions the
