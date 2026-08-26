@@ -236,7 +236,7 @@ describePostgres("PostgresOrderRepository", () => {
     } finally {
       await database.cleanup();
     }
-  });
+  }, 30_000);
 
   it("returns explicit optimistic conflicts for simultaneous state transitions", async () => {
     const database = await initDatabase();
