@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added KS-08-04 secure customer key access integration with a transport-neutral
+  `CustomerKeyAccessService`, explicit prepare/execute account transport
+  actions, KS-07 secure delivery reuse, fulfillment/order eligibility checks,
+  one-time capability preservation, concurrency/replay tests and documentation
+  while leaving production HTTP, WooCommerce, real key reveal, Kinguin and live
+  Stripe mutation disabled.
 - Hardened KS-08-03 customer account transport boundaries with deterministic
   fail-closed credential-source extraction, broader authority-field rejection,
   redacted internal-failure mapping, origin/content/body/correlation regression

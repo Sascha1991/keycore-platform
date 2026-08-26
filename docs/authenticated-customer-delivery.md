@@ -87,6 +87,10 @@ KS-08-03 documents that future account order detail may surface
 execute, decrypt or deliver a key. The explicit reveal action remains routed
 through this KS-07-08 transport.
 
+KS-08-04 adds that account-side application integration. It performs account
+ownership and fulfillment-linkage eligibility checks, then reuses this delivery
+boundary for one-time capability creation and execution.
+
 ## Replay And Concurrency
 
 Successful execution consumes the one-time capability and transitions the

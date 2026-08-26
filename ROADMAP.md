@@ -53,6 +53,11 @@ history/detail, registration, email verification and identity linking while
 leaving production HTTP, WordPress/WooCommerce installation, frontend, real
 login provider and real key reveal disabled.
 
+KS-08-04 adds the secure customer key access application integration, connecting
+account key-vault metadata to the existing KS-07 secure delivery boundary with
+explicit prepare/execute actions while leaving production HTTP, WooCommerce,
+frontend, real key reveal, Kinguin retrieval and live Stripe mutation disabled.
+
 ## Phase 09 – Fraud and Support
 
 Risk rules, manual review, velocity limits, dispute evidence, support tickets and supplier claim workflow.

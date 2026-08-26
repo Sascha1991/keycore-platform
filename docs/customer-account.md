@@ -131,6 +131,11 @@ The account service never decrypts to calculate metadata and never calls the
 delivery port. Future key reveal must still route through the KS-07-05/08
 secure delivery pipeline.
 
+KS-08-04 connects this metadata to an explicit customer key access action. The
+new application service rechecks order ownership, fulfillment linkage and
+eligibility before delegating to the existing KS-07 secure delivery boundary.
+It does not add automatic reveal to account reads.
+
 If a defensive domain projection contains fulfillment metadata whose `orderId`
 does not match the projected order, account metadata may remain visible but the
 key is not reported as available for access.
@@ -224,8 +229,9 @@ Account responses use private non-cacheable headers, including
 only and never performs automatic key reveal.
 
 See `docs/customer-account-api.md` for the route contract and
-`docs/woocommerce-customer-account-integration.md` for the future WooCommerce
-adapter boundary.
+`docs/customer-key-access.md` for the explicit key access flow.
+`docs/woocommerce-customer-account-integration.md` describes the future
+WooCommerce adapter boundary.
 
 ## Production Readiness
 
