@@ -39,7 +39,7 @@
     "order:ownership-inspect": "node --import tsx scripts/order-ownership-inspect.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --fileParallelism=false",
+    "test": "vitest run",
     "secrets:scan": "node scripts/scan-secrets.mjs"
   },
   "dependencies": {

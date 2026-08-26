@@ -56,6 +56,13 @@ and local composition. No production mail provider is connected. A future email
 adapter must not log or persist the raw token, token hash, mailbox token URLs or
 provider credentials.
 
+If delivery returns `FAILED` or throws after the challenge has been persisted,
+the registration service revokes the newly generated challenge and returns a
+safe `DELIVERY_FAILED` result. The undelivered token must not remain usable. If
+revocation itself fails, the request still fails closed and the token is not
+treated as successfully issued; operations must investigate the ambiguous
+challenge state before production use.
+
 If a future link transport is used:
 
 - HTTPS is required;
@@ -88,9 +95,18 @@ New challenge creation revokes older active challenges for the same customer,
 purpose and normalized email snapshot. This single-active policy reduces replay
 surface.
 
+If a replacement challenge is persisted but delivery fails, the replacement is
+revoked too. Older challenges are not re-enabled; the customer must request a
+fresh challenge.
+
 PostgreSQL uses a transaction, an advisory lock for reissue, unique token hash
 storage, and `FOR UPDATE SKIP LOCKED` during consume. Ten concurrent consumes
 of the same token can produce at most one `VERIFIED` result.
+
+Challenge consumption commits before the trusted customer verification
+transition. If that later transition fails because of a transient stale writer
+or similar internal failure, the already-consumed token remains invalid and the
+customer must request a new challenge.
 
 ## Rate Limiting
 
@@ -168,9 +184,10 @@ npm run customer-registration:inspect -- <customerId>
 ```
 
 The command returns customer ID, verification state, active challenge count,
-last challenge creation timestamp and identity binding count. It does not print
-raw email, raw verification token, token hash, provider subject, session token,
-product key or order/customer secret material.
+last challenge creation timestamp and identity binding count. Active challenge
+count means unconsumed, unrevoked and unexpired at inspection time. It does not
+print raw email, raw verification token, token hash, provider subject, session
+token, product key or order/customer secret material.
 
 ## Production Readiness
 

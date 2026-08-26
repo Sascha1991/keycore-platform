@@ -14,12 +14,21 @@ import {
   type CustomerId,
   type CustomerIdentityBindingAuthorityPort,
   type CustomerIdentityProvider,
+  type CustomerEmailVerificationDeliveryPort,
+  type CustomerOrderIdentityRepository,
   type GuestOrderClaimAuthorityPort,
+  type KeyCoreCustomer,
   type OrderId,
 } from "../contracts.js";
 
 const leakMarker = "KEYCORE_TEST_REGISTRATION_TOKEN_DO_NOT_LEAK_98765";
 const now = new Date("2026-08-25T12:00:00.000Z");
+type VerificationDeliveryInput = Parameters<
+  CustomerEmailVerificationDeliveryPort["sendVerificationChallenge"]
+>[0];
+type TestVerificationDelivery = CustomerEmailVerificationDeliveryPort & {
+  readonly deliveries: readonly VerificationDeliveryInput[];
+};
 
 describe("CustomerRegistrationService", () => {
   it("accepts new and existing registration without public enumeration and creates only unverified customers", async () => {
@@ -190,6 +199,132 @@ describe("CustomerRegistrationService", () => {
           .rawVerificationToken,
       }),
     ).resolves.toEqual({ status: "VERIFICATION_INVALID" });
+    await expect(
+      expired.service.inspectCustomerRegistration({
+        customerId: required(expired.delivery.deliveries[0]).customerId,
+      }),
+    ).resolves.toMatchObject({ activeChallengeCount: 0 });
+  });
+
+  it("revokes delivery-failed challenges so their tokens cannot verify", async () => {
+    const delivery = new FailingVerificationDelivery("FAILED");
+    const harness = registrationHarness({ delivery });
+    await expect(
+      harness.service.register({
+        correlationId: correlationId("corr-register-delivery-failed"),
+        email: "delivery-failed@example.com",
+      }),
+    ).resolves.toEqual({
+      reasonCode: "DELIVERY_FAILED",
+      status: "REGISTRATION_DENIED",
+    });
+    const failedDelivery = required(delivery.deliveries[0]);
+    await expect(
+      harness.service.verifyEmail({
+        correlationId: correlationId("corr-verify-delivery-failed"),
+        rawVerificationToken: failedDelivery.rawVerificationToken,
+      }),
+    ).resolves.toEqual({ status: "VERIFICATION_INVALID" });
+    await expect(
+      harness.service.inspectCustomerRegistration({
+        customerId: failedDelivery.customerId,
+      }),
+    ).resolves.toMatchObject({ activeChallengeCount: 0 });
+  });
+
+  it("handles delivery exceptions without leaking tokens or leaving challenges usable", async () => {
+    const delivery = new FailingVerificationDelivery("THROW");
+    const harness = registrationHarness({ delivery });
+    await expect(
+      harness.service.register({
+        correlationId: correlationId("corr-register-delivery-throws"),
+        email: "delivery-throws@example.com",
+      }),
+    ).resolves.toEqual({
+      reasonCode: "DELIVERY_FAILED",
+      status: "REGISTRATION_DENIED",
+    });
+    const failedDelivery = required(delivery.deliveries[0]);
+    expect(JSON.stringify(harness.audit.events)).not.toContain(
+      failedDelivery.rawVerificationToken,
+    );
+    await expect(
+      harness.service.verifyEmail({
+        correlationId: correlationId("corr-verify-delivery-throws"),
+        rawVerificationToken: failedDelivery.rawVerificationToken,
+      }),
+    ).resolves.toEqual({ status: "VERIFICATION_INVALID" });
+  });
+
+  it("does not leave a failed replacement challenge usable after reissue", async () => {
+    const delivery = new SwitchableVerificationDelivery();
+    const harness = registrationHarness({ delivery });
+    await harness.service.register({
+      correlationId: correlationId("corr-register-reissue-ok"),
+      email: "failed-reissue@example.com",
+    });
+    const first = required(delivery.deliveries[0]);
+    delivery.mode = "FAILED";
+    await expect(
+      harness.service.register({
+        correlationId: correlationId("corr-register-reissue-failed"),
+        email: "failed-reissue@example.com",
+      }),
+    ).resolves.toEqual({
+      reasonCode: "DELIVERY_FAILED",
+      status: "REGISTRATION_DENIED",
+    });
+    const second = required(delivery.deliveries[1]);
+    await expect(
+      harness.service.verifyEmail({
+        correlationId: correlationId("corr-verify-old-reissue"),
+        rawVerificationToken: first.rawVerificationToken,
+      }),
+    ).resolves.toEqual({ status: "VERIFICATION_INVALID" });
+    await expect(
+      harness.service.verifyEmail({
+        correlationId: correlationId("corr-verify-failed-reissue"),
+        rawVerificationToken: second.rawVerificationToken,
+      }),
+    ).resolves.toEqual({ status: "VERIFICATION_INVALID" });
+  });
+
+  it("keeps consumed tokens invalid if the later verification transition fails", async () => {
+    const base = new InMemoryCustomerOrderIdentityRepository();
+    const staleRepository = staleMarkEmailRepository(base);
+    const challengeRepository =
+      new InMemoryCustomerRegistrationChallengeRepository(base);
+    const delivery = new FakeCustomerEmailVerificationDeliveryPort();
+    const audit = new CollectingAudit();
+    const service = new CustomerRegistrationService({
+      audit,
+      challengeRepository,
+      delivery,
+      identityRepository: staleRepository,
+      identityService: new CustomerOrderIdentityService({
+        audit,
+        now: () => now,
+        repository: base,
+      }),
+      now: () => now,
+    });
+    await service.register({
+      correlationId: correlationId("corr-register-stale-verify"),
+      email: "stale-verify@example.com",
+    });
+    const token = required(delivery.deliveries[0]).rawVerificationToken;
+    await expect(
+      service.verifyEmail({
+        correlationId: correlationId("corr-verify-stale"),
+        rawVerificationToken: token,
+      }),
+    ).resolves.toEqual({ status: "VERIFICATION_INVALID" });
+    await expect(
+      service.verifyEmail({
+        correlationId: correlationId("corr-verify-stale-retry"),
+        rawVerificationToken: token,
+      }),
+    ).resolves.toEqual({ status: "VERIFICATION_INVALID" });
   });
 
   it("invalidates prior challenges on reissue and prevents old-email verification after email change", async () => {
@@ -351,6 +486,7 @@ const registrationHarness = (
   options: {
     readonly identityBindingAuthority?: CustomerIdentityBindingAuthorityPort;
     readonly claimAuthority?: GuestOrderClaimAuthorityPort;
+    readonly delivery?: TestVerificationDelivery;
     readonly tokenFactory?: () => string;
     readonly nowProvider?: () => Date;
     readonly nowSequence?: readonly Date[];
@@ -359,7 +495,8 @@ const registrationHarness = (
   const identityRepository = new InMemoryCustomerOrderIdentityRepository();
   const challengeRepository =
     new InMemoryCustomerRegistrationChallengeRepository(identityRepository);
-  const delivery = new FakeCustomerEmailVerificationDeliveryPort();
+  const delivery: TestVerificationDelivery =
+    options.delivery ?? new FakeCustomerEmailVerificationDeliveryPort();
   const audit = new CollectingAudit();
   let nowCalls = 0;
   const nowProvider =
@@ -460,6 +597,70 @@ class FakeClaimAuthority implements GuestOrderClaimAuthorityPort {
       : { reasonCode: "NO_TRUSTED_CLAIM_EVIDENCE", status: "DENIED" as const };
   }
 }
+
+class FailingVerificationDelivery implements CustomerEmailVerificationDeliveryPort {
+  public readonly deliveries: Parameters<
+    CustomerEmailVerificationDeliveryPort["sendVerificationChallenge"]
+  >[0][] = [];
+
+  public constructor(private readonly mode: "FAILED" | "THROW") {}
+
+  public async sendVerificationChallenge(
+    input: Parameters<
+      CustomerEmailVerificationDeliveryPort["sendVerificationChallenge"]
+    >[0],
+  ): Promise<{ readonly status: "ACCEPTED" } | { readonly status: "FAILED" }> {
+    this.deliveries.push(input);
+    if (this.mode === "THROW") {
+      throw new Error("synthetic delivery failure");
+    }
+    return { status: "FAILED" };
+  }
+}
+
+class SwitchableVerificationDelivery implements CustomerEmailVerificationDeliveryPort {
+  public readonly deliveries: Parameters<
+    CustomerEmailVerificationDeliveryPort["sendVerificationChallenge"]
+  >[0][] = [];
+  public mode: "ACCEPTED" | "FAILED" = "ACCEPTED";
+
+  public async sendVerificationChallenge(
+    input: Parameters<
+      CustomerEmailVerificationDeliveryPort["sendVerificationChallenge"]
+    >[0],
+  ): Promise<{ readonly status: "ACCEPTED" } | { readonly status: "FAILED" }> {
+    this.deliveries.push(input);
+    return { status: this.mode };
+  }
+}
+
+const staleMarkEmailRepository = (
+  base: InMemoryCustomerOrderIdentityRepository,
+): CustomerOrderIdentityRepository => ({
+  authorizeFulfillmentForCustomer: (input) =>
+    base.authorizeFulfillmentForCustomer(input),
+  bindIdentity: (input) => base.bindIdentity(input),
+  bindOrderOwnership: (input) => base.bindOrderOwnership(input),
+  createCustomer: (input) => base.createCustomer(input),
+  findCustomerById: (id) => base.findCustomerById(id),
+  findCustomerByNormalizedEmail: (email) =>
+    base.findCustomerByNormalizedEmail(email),
+  inspectCustomer: (id) => base.inspectCustomer(id),
+  inspectOrderOwnership: (id) => base.inspectOrderOwnership(id),
+  markEmailVerified: async (input) => ({
+    customer:
+      (await base.findCustomerById(input.customerId)) ??
+      ({
+        createdAt: now,
+        emailNormalized: "missing@example.com",
+        emailVerificationState: "UNVERIFIED",
+        id: input.customerId,
+        recordVersion: input.expectedCustomerVersion,
+        updatedAt: now,
+      } satisfies KeyCoreCustomer),
+    status: "STALE_WRITER" as const,
+  }),
+});
 
 class CollectingAudit {
   public readonly events: AuditEvent[] = [];

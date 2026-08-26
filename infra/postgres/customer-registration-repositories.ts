@@ -97,6 +97,45 @@ export class PostgresCustomerRegistrationChallengeRepository implements Customer
     });
   }
 
+  public async revokeChallenge(input: {
+    readonly challengeId: string;
+    readonly now: Date;
+  }): Promise<"REVOKED" | "ALREADY_INACTIVE" | "NOT_FOUND"> {
+    return this.db.transaction(async (client) => {
+      const locked = await client.query<ChallengeRow>(
+        `
+          SELECT ${challengeReturning}
+          FROM customer_email_verification_challenges
+          WHERE id = $1
+          FOR UPDATE
+        `,
+        [input.challengeId],
+      );
+      const challenge = locked.rows[0]
+        ? challengeFromRow(locked.rows[0])
+        : null;
+      if (!challenge) {
+        return "NOT_FOUND";
+      }
+      if (challenge.consumedAt || challenge.revokedAt) {
+        return "ALREADY_INACTIVE";
+      }
+      const revoked = await client.query<ChallengeRow>(
+        `
+          UPDATE customer_email_verification_challenges
+          SET revoked_at = $2,
+            record_version = record_version + 1
+          WHERE id = $1
+            AND consumed_at IS NULL
+            AND revoked_at IS NULL
+          RETURNING ${challengeReturning}
+        `,
+        [input.challengeId, input.now],
+      );
+      return revoked.rows[0] ? "REVOKED" : "ALREADY_INACTIVE";
+    });
+  }
+
   public async consumeChallenge(input: {
     readonly tokenHash: string;
     readonly now: Date;
@@ -163,16 +202,19 @@ export class PostgresCustomerRegistrationChallengeRepository implements Customer
     });
   }
 
-  public async inspectCustomerRegistration(
-    requestedCustomerId: CustomerId,
-  ): Promise<CustomerRegistrationInspection | null> {
+  public async inspectCustomerRegistration(input: {
+    readonly customerId: CustomerId;
+    readonly now: Date;
+  }): Promise<CustomerRegistrationInspection | null> {
     const result = await this.db.query<InspectionRow>(
       `
         SELECT
           c.id::text AS customer_id,
           c.email_verification_state,
           COUNT(ch.id) FILTER (
-            WHERE ch.consumed_at IS NULL AND ch.revoked_at IS NULL
+            WHERE ch.consumed_at IS NULL
+              AND ch.revoked_at IS NULL
+              AND ch.expires_at > $2
           )::text AS active_challenge_count,
           MAX(ch.created_at) AS last_challenge_created_at,
           COUNT(DISTINCT b.id)::text AS identity_binding_count
@@ -184,7 +226,7 @@ export class PostgresCustomerRegistrationChallengeRepository implements Customer
         WHERE c.id = $1
         GROUP BY c.id, c.email_verification_state
       `,
-      [requestedCustomerId],
+      [input.customerId, input.now],
     );
     const row = result.rows[0];
     return row

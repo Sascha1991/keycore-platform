@@ -23,9 +23,10 @@ const main = async (): Promise<void> => {
     const repository = new PostgresCustomerRegistrationChallengeRepository(
       new PostgresTransactionBoundary(pool),
     );
-    const inspection = await repository.inspectCustomerRegistration(
-      customerId(rawCustomerId),
-    );
+    const inspection = await repository.inspectCustomerRegistration({
+      customerId: customerId(rawCustomerId),
+      now: new Date(),
+    });
     process.stdout.write(`${JSON.stringify(inspection, null, 2)}\n`);
   } finally {
     await pool.end();

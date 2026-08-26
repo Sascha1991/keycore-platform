@@ -49,6 +49,10 @@ export interface CustomerRegistrationChallengeRepository {
     readonly challenge: CustomerEmailVerificationChallenge;
     readonly now: Date;
   }): Promise<"CREATED" | "TOKEN_HASH_COLLISION">;
+  revokeChallenge(input: {
+    readonly challengeId: string;
+    readonly now: Date;
+  }): Promise<"REVOKED" | "ALREADY_INACTIVE" | "NOT_FOUND">;
   consumeChallenge(input: {
     readonly tokenHash: string;
     readonly now: Date;
@@ -60,9 +64,10 @@ export interface CustomerRegistrationChallengeRepository {
       }
     | { readonly status: "INVALID"; readonly reasonCode: string }
   >;
-  inspectCustomerRegistration(
-    customerId: CustomerId,
-  ): Promise<CustomerRegistrationInspection | null>;
+  inspectCustomerRegistration(input: {
+    readonly customerId: CustomerId;
+    readonly now: Date;
+  }): Promise<CustomerRegistrationInspection | null>;
 }
 
 export interface CustomerEmailVerificationDeliveryPort {
@@ -482,9 +487,10 @@ export class CustomerRegistrationService {
   public inspectCustomerRegistration(input: {
     readonly customerId: CustomerId;
   }): Promise<CustomerRegistrationInspection | null> {
-    return this.options.challengeRepository.inspectCustomerRegistration(
-      input.customerId,
-    );
+    return this.options.challengeRepository.inspectCustomerRegistration({
+      customerId: input.customerId,
+      now: this.now(),
+    });
   }
 
   private async issueChallenge(
@@ -516,15 +522,28 @@ export class CustomerRegistrationService {
       if (created === "TOKEN_HASH_COLLISION") {
         continue;
       }
-      const delivered = await this.options.delivery.sendVerificationChallenge({
+      const deliveryInput = {
         challengeId: challenge.id,
         correlationId: correlation,
         customerId: customer.id,
         emailNormalized: customer.emailNormalized,
         expiresAt: challenge.expiresAt,
         rawVerificationToken,
-      });
+      };
+      let delivered: Awaited<
+        ReturnType<
+          CustomerEmailVerificationDeliveryPort["sendVerificationChallenge"]
+        >
+      >;
+      try {
+        delivered =
+          await this.options.delivery.sendVerificationChallenge(deliveryInput);
+      } catch {
+        await this.revokeUndeliveredChallenge(challenge.id, now);
+        return { reasonCode: "DELIVERY_FAILED", status: "FAILED" };
+      }
       if (delivered.status !== "ACCEPTED") {
+        await this.revokeUndeliveredChallenge(challenge.id, now);
         return { reasonCode: "DELIVERY_FAILED", status: "FAILED" };
       }
       await this.audit({
@@ -544,6 +563,24 @@ export class CustomerRegistrationService {
       return { challengeId: challenge.id, status: "ISSUED" };
     }
     return { reasonCode: "TOKEN_HASH_COLLISION", status: "FAILED" };
+  }
+
+  private async revokeUndeliveredChallenge(
+    challengeId: string,
+    now: Date,
+  ): Promise<void> {
+    try {
+      await this.options.challengeRepository.revokeChallenge({
+        challengeId,
+        now,
+      });
+    } catch {
+      await this.auditNoCustomer(
+        `revoke-${challengeId}` as CorrelationId,
+        "CUSTOMER_EMAIL_VERIFICATION_FAILED",
+        "CHALLENGE_REVOKE_FAILED",
+      );
+    }
   }
 
   private async requireAuthenticatedVerifiedCustomer(

@@ -59,6 +59,25 @@ export class InMemoryCustomerRegistrationChallengeRepository implements Customer
     return "CREATED";
   }
 
+  public async revokeChallenge(input: {
+    readonly challengeId: string;
+    readonly now: Date;
+  }): Promise<"REVOKED" | "ALREADY_INACTIVE" | "NOT_FOUND"> {
+    const challenge = this.challenges.get(input.challengeId);
+    if (!challenge) {
+      return "NOT_FOUND";
+    }
+    if (challenge.consumedAt || challenge.revokedAt) {
+      return "ALREADY_INACTIVE";
+    }
+    this.challenges.set(input.challengeId, {
+      ...challenge,
+      recordVersion: challenge.recordVersion + 1,
+      revokedAt: input.now,
+    });
+    return "REVOKED";
+  }
+
   public async consumeChallenge(input: {
     readonly tokenHash: string;
     readonly now: Date;
@@ -133,9 +152,11 @@ export class InMemoryCustomerRegistrationChallengeRepository implements Customer
     return { challenge: consumed, customer, status: "CONSUMED" };
   }
 
-  public async inspectCustomerRegistration(
-    customerId: CustomerId,
-  ): Promise<CustomerRegistrationInspection | null> {
+  public async inspectCustomerRegistration(input: {
+    readonly customerId: CustomerId;
+    readonly now: Date;
+  }): Promise<CustomerRegistrationInspection | null> {
+    const customerId = input.customerId;
     const customer = await this.identityRepository.findCustomerById(customerId);
     if (!customer) {
       return null;
@@ -144,7 +165,10 @@ export class InMemoryCustomerRegistrationChallengeRepository implements Customer
       (challenge) => challenge.customerId === customerId,
     );
     const active = challenges.filter(
-      (challenge) => !challenge.consumedAt && !challenge.revokedAt,
+      (challenge) =>
+        !challenge.consumedAt &&
+        !challenge.revokedAt &&
+        challenge.expiresAt.getTime() > input.now.getTime(),
     );
     const last = challenges
       .map((challenge) => challenge.createdAt)
