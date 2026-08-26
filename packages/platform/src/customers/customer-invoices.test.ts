@@ -16,6 +16,7 @@ import {
 
 const now = new Date("2026-08-26T10:00:00.000Z");
 const invoiceLeakMarker = "KEYRANO_KS0806_INVOICE_SECRET_DO_NOT_LEAK_642917";
+const storageLeakMarker = "KEYRANO_KS0806_INTERNAL_STORAGE_SECRET_731951";
 const productKeyLeakMarker = "KEYRANO-KS0806-PRODUCT-KEY-DO-NOT-LEAK";
 
 describe("customer invoice access foundation", () => {
@@ -94,18 +95,98 @@ describe("customer invoice access foundation", () => {
 
   it("keeps pending and failed invoice states metadata-only", async () => {
     const harness = invoiceHarness();
-    const pending = await harness.service.getInvoiceMetadata({
-      correlationId: correlationId("invoice-pending"),
-      orderId: harness.pendingOrder.orderId,
-      principal: principal(harness.customerA),
-    });
+    const matrix = [
+      {
+        expected: { downloadAvailable: false, status: "NOT_AVAILABLE" },
+        order: harness.notAvailableOrder,
+      },
+      {
+        expected: { downloadAvailable: false, status: "PENDING" },
+        order: harness.pendingOrder,
+      },
+      {
+        expected: {
+          downloadAvailable: true,
+          invoiceReference: "KR-INV-2026-0001",
+          issuedAt: "2026-08-26T09:30:00.000Z",
+          status: "AVAILABLE",
+        },
+        order: harness.ownedOrder,
+      },
+      {
+        expected: { downloadAvailable: false, status: "FAILED" },
+        order: harness.failedOrder,
+      },
+    ] as const;
 
-    expect(pending).toEqual({
-      invoice: { downloadAvailable: false, status: "PENDING" },
-      orderId: harness.pendingOrder.orderId,
-      status: "OK",
-    });
-    expect(safeJson(pending)).not.toMatch(/storage|tax|pdf|documentId/iu);
+    for (const item of matrix) {
+      const result = await harness.service.getInvoiceMetadata({
+        correlationId: correlationId(`invoice-state-${item.order.orderId}`),
+        orderId: item.order.orderId,
+        principal: principal(harness.customerA),
+      });
+      expect(result).toEqual({
+        invoice: item.expected,
+        orderId: item.order.orderId,
+        status: "OK",
+      });
+      expect(safeJson(result)).not.toMatch(/storage|tax|pdf|documentId/iu);
+    }
+  });
+
+  it("sanitizes the authenticated owner's malformed invoice projection", async () => {
+    const harness = invoiceHarness();
+    const maliciousValues = [
+      String.raw`C:\internal\invoice.pdf`,
+      "/private/storage/invoice.pdf",
+      `KR-INV\r\n${storageLeakMarker}`,
+      "x".repeat(121),
+      "https://storage.example/internal-secret",
+      `KR-INV-${invoiceLeakMarker}`,
+    ];
+
+    for (const [index, invoiceReference] of maliciousValues.entries()) {
+      const unsafeOrder = orderFixture(
+        harness.customerA,
+        `eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee${index}`,
+        {
+          invoice: {
+            downloadAvailable: true,
+            invoiceReference,
+            issuedAt:
+              index === 0
+                ? new Date(Number.NaN)
+                : new Date("2026-08-26T09:40:00.000Z"),
+            status: "AVAILABLE",
+          },
+        },
+      );
+      harness.repository.addOrder(unsafeOrder);
+      const result = await harness.service.getInvoiceMetadata({
+        correlationId: correlationId(`invoice-malicious-${index}`),
+        orderId: unsafeOrder.orderId,
+        principal: principal(harness.customerA),
+      });
+
+      expect(result).toEqual({
+        invoice: {
+          ...(index === 0 ? {} : { issuedAt: "2026-08-26T09:40:00.000Z" }),
+          downloadAvailable: true,
+          status: "AVAILABLE",
+        },
+        orderId: unsafeOrder.orderId,
+        status: "OK",
+      });
+      expect(safeJson([result, harness.audit.events])).not.toContain(
+        storageLeakMarker,
+      );
+      expect(safeJson([result, harness.audit.events])).not.toContain(
+        invoiceLeakMarker,
+      );
+      expect(safeJson([result, harness.audit.events])).not.toMatch(
+        /C:\\internal|private\/storage|storage\.example|\r|\n/iu,
+      );
+    }
   });
 });
 
@@ -133,6 +214,28 @@ const invoiceHarness = () => {
       invoice: { downloadAvailable: false, status: "PENDING" },
     },
   );
+  const notAvailableOrder = orderFixture(
+    customerA,
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac",
+    {
+      invoice: {
+        downloadAvailable: true,
+        invoiceReference: "NOT-SHOWN",
+        status: "NOT_AVAILABLE",
+      },
+    },
+  );
+  const failedOrder = orderFixture(
+    customerA,
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad",
+    {
+      invoice: {
+        downloadAvailable: true,
+        invoiceReference: "FAILED-NOT-SHOWN",
+        status: "FAILED",
+      },
+    },
+  );
   const otherOrder = orderFixture(
     customerB,
     "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
@@ -144,15 +247,22 @@ const invoiceHarness = () => {
       },
     },
   );
-  [ownedOrder, pendingOrder, otherOrder].forEach((order) =>
-    repository.addOrder(order),
-  );
+  [
+    ownedOrder,
+    pendingOrder,
+    notAvailableOrder,
+    failedOrder,
+    otherOrder,
+  ].forEach((order) => repository.addOrder(order));
   return {
     audit,
     customerA,
+    failedOrder,
+    notAvailableOrder,
     ownedOrder,
     otherOrder,
     pendingOrder,
+    repository,
     service: new CustomerInvoiceAccessService({
       audit,
       environment: "CI",

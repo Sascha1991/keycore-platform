@@ -108,25 +108,157 @@ describe("customer activation instructions foundation", () => {
 
   it("rejects unsafe registry content before it can reach a customer response", () => {
     const repository = new InMemoryCustomerAccountReadRepository();
-    const unsafeEntries: readonly ActivationInstructionRegistryEntry[] = [
-      {
-        helpUrl: "javascript:alert(1)",
-        instructionCode: "STEAM_ACTIVATION_CODE",
-        platform: "STEAM",
-        steps: [{ body: "Use Steam", label: "Open" }],
-        title: "Steam activation",
-        version: 1,
-      },
+    const unsafeHelpUrls = [
+      "javascript:alert(1)",
+      "https://help.steampowered.com.attacker.example",
+      "https://attacker.example/help.steampowered.com",
+      "https://user:pass@help.steampowered.com/",
+      "https://help.steampowered.com:444/",
     ];
+
+    for (const helpUrl of unsafeHelpUrls) {
+      expect(
+        () =>
+          new CustomerActivationInstructionsService({
+            registry: [registryEntry({ helpUrl })],
+            repository,
+          }),
+      ).toThrow("Activation instruction help URL is invalid");
+    }
+  });
+
+  it("rejects duplicate registry keys instead of overwriting silently", () => {
+    const repository = new InMemoryCustomerAccountReadRepository();
 
     expect(
       () =>
         new CustomerActivationInstructionsService({
-          registry: unsafeEntries,
+          registry: [
+            registryEntry({ title: "Steam activation v1", version: 1 }),
+            registryEntry({ title: "Steam activation v2", version: 2 }),
+          ],
           repository,
         }),
-    ).toThrow("Activation instruction help URL is invalid");
+    ).toThrow("Activation instruction registry key is duplicated");
   });
+
+  it("defensively copies registry content after validation", async () => {
+    const repository = new InMemoryCustomerAccountReadRepository();
+    const customerA = customerId("11111111-1111-4111-8111-111111111111");
+    const order = orderFixture(
+      customerA,
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaf",
+      {
+        activation: {
+          instructionCode: "STEAM_ACTIVATION_CODE",
+          platform: "STEAM",
+          source: "STRUCTURED",
+        },
+      },
+    );
+    repository.addOrder(order);
+    const mutableSteps = [{ body: "Use the Steam client.", label: "Open" }];
+    const mutableEntry = registryEntry({ steps: mutableSteps });
+    const service = new CustomerActivationInstructionsService({
+      registry: [mutableEntry],
+      repository,
+    });
+
+    const mutableAlias = mutableEntry as {
+      title: string;
+      steps: ActivationInstructionRegistryEntry["steps"];
+    };
+    mutableAlias.title = "Mutated <script>";
+    mutableSteps[0] = {
+      body: "<script>alert('unsafe')</script>",
+      label: "Unsafe",
+    };
+    mutableSteps.push({ body: "<script>late</script>", label: "Late" });
+
+    const result = await service.getActivationInstructions({
+      correlationId: correlationId("activation-registry-mutation"),
+      orderId: order.orderId,
+      principal: principal(customerA),
+    });
+
+    expect(result.status).toBe("OK");
+    expect(result.status === "OK" ? result.instructions : null).toMatchObject({
+      status: "AVAILABLE",
+      steps: [{ body: "Use the Steam client.", label: "Open" }],
+      title: "Steam activation",
+    });
+    expect(safeJson(result)).not.toMatch(/<script>|unsafe|late/iu);
+  });
+
+  it("does not fallback when structured platform and instruction code do not match", async () => {
+    const repository = new InMemoryCustomerAccountReadRepository();
+    const customerA = customerId("11111111-1111-4111-8111-111111111111");
+    const mismatchOrder = orderFixture(
+      customerA,
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaab0",
+      {
+        activation: {
+          instructionCode: "EPIC_ACTIVATION_CODE",
+          platform: "STEAM",
+          source: "STRUCTURED",
+        },
+      },
+    );
+    const unknownOrder = orderFixture(
+      customerA,
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaab1",
+      {
+        activation: {
+          instructionCode: "UNKNOWN_ACTIVATION_CODE",
+          platform: "STEAM",
+          source: "STRUCTURED",
+        },
+      },
+    );
+    repository.addOrder(mismatchOrder);
+    repository.addOrder(unknownOrder);
+    const service = new CustomerActivationInstructionsService({
+      registry: [
+        registryEntry({
+          instructionCode: "STEAM_ACTIVATION_CODE",
+          platform: "STEAM",
+        }),
+        registryEntry({
+          instructionCode: "EPIC_ACTIVATION_CODE",
+          platform: "EPIC",
+          title: "Epic activation",
+        }),
+      ],
+      repository,
+    });
+
+    for (const order of [mismatchOrder, unknownOrder]) {
+      const result = await service.getActivationInstructions({
+        correlationId: correlationId(`activation-mismatch-${order.orderId}`),
+        orderId: order.orderId,
+        principal: principal(customerA),
+      });
+      expect(result.status === "OK" ? result.instructions : null).toEqual({
+        instructionCode: "GENERIC_SAFE_ACTIVATION",
+        platform: "UNKNOWN",
+        status: "NOT_AVAILABLE",
+        steps: [],
+        title: "Activation instructions are not available yet.",
+        version: 1,
+      });
+    }
+  });
+});
+
+const registryEntry = (
+  overrides: Partial<ActivationInstructionRegistryEntry> = {},
+): ActivationInstructionRegistryEntry => ({
+  instructionCode: "STEAM_ACTIVATION_CODE",
+  platform: "STEAM",
+  steps: [{ body: "Use Steam", label: "Open" }],
+  title: "Steam activation",
+  version: 1,
+  ...overrides,
 });
 
 const activationHarness = () => {

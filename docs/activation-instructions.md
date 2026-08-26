@@ -34,12 +34,19 @@ curated registry. KS-08-06 includes a Steam activation document for
 
 Registry validation rejects:
 
+- duplicate `platform` plus `instructionCode` keys;
 - unsafe instruction codes;
 - empty or oversized titles;
 - control characters or HTML-like text;
 - empty or oversized step lists;
 - non-HTTPS help URLs;
 - help URLs outside explicitly trusted hosts.
+
+Registry entries and steps are defensively copied after validation. Caller
+mutation after service construction cannot alter the customer-visible curated
+document. Trusted help URLs use exact HTTPS host policy for
+`help.steampowered.com` and `store.steampowered.com`; userinfo, deceptive
+subdomains, deceptive paths and non-default ports are rejected.
 
 ## Transport Contract
 

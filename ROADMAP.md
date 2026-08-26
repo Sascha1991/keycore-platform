@@ -70,6 +70,14 @@ owned orders while leaving production invoice generation, PDF rendering,
 tax/legal accounting integration, WooCommerce/frontend exposure and real key
 reveal disabled.
 
+With KS-08-01 through KS-08-06, Phase 08 backend/application foundation scope is
+complete for registration, order history, secure key-vault metadata, invoices,
+activation instructions and access auditing. Production login providers,
+customer account UI, WooCommerce integration, production customer HTTP,
+production invoice generation/storage, production activation-content approval,
+email delivery, distributed rate limiting and real key reveal remain future
+production/integration work.
+
 ## Phase 09 – Fraud and Support
 
 Risk rules, manual review, velocity limits, dispute evidence, support tickets and supplier claim workflow.

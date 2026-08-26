@@ -679,13 +679,19 @@ export const invoiceSummary = (
   if (!invoice) {
     return { downloadAvailable: false, status: "NOT_AVAILABLE" };
   }
+  const invoiceReference =
+    invoice.status === "AVAILABLE"
+      ? safeInvoiceReference(invoice.invoiceReference)
+      : undefined;
+  const issuedAt =
+    invoice.status === "AVAILABLE"
+      ? safeInvoiceIssuedAt(invoice.issuedAt)
+      : undefined;
   return {
     downloadAvailable:
       invoice.status === "AVAILABLE" && invoice.downloadAvailable === true,
-    ...(invoice.invoiceReference
-      ? { invoiceReference: invoice.invoiceReference }
-      : {}),
-    ...(invoice.issuedAt ? { issuedAt: invoice.issuedAt.toISOString() } : {}),
+    ...(invoiceReference ? { invoiceReference } : {}),
+    ...(issuedAt ? { issuedAt } : {}),
     status: invoice.status,
   };
 };
@@ -726,6 +732,38 @@ const isSafeUuid = (value: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
     value,
   );
+
+const safeInvoiceReference = (
+  value: string | null | undefined,
+): string | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  if (
+    value.length > 120 ||
+    /[\u0000-\u001f\u007f]/u.test(value) ||
+    /[\\/]/u.test(value) ||
+    /^[a-z][a-z0-9+.-]*:/iu.test(value) ||
+    value.includes("..") ||
+    /(credential|internal|private|secret|storage|token)/iu.test(value)
+  ) {
+    return undefined;
+  }
+  return value;
+};
+
+const safeInvoiceIssuedAt = (
+  value: Date | null | undefined,
+): string | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  const time = value.getTime();
+  if (!Number.isFinite(time)) {
+    return undefined;
+  }
+  return value.toISOString();
+};
 
 const constantTimeEqual = (left: string, right: string): boolean => {
   const leftBuffer = Buffer.from(left, "utf8");

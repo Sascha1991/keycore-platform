@@ -67,6 +67,23 @@ Invoice responses must not contain:
 - ciphertext, nonces or wrapped keys;
 - customer/order data outside the authenticated owned order.
 
+Customer-visible invoice projection is sanitized at the account boundary rather
+than trusting upstream adapters. `invoiceReference` is optional and shown only
+for `AVAILABLE` invoices when it is bounded to 120 characters, contains no
+control characters or CR/LF, is not a URL, is not a filesystem path, does not
+contain path traversal, and does not contain storage/credential marker words
+such as `secret`, `token`, `credential`, `storage`, `private` or `internal`.
+
+`issuedAt` is shown only for `AVAILABLE` invoices when the Date is valid and can
+be serialized as canonical ISO using `toISOString()`. Invalid or pathological
+timestamps are omitted.
+
+`downloadAvailable=true` is possible only when the projected status is
+`AVAILABLE` and the projection explicitly marks download availability. For
+`NOT_AVAILABLE`, `PENDING` and `FAILED`, customer metadata always reports
+`downloadAvailable=false` and omits invoice reference and issued timestamp.
+KS-08-06 still does not connect production invoice download infrastructure.
+
 ## Audit
 
 Successful metadata reads produce `CUSTOMER_INVOICE_METADATA_VIEWED`.

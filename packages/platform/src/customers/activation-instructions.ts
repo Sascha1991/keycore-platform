@@ -68,13 +68,8 @@ export class CustomerActivationInstructionsService {
   public constructor(
     private readonly options: CustomerActivationInstructionsServiceOptions,
   ) {
-    this.registry = new Map(
-      (options.registry ?? defaultActivationInstructionRegistry).map(
-        (entry) => {
-          validateRegistryEntry(entry);
-          return [registryKey(entry.platform, entry.instructionCode), entry];
-        },
-      ),
+    this.registry = buildRegistry(
+      options.registry ?? defaultActivationInstructionRegistry,
     );
     this.environment = options.environment ?? "LOCAL";
     this.now = options.now ?? (() => new Date());
@@ -235,6 +230,37 @@ const validateRegistryEntry = (
   }
 };
 
+const buildRegistry = (
+  entries: readonly ActivationInstructionRegistryEntry[],
+): ReadonlyMap<string, ActivationInstructionRegistryEntry> => {
+  const registry = new Map<string, ActivationInstructionRegistryEntry>();
+  for (const entry of entries) {
+    validateRegistryEntry(entry);
+    const key = registryKey(entry.platform, entry.instructionCode);
+    if (registry.has(key)) {
+      throw new Error("Activation instruction registry key is duplicated");
+    }
+    registry.set(key, immutableRegistryEntry(entry));
+  }
+  return registry;
+};
+
+const immutableRegistryEntry = (
+  entry: ActivationInstructionRegistryEntry,
+): ActivationInstructionRegistryEntry =>
+  Object.freeze({
+    ...(entry.helpUrl ? { helpUrl: entry.helpUrl } : {}),
+    instructionCode: entry.instructionCode,
+    platform: entry.platform,
+    steps: Object.freeze(
+      entry.steps.map((step) =>
+        Object.freeze({ body: step.body, label: step.label }),
+      ),
+    ),
+    title: entry.title,
+    version: entry.version,
+  });
+
 const registryKey = (platform: string, instructionCode: string): string =>
   `${platform}:${instructionCode}`;
 
@@ -269,7 +295,10 @@ const isTrustedHelpUrl = (value: string): boolean => {
     const url = new URL(value);
     return (
       url.protocol === "https:" &&
-      ["help.steampowered.com", "store.steampowered.com"].includes(url.host)
+      url.username === "" &&
+      url.password === "" &&
+      url.port === "" &&
+      ["help.steampowered.com", "store.steampowered.com"].includes(url.hostname)
     );
   } catch {
     return false;

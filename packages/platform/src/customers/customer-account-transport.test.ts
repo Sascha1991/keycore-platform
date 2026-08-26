@@ -66,7 +66,7 @@ const verificationToken = "KEYCORE_KS0803_VERIFY_TOKEN_DO_NOT_LEAK_918273";
 const sessionMarker =
   "KEYCORE_KS0803_SESSION_TOKEN_DO_NOT_LEAK_918273_abcdefghi";
 const internalFailureMarker =
-  "SQL constraint customer_sessions_token_hash_key C:\\secret\\stack TRACE_MARKER provider-error";
+  "SQL constraint customer_sessions_token_hash_key C:\\secret\\stack KEYRANO_KS0806_INTERNAL_STORAGE_SECRET_731951 TRACE_MARKER provider-error";
 const keyAccessMarker =
   "KEYCORE_KS0804_SYNTHETIC_PRODUCT_KEY_DO_NOT_USE_918273";
 const guestClaimCode = "KEYRANO_KS0805_CLAIM_CODE_DO_NOT_LEAK_842913";
@@ -175,6 +175,56 @@ describe("CustomerAccountTransportHandler", () => {
     expect(harness.decryptCalls).toBe(0);
   });
 
+  it("sanitizes owned malicious invoice projection at the transport boundary without side effects", async () => {
+    const harness = await transportHarness();
+    const maliciousOrder = orderFixture(
+      harness.customerId,
+      orderId("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+      {
+        invoice: {
+          downloadAvailable: true,
+          invoiceReference:
+            "https://storage.example/internal-secret/KEYRANO_KS0806_INTERNAL_STORAGE_SECRET_731951",
+          issuedAt: new Date(Number.NaN),
+          status: "AVAILABLE",
+        },
+      },
+    );
+    harness.accountRepository.addOrder(maliciousOrder);
+
+    const invoice = await harness.handler.getInvoiceMetadata(
+      harness.request("GET", {
+        path: { orderId: maliciousOrder.orderId },
+        route: "invoice-malicious-owned",
+      }),
+    );
+
+    expect(invoice).toEqual({
+      body: {
+        apiVersion: "v1",
+        invoice: {
+          downloadAvailable: true,
+          status: "AVAILABLE",
+        },
+        orderId: maliciousOrder.orderId,
+        status: "OK",
+      },
+      headers: {
+        "Cache-Control": "private, no-store",
+        "Content-Type": "application/json",
+        Pragma: "no-cache",
+        "X-Content-Type-Options": "nosniff",
+      },
+      statusCode: 200,
+    });
+    expect(safeJson([invoice, harness.audit.events])).not.toMatch(
+      /KEYRANO_KS0806_INTERNAL_STORAGE_SECRET_731951|storage\.example|internal-secret/iu,
+    );
+    expect(harness.keyAccessDeliveryPort.calls).toHaveLength(0);
+    expect(harness.keyAccessKeyProvider.unwraps).toBe(0);
+    expect(harness.identityRepository.orderOwnershipBindingCount).toBe(0);
+  });
+
   it("rejects injected invoice and activation authority fields before resolving sessions", async () => {
     const harness = await transportHarness();
     const invalidInvoiceRequests = [
@@ -195,6 +245,26 @@ describe("CustomerAccountTransportHandler", () => {
         query: { invoiceReference: "KR-INV-FORGED" },
         route: "invoice-query-injected",
       }),
+      harness.request("GET", {
+        body: { customerId: harness.otherCustomerId },
+        path: { orderId: String(harness.ownedOrder) },
+        route: "invoice-customer-injected",
+      }),
+      harness.request("GET", {
+        body: { invoiceStorageId: "storage-secret" },
+        path: { orderId: String(harness.ownedOrder) },
+        route: "invoice-storage-injected",
+      }),
+      harness.request("GET", {
+        body: { invoiceDownloadUrl: "https://storage.example/internal" },
+        path: { orderId: String(harness.ownedOrder) },
+        route: "invoice-download-injected",
+      }),
+      harness.request("GET", {
+        body: { externalSupplierOrderId: "external" },
+        path: { orderId: String(harness.ownedOrder) },
+        route: "invoice-supplier-injected",
+      }),
     ];
     const invalidActivationRequests = [
       harness.request("GET", {
@@ -214,6 +284,21 @@ describe("CustomerAccountTransportHandler", () => {
         query: { platform: "STEAM" },
         route: "activation-query-injected",
       }),
+      harness.request("GET", {
+        body: { customerId: harness.otherCustomerId },
+        path: { orderId: String(harness.ownedOrder) },
+        route: "activation-customer-injected",
+      }),
+      harness.request("GET", {
+        body: { instructionCode: "STEAM_ACTIVATION_CODE" },
+        path: { orderId: String(harness.ownedOrder) },
+        route: "activation-code-injected",
+      }),
+      harness.request("GET", {
+        body: { externalSupplierOrderId: "external" },
+        path: { orderId: String(harness.ownedOrder) },
+        route: "activation-supplier-injected",
+      }),
     ];
 
     for (const request of invalidInvoiceRequests) {
@@ -231,6 +316,34 @@ describe("CustomerAccountTransportHandler", () => {
       });
     }
     expect(harness.sessionService.resolveCalls).toBe(0);
+  });
+
+  it("redacts invoice and activation service errors at the transport boundary", async () => {
+    const harness = await transportHarness({ throwingDetailRepository: true });
+    const invoice = await harness.handler.getInvoiceMetadata(
+      harness.request("GET", {
+        path: { orderId: String(harness.ownedOrder) },
+        route: "invoice-throws",
+      }),
+    );
+    const activation = await harness.handler.getActivationInstructions(
+      harness.request("GET", {
+        path: { orderId: String(harness.ownedOrder) },
+        route: "activation-throws",
+      }),
+    );
+
+    for (const response of [invoice, activation]) {
+      expect(response).toMatchObject({
+        body: { code: "TEMPORARILY_UNAVAILABLE", status: "ERROR" },
+        statusCode: 503,
+      });
+      expect(safeJson(response)).not.toContain(internalFailureMarker);
+      expect(safeJson(response)).not.toMatch(
+        /SQL constraint|C:\\secret|TRACE_MARKER|INTERNAL_STORAGE_SECRET/iu,
+      );
+    }
+    expect(safeJson(harness.audit.events)).not.toContain(internalFailureMarker);
   });
 
   it("denies missing, malformed, expired and revoked sessions without account reads", async () => {
@@ -988,6 +1101,7 @@ const transportHarness = async (
     readonly environment?: "LOCAL" | "CI" | "STAGING" | "PRODUCTION";
     readonly allowedOrigins?: readonly string[];
     readonly throwingAccountRepository?: boolean;
+    readonly throwingDetailRepository?: boolean;
     readonly throwingChallengeRepository?: boolean;
     readonly claimCode?: string;
   } = {},
@@ -996,6 +1110,7 @@ const transportHarness = async (
   const identityRepository = new CountingCustomerOrderIdentityRepository();
   const accountRepository = new CountingCustomerAccountReadRepository(
     options.throwingAccountRepository === true,
+    options.throwingDetailRepository === true,
   );
   const subject = `subject-${randomUUID()}`;
   const otherSubject = `other-${randomUUID()}`;
@@ -1559,7 +1674,10 @@ class CountingCustomerAccountReadRepository extends InMemoryCustomerAccountReadR
     NonNullable<CustomerAccountOrderProjection["fulfillment"]>
   >();
 
-  public constructor(private readonly throwOnSummary = false) {
+  public constructor(
+    private readonly throwOnSummary = false,
+    private readonly throwOnDetail = false,
+  ) {
     super();
   }
 
@@ -1597,6 +1715,9 @@ class CountingCustomerAccountReadRepository extends InMemoryCustomerAccountReadR
     >[0],
   ): ReturnType<InMemoryCustomerAccountReadRepository["findOwnedOrderDetail"]> {
     this.detailCalls += 1;
+    if (this.throwOnDetail) {
+      throw new Error(internalFailureMarker);
+    }
     return super.findOwnedOrderDetail(input);
   }
 

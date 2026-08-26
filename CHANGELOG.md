@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Hardened KS-08-06 before merge by sanitizing customer-visible invoice
+  references/timestamps, enforcing invoice state/download consistency, failing
+  fast on duplicate activation registry keys, defensively copying registry
+  entries, tightening trusted help URL policy, adding transport error redaction
+  coverage and documenting Phase 08 backend/application foundation closure.
 - Added KS-08-06 customer invoice and activation-instruction foundation with
   explicit owned-order read services, transport-neutral invoice and activation
   endpoints, curated structured activation registry validation, authority-field
