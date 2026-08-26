@@ -19,6 +19,7 @@ import {
   currency,
   customerAccountTransportCookiePolicy,
   customerId,
+  extractCustomerAccountSessionCredential,
   money,
   orderId,
   woocommerceCustomerAccountTrustBoundary,
@@ -40,8 +41,11 @@ const now = new Date("2026-08-26T09:00:00.000Z");
 const allowedOrigin = "https://account.example.test";
 const csrfSecret = "customer-account-csrf-fixture-secret-32";
 const cursorSigningSecret = "customer-account-transport-cursor-secret-32";
-const verificationToken =
-  "CUSTOMER_ACCOUNT_TRANSPORT_TOKEN_01234567890123456789";
+const verificationToken = "KEYCORE_KS0803_VERIFY_TOKEN_DO_NOT_LEAK_918273";
+const sessionMarker =
+  "KEYCORE_KS0803_SESSION_TOKEN_DO_NOT_LEAK_918273_abcdefghi";
+const internalFailureMarker =
+  "SQL constraint customer_sessions_token_hash_key C:\\secret\\stack TRACE_MARKER provider-error";
 const realFulfillmentId = "fd61be5e-44ea-4914-98ae-c4404dc31779";
 
 describe("CustomerAccountTransportHandler", () => {
@@ -118,6 +122,52 @@ describe("CustomerAccountTransportHandler", () => {
     }
   });
 
+  it("fails closed on duplicate, conflicting, empty, whitespace and oversized credentials", async () => {
+    const harness = await transportHarness();
+    const valid = harness.sessionCredential;
+    expect(
+      extractCustomerAccountSessionCredential({
+        credentialSources: { authorizationHeader: [`Bearer ${valid}`] },
+      }),
+    ).toEqual({ sessionCredential: valid, status: "OK" });
+
+    const invalidInputs = [
+      { sessionCredential: "" },
+      { sessionCredential: ` ${valid}` },
+      { sessionCredential: `${valid} ` },
+      { sessionCredential: "x".repeat(129) },
+      { credentialSources: { sessionCookie: [valid, valid] } },
+      {
+        credentialSources: {
+          authorizationHeader: [`Bearer ${valid}`],
+          sessionHeader: ["different-session-token-that-is-long-enough-abcdef"],
+        },
+      },
+      { credentialSources: { authorizationHeader: [`Bearer ${valid} extra`] } },
+    ] satisfies Pick<
+      CustomerAccountTransportRequest,
+      "credentialSources" | "sessionCredential"
+    >[];
+
+    for (const input of invalidInputs) {
+      expect(extractCustomerAccountSessionCredential(input).status).not.toBe(
+        "OK",
+      );
+      const requestInput = {
+        credentialSources: input.credentialSources,
+        route: "ambiguous-credential",
+        ...("sessionCredential" in input
+          ? { sessionCredential: input.sessionCredential }
+          : {}),
+      };
+      const response = await harness.handler.getAccountSummary(
+        harness.request("GET", requestInput),
+      );
+      expect(response.statusCode).toBe(401);
+    }
+    expect(harness.accountRepository.summaryCalls).toBe(0);
+  });
+
   it("rejects invalid reads and forged authority fields before session resolution", async () => {
     const harness = await transportHarness();
     const invalids = [
@@ -125,13 +175,17 @@ describe("CustomerAccountTransportHandler", () => {
       harness.request("GET", { body: { customerId: harness.otherCustomerId } }),
       harness.request("GET", { body: { supplierOrderId: "GE1373B866F3" } }),
       harness.request("GET", { bodyByteLength: 1 }),
-      harness.request("GET", { origin: "https://evil.example.test" }),
     ];
 
     for (const request of invalids) {
       const response = await harness.handler.getAccountSummary(request);
       expect(response.statusCode).toBe(400);
     }
+    await expect(
+      harness.handler.getAccountSummary(
+        harness.request("GET", { origin: "https://evil.example.test" }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
     await expect(
       harness.handler.listOwnedOrders(
         harness.request("GET", { query: { limit: "0" }, route: "bad-limit" }),
@@ -147,6 +201,118 @@ describe("CustomerAccountTransportHandler", () => {
     ).resolves.toMatchObject({ statusCode: 400 });
     expect(harness.sessionService.resolveCalls).toBe(0);
     expect(harness.accountRepository.summaryCalls).toBe(0);
+  });
+
+  it("reuses exact origin normalization and rejects deceptive production origins", async () => {
+    const allowed = await transportHarness({
+      allowedOrigins: ["https://keyrano.de"],
+      environment: "PRODUCTION",
+    });
+    await expect(
+      allowed.handler.getAccountSummary(
+        allowed.request("GET", {
+          origin: "https://keyrano.de",
+          route: "origin-ok",
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 200 });
+
+    for (const origin of [
+      "http://keyrano.de",
+      "https://keyrano.de.attacker.example",
+      "https://attacker.example/keyrano.de",
+      "not an origin",
+    ]) {
+      const harness = await transportHarness({
+        allowedOrigins: ["https://keyrano.de"],
+        environment: "PRODUCTION",
+      });
+      await expect(
+        harness.handler.getAccountSummary(
+          harness.request("GET", { origin, route: `origin-${origin}` }),
+        ),
+      ).resolves.toMatchObject({
+        body: { code: "ACCESS_DENIED", status: "ERROR" },
+        statusCode: 403,
+      });
+      expect(harness.sessionService.resolveCalls).toBe(0);
+    }
+
+    await expect(
+      transportHarness({
+        allowedOrigins: ["http://localhost:3000"],
+        environment: "PRODUCTION",
+      }),
+    ).rejects.toThrow("origin is invalid");
+    await expect(
+      transportHarness({
+        allowedOrigins: ["http://localhost:3000"],
+        environment: "CI",
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("validates mutation content type and body size before limiter or domain mutation", async () => {
+    for (const invalidRequest of [
+      { contentType: "text/plain" },
+      { contentType: "application/json; bad parameter" },
+      { bodyByteLength: -1 },
+      { bodyByteLength: 1.5 },
+      { bodyByteLength: Number.NaN },
+      { bodyByteLength: Number.POSITIVE_INFINITY },
+      { bodyByteLength: Number.MAX_SAFE_INTEGER + 1 },
+      { bodyByteLength: 4097 },
+    ]) {
+      const limiter = new CapturingRateLimiter();
+      const harness = await transportHarness({ rateLimiter: limiter });
+      await expect(
+        harness.handler.register(
+          harness.request("POST", {
+            body: { email: "body-check@example.test" },
+            ...invalidRequest,
+          }),
+        ),
+      ).resolves.toMatchObject({ statusCode: 400 });
+      expect(limiter.keys).toHaveLength(0);
+      expect(harness.delivery.deliveries).toHaveLength(0);
+    }
+
+    const harness = await transportHarness();
+    await expect(
+      harness.handler.register(
+        harness.request("POST", {
+          body: { email: "charset@example.test" },
+          contentType: "application/json; charset=utf-8",
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 202 });
+  });
+
+  it("rejects security-sensitive DTO fields on mutation paths", async () => {
+    for (const field of [
+      "customerId",
+      "providerSubject",
+      "supplierId",
+      "externalSupplierOrderId",
+      "fulfillmentId",
+      "orderOwner",
+      "verificationState",
+      "emailVerificationState",
+      "authenticatedPrincipal",
+      "sessionPrincipal",
+      "deliveryCapability",
+    ]) {
+      const harness = await transportHarness();
+      await expect(
+        harness.handler.register(
+          harness.request("POST", {
+            body: { email: "strict@example.test", [field]: "forged" },
+            route: `strict-${field}`,
+          }),
+        ),
+      ).resolves.toMatchObject({ statusCode: 400 });
+      expect(harness.delivery.deliveries).toHaveLength(0);
+    }
   });
 
   it("keeps wrong-owner, unknown and legacy real fulfillment unavailable and never reveals keys", async () => {
@@ -284,6 +450,91 @@ describe("CustomerAccountTransportHandler", () => {
     );
   });
 
+  it("does not leak verification token through denial and failure paths", async () => {
+    const originDenied = await transportHarness();
+    const originDeniedResponse = await originDenied.handler.verifyEmail(
+      originDenied.request("POST", {
+        body: { verificationToken },
+        origin: "https://evil.example.test",
+        route: "verify-origin-denied",
+      }),
+    );
+    const limited = await transportHarness({
+      rateLimiter: new AlwaysLimitedRateLimiter(),
+    });
+    const limitedResponse = await limited.handler.verifyEmail(
+      limited.request("POST", {
+        body: { verificationToken },
+        route: "verify-rate-limited",
+      }),
+    );
+    const failed = await transportHarness({
+      throwingChallengeRepository: true,
+    });
+    const failedResponse = await failed.handler.verifyEmail(
+      failed.request("POST", {
+        body: { verificationToken },
+        route: "verify-internal-failure",
+      }),
+    );
+
+    expect(originDeniedResponse.statusCode).toBe(403);
+    expect(limitedResponse.statusCode).toBe(429);
+    expect(failedResponse).toMatchObject({
+      body: { code: "TEMPORARILY_UNAVAILABLE", status: "ERROR" },
+      statusCode: 503,
+    });
+    expect(
+      safeJson([
+        originDeniedResponse,
+        limitedResponse,
+        failedResponse,
+        originDenied.audit.events,
+        limited.audit.events,
+        failed.audit.events,
+      ]),
+    ).not.toContain(verificationToken);
+  });
+
+  it("does not expose raw session credentials in limiter keys, responses or audit", async () => {
+    const limiter = new CapturingRateLimiter();
+    const harness = await transportHarness({
+      rateLimiter: limiter,
+      sessionTokenFactory: () => sessionMarker,
+    });
+    const response = await harness.handler.linkIdentity(
+      harness.request("POST", { body: {}, route: "session-leak" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(
+      safeJson([response, limiter.keys, harness.audit.events]),
+    ).not.toContain(sessionMarker);
+    expect(limiter.keys).toHaveLength(1);
+    expect(limiter.keys[0]).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("sanitizes invalid correlation IDs and redacts internal failures", async () => {
+    const harness = await transportHarness({ throwingAccountRepository: true });
+    const response = await harness.handler.getAccountSummary(
+      harness.request("GET", {
+        correlationIdHeader: `bad\r\nx:${internalFailureMarker}`,
+        route: "redacted",
+      }),
+    );
+
+    expect(response).toMatchObject({
+      body: { code: "TEMPORARILY_UNAVAILABLE", status: "ERROR" },
+      statusCode: 503,
+    });
+    expect(
+      response.body.status === "ERROR" ? response.body.correlationId : "",
+    ).toMatch(/^customer-account-account-summary-/u);
+    expect(safeJson(response)).not.toMatch(
+      /SQL constraint|C:\\secret|TRACE_MARKER|provider-error/iu,
+    );
+  });
+
   it("links identity only through authenticated verified principal and trusted adapter evidence", async () => {
     const harness = await transportHarness({
       identitySubjectForLinking: "trusted-link-subject",
@@ -346,6 +597,45 @@ describe("CustomerAccountTransportHandler", () => {
     expect(harness.identityRepository.orderOwnershipBindingCount).toBe(0);
   });
 
+  it("preserves account pagination semantics and delegates opaque cursor validation", async () => {
+    for (const invalidLimit of [
+      "0",
+      "-1",
+      "1.5",
+      "NaN",
+      "Infinity",
+      String(Number.MAX_SAFE_INTEGER + 1),
+    ]) {
+      const harness = await transportHarness();
+      await expect(
+        harness.handler.listOwnedOrders(
+          harness.request("GET", {
+            query: { limit: invalidLimit },
+            route: `limit-${invalidLimit}`,
+          }),
+        ),
+      ).resolves.toMatchObject({ statusCode: 400 });
+      expect(harness.accountRepository.listCalls).toEqual([]);
+    }
+
+    const harness = await transportHarness();
+    await harness.handler.listOwnedOrders(
+      harness.request("GET", {
+        query: { limit: "1000" },
+        route: "limit-clamp",
+      }),
+    );
+    expect(harness.accountRepository.listCalls).toEqual([100]);
+    await expect(
+      harness.handler.listOwnedOrders(
+        harness.request("GET", {
+          query: { cursor: "../not-opaque" },
+          route: "bad-cursor",
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 400 });
+  });
+
   it("defines secure browser cookie and explicit production origin policy", () => {
     expect(customerAccountTransportCookiePolicy).toContain("HttpOnly");
     expect(customerAccountTransportCookiePolicy).toContain("Secure");
@@ -369,12 +659,19 @@ const transportHarness = async (
     readonly verifiedCustomer?: boolean;
     readonly identitySubjectForLinking?: string;
     readonly registrationTokenFactory?: () => string;
+    readonly sessionTokenFactory?: () => string;
     readonly rateLimiter?: AuthenticatedCustomerDeliveryRateLimiter;
+    readonly environment?: "LOCAL" | "CI" | "STAGING" | "PRODUCTION";
+    readonly allowedOrigins?: readonly string[];
+    readonly throwingAccountRepository?: boolean;
+    readonly throwingChallengeRepository?: boolean;
   } = {},
 ) => {
   const audit = new CapturingAudit();
   const identityRepository = new CountingCustomerOrderIdentityRepository();
-  const accountRepository = new CountingCustomerAccountReadRepository();
+  const accountRepository = new CountingCustomerAccountReadRepository(
+    options.throwingAccountRepository === true,
+  );
   const subject = `subject-${randomUUID()}`;
   const otherSubject = `other-${randomUUID()}`;
   const created = await createCustomer(identityRepository, subject, {
@@ -426,6 +723,9 @@ const transportHarness = async (
     authority: new FakeAuthenticationAuthority(assertion(subject)),
     now: () => authNow,
     repository: authRepository,
+    ...(options.sessionTokenFactory
+      ? { tokenFactory: options.sessionTokenFactory }
+      : {}),
   });
   const createdSession = await sessionService.createSession({
     correlationId: correlationId("customer-account-transport-session"),
@@ -446,9 +746,9 @@ const transportHarness = async (
   const delivery = new FakeCustomerEmailVerificationDeliveryPort();
   const registrationService = new CustomerRegistrationService({
     audit,
-    challengeRepository: new InMemoryCustomerRegistrationChallengeRepository(
-      identityRepository,
-    ),
+    challengeRepository: options.throwingChallengeRepository
+      ? new ThrowingChallengeRepository()
+      : new InMemoryCustomerRegistrationChallengeRepository(identityRepository),
     delivery,
     identityBindingAuthority: new FakeIdentityAuthority(
       options.identitySubjectForLinking ?? `link-${randomUUID()}`,
@@ -472,9 +772,12 @@ const transportHarness = async (
       now: () => now,
       repository: accountRepository,
     }),
-    config: { allowedOrigins: [allowedOrigin], maxBodyBytes: 4096 },
+    config: {
+      allowedOrigins: options.allowedOrigins ?? [allowedOrigin],
+      maxBodyBytes: 4096,
+    },
     csrfPolicy: csrf,
-    environment: "CI",
+    environment: options.environment ?? "CI",
     now: () => now,
     rateLimiter:
       options.rateLimiter ??
@@ -497,6 +800,7 @@ const transportHarness = async (
     legacyRealOrder,
     otherCustomerId: other.customerId,
     ownedOrder,
+    sessionCredential: sessionToken,
     sessionService,
     wrongOwnerOrder,
     request: (
@@ -507,26 +811,39 @@ const transportHarness = async (
         readonly query?: Readonly<Record<string, string>>;
         readonly path?: Readonly<Record<string, string>>;
         readonly bodyByteLength?: number;
+        readonly contentType?: string;
+        readonly correlationIdHeader?: string;
+        readonly credentialSources?: CustomerAccountTransportRequest["credentialSources"];
         readonly origin?: string | null;
+        readonly sessionCredential?: string | null;
       } = {},
     ): CustomerAccountTransportRequest => ({
       bodyByteLength:
         input.bodyByteLength ??
         (method === "GET" ? 0 : safeJson(input.body ?? {}).length),
-      correlationIdHeader: `corr-${input.route ?? method.toLowerCase()}`,
+      correlationIdHeader:
+        input.correlationIdHeader ??
+        `corr-${input.route ?? method.toLowerCase()}`,
       csrfCookie: csrfToken,
       csrfHeader: csrfToken,
       method,
       origin: input.origin === undefined ? allowedOrigin : input.origin,
       remoteAddress: "203.0.113.11",
       sessionCredential:
-        options.sessionMode === "missing"
-          ? null
-          : options.sessionMode === "malformed"
-            ? "not a session"
-            : sessionToken,
+        input.sessionCredential === undefined
+          ? options.sessionMode === "missing"
+            ? null
+            : options.sessionMode === "malformed"
+              ? "not a session"
+              : sessionToken
+          : input.sessionCredential,
       ...(input.body ? { body: input.body } : {}),
-      ...(method === "POST" ? { contentType: "application/json" } : {}),
+      ...(input.credentialSources
+        ? { credentialSources: input.credentialSources }
+        : {}),
+      ...(method === "POST"
+        ? { contentType: input.contentType ?? "application/json" }
+        : {}),
       ...(input.path ? { path: input.path } : {}),
       ...(input.query ? { query: input.query } : {}),
     }),
@@ -723,10 +1040,15 @@ class InstrumentedCustomerAuthenticationService extends CustomerAuthenticationSe
 class CountingCustomerAccountReadRepository extends InMemoryCustomerAccountReadRepository {
   public summaryCalls = 0;
   public detailCalls = 0;
+  public readonly listCalls: number[] = [];
   private readonly fulfillments = new Map<
     string,
     NonNullable<CustomerAccountOrderProjection["fulfillment"]>
   >();
+
+  public constructor(private readonly throwOnSummary = false) {
+    super();
+  }
 
   public override addOrder(order: CustomerAccountOrderProjection): void {
     super.addOrder(order);
@@ -741,7 +1063,19 @@ class CountingCustomerAccountReadRepository extends InMemoryCustomerAccountReadR
     >[0],
   ): ReturnType<InMemoryCustomerAccountReadRepository["findAccountSummary"]> {
     this.summaryCalls += 1;
+    if (this.throwOnSummary) {
+      throw new Error(internalFailureMarker);
+    }
     return super.findAccountSummary(input);
+  }
+
+  public override async listOwnedOrders(
+    input: Parameters<
+      InMemoryCustomerAccountReadRepository["listOwnedOrders"]
+    >[0],
+  ): ReturnType<InMemoryCustomerAccountReadRepository["listOwnedOrders"]> {
+    this.listCalls.push(input.limit);
+    return super.listOwnedOrders(input);
   }
 
   public override async findOwnedOrderDetail(
@@ -780,6 +1114,28 @@ class AlwaysLimitedRateLimiter implements AuthenticatedCustomerDeliveryRateLimit
 class ThrowingRateLimiter implements AuthenticatedCustomerDeliveryRateLimiter {
   public async check(): Promise<never> {
     throw new Error("synthetic limiter outage");
+  }
+}
+
+class CapturingRateLimiter implements AuthenticatedCustomerDeliveryRateLimiter {
+  public readonly keys: string[] = [];
+
+  public async check(input: {
+    readonly key: string;
+    readonly now: Date;
+  }): Promise<{ readonly status: "ALLOWED" }> {
+    this.keys.push(input.key);
+    return { status: "ALLOWED" };
+  }
+}
+
+class ThrowingChallengeRepository extends InMemoryCustomerRegistrationChallengeRepository {
+  public constructor() {
+    super(new InMemoryCustomerOrderIdentityRepository());
+  }
+
+  public override async consumeChallenge(): Promise<never> {
+    throw new Error(`${internalFailureMarker} ${verificationToken}`);
   }
 }
 

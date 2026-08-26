@@ -6,6 +6,7 @@ import { correlationId } from "../domain/identifiers.js";
 import type { CustomerAuthenticationService } from "./customer-authentication.js";
 import type {
   CustomerAccountService,
+  CustomerAccountFailureCode,
   CustomerOrderDetail,
   CustomerOrderHistoryPage,
   CustomerAccountSummary,
@@ -16,6 +17,7 @@ import type {
   CustomerIdentityLinkResult,
   CustomerRegistrationResult,
 } from "./customer-registration.js";
+import type { AuthenticatedCustomerPrincipal } from "./customer-order-identity.js";
 import type {
   AuthenticatedCustomerDeliveryCsrfPolicy,
   AuthenticatedCustomerDeliveryRateLimiter,
@@ -41,6 +43,7 @@ export interface CustomerAccountTransportRequest {
   readonly contentType?: string | null;
   readonly bodyByteLength: number;
   readonly sessionCredential?: string | null;
+  readonly credentialSources?: CustomerAccountCredentialSources;
   readonly csrfHeader?: string | null;
   readonly csrfCookie?: string | null;
   readonly origin?: string | null;
@@ -49,6 +52,12 @@ export interface CustomerAccountTransportRequest {
   readonly query?: Readonly<Record<string, string | undefined>>;
   readonly path?: Readonly<Record<string, string | undefined>>;
   readonly body?: Readonly<Record<string, unknown>>;
+}
+
+export interface CustomerAccountCredentialSources {
+  readonly sessionCookie?: readonly string[];
+  readonly authorizationHeader?: readonly string[];
+  readonly sessionHeader?: readonly string[];
 }
 
 export interface CustomerAccountTransportResponse {
@@ -155,16 +164,22 @@ export class CustomerAccountTransportHandler {
       return common.response;
     }
     const principal = await this.resolvePrincipal(
-      request,
+      common.sessionCredential,
       common.correlationId,
     );
     if (!principal) {
       return this.error(401, "AUTHENTICATION_REQUIRED", common.correlationId);
     }
-    const result = await this.options.accountService.getAccountSummary({
-      correlationId: common.correlationId,
-      principal,
-    });
+    const result = await this.safeAccountCall(
+      this.options.accountService.getAccountSummary({
+        correlationId: common.correlationId,
+        principal,
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
     if (result.status !== "OK") {
       return this.mapAccountFailure(result.code, common.correlationId);
     }
@@ -195,18 +210,24 @@ export class CustomerAccountTransportHandler {
       return this.error(400, "BAD_REQUEST", common.correlationId);
     }
     const principal = await this.resolvePrincipal(
-      request,
+      common.sessionCredential,
       common.correlationId,
     );
     if (!principal) {
       return this.error(401, "AUTHENTICATION_REQUIRED", common.correlationId);
     }
-    const result = await this.options.accountService.listOwnedOrders({
-      correlationId: common.correlationId,
-      ...(cursor ? { cursor } : {}),
-      ...(limit === undefined ? {} : { limit }),
-      principal,
-    });
+    const result = await this.safeAccountCall(
+      this.options.accountService.listOwnedOrders({
+        correlationId: common.correlationId,
+        ...(cursor ? { cursor } : {}),
+        ...(limit === undefined ? {} : { limit }),
+        principal,
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
     if (result.status !== "OK") {
       return this.mapAccountFailure(result.code, common.correlationId);
     }
@@ -233,17 +254,23 @@ export class CustomerAccountTransportHandler {
       return this.error(400, "BAD_REQUEST", common.correlationId);
     }
     const principal = await this.resolvePrincipal(
-      request,
+      common.sessionCredential,
       common.correlationId,
     );
     if (!principal) {
       return this.error(401, "AUTHENTICATION_REQUIRED", common.correlationId);
     }
-    const result = await this.options.accountService.getOwnedOrderDetail({
-      correlationId: common.correlationId,
-      orderId: rawOrderId,
-      principal,
-    });
+    const result = await this.safeAccountCall(
+      this.options.accountService.getOwnedOrderDetail({
+        correlationId: common.correlationId,
+        orderId: rawOrderId,
+        principal,
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
     if (result.status !== "OK") {
       return this.mapAccountFailure(result.code, common.correlationId);
     }
@@ -273,13 +300,19 @@ export class CustomerAccountTransportHandler {
     if (limited !== "ALLOWED") {
       return this.limiterError(limited, common.correlationId);
     }
-    const result = await this.options.registrationService.register({
-      correlationId: common.correlationId,
-      email,
-      ...(request.remoteAddress
-        ? { ipHash: stableHash(request.remoteAddress) }
-        : {}),
-    });
+    const result = await this.safeRegistrationCall(
+      this.options.registrationService.register({
+        correlationId: common.correlationId,
+        email,
+        ...(request.remoteAddress
+          ? { ipHash: stableHash(request.remoteAddress) }
+          : {}),
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
     if (result.status === "REGISTRATION_ACCEPTED") {
       return {
         body: {
@@ -315,10 +348,16 @@ export class CustomerAccountTransportHandler {
     if (limited !== "ALLOWED") {
       return this.limiterError(limited, common.correlationId);
     }
-    const result = await this.options.registrationService.verifyEmail({
-      correlationId: common.correlationId,
-      rawVerificationToken: token,
-    });
+    const result = await this.safeVerificationCall(
+      this.options.registrationService.verifyEmail({
+        correlationId: common.correlationId,
+        rawVerificationToken: token,
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
     return {
       body: {
         apiVersion: customerAccountTransportApiVersion,
@@ -343,7 +382,7 @@ export class CustomerAccountTransportHandler {
       return this.error(400, "BAD_REQUEST", common.correlationId);
     }
     const principal = await this.resolvePrincipal(
-      request,
+      common.sessionCredential,
       common.correlationId,
     );
     if (!principal) {
@@ -357,10 +396,16 @@ export class CustomerAccountTransportHandler {
     if (limited !== "ALLOWED") {
       return this.limiterError(limited, common.correlationId);
     }
-    const result = await this.options.registrationService.linkExternalIdentity({
-      correlationId: common.correlationId,
-      principal,
-    });
+    const result = await this.safeIdentityLinkCall(
+      this.options.registrationService.linkExternalIdentity({
+        correlationId: common.correlationId,
+        principal,
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
     if (result.status === "BOUND" || result.status === "ALREADY_BOUND") {
       return {
         body: {
@@ -384,7 +429,11 @@ export class CustomerAccountTransportHandler {
     request: CustomerAccountTransportRequest,
     route: string,
   ):
-    | { readonly status: "VALID"; readonly correlationId: CorrelationId }
+    | {
+        readonly status: "VALID";
+        readonly correlationId: CorrelationId;
+        readonly sessionCredential: string;
+      }
     | {
         readonly status: "INVALID";
         readonly response: CustomerAccountTransportResponse;
@@ -393,21 +442,31 @@ export class CustomerAccountTransportHandler {
     if (
       request.method !== "GET" ||
       request.bodyByteLength !== 0 ||
-      hasDangerousAuthorityFields(request.body) ||
-      !this.originAllowed(request.origin)
+      hasDangerousAuthorityFields(request.body)
     ) {
       return {
         response: this.error(400, "BAD_REQUEST", correlation),
         status: "INVALID",
       };
     }
-    if (!request.sessionCredential) {
+    if (!this.originAllowed(request.origin)) {
+      return {
+        response: this.error(403, "ACCESS_DENIED", correlation),
+        status: "INVALID",
+      };
+    }
+    const credential = extractCustomerAccountSessionCredential(request);
+    if (credential.status !== "OK") {
       return {
         response: this.error(401, "AUTHENTICATION_REQUIRED", correlation),
         status: "INVALID",
       };
     }
-    return { correlationId: correlation, status: "VALID" };
+    return {
+      correlationId: correlation,
+      sessionCredential: credential.sessionCredential,
+      status: "VALID",
+    };
   }
 
   private validatePublicMutation(
@@ -424,11 +483,16 @@ export class CustomerAccountTransportHandler {
       request.method !== "POST" ||
       !isJsonContentType(request.contentType) ||
       !this.validBodySize(request.bodyByteLength) ||
-      !this.originAllowed(request.origin) ||
       hasDangerousAuthorityFields(request.body)
     ) {
       return {
         response: this.error(400, "BAD_REQUEST", correlation),
+        status: "INVALID",
+      };
+    }
+    if (!this.originAllowed(request.origin)) {
+      return {
+        response: this.error(403, "ACCESS_DENIED", correlation),
         status: "INVALID",
       };
     }
@@ -452,7 +516,8 @@ export class CustomerAccountTransportHandler {
     if (mutation.status !== "VALID") {
       return mutation;
     }
-    if (!request.sessionCredential) {
+    const credential = extractCustomerAccountSessionCredential(request);
+    if (credential.status !== "OK") {
       return {
         response: this.error(
           401,
@@ -466,7 +531,7 @@ export class CustomerAccountTransportHandler {
       const csrf = this.options.csrfPolicy.validate({
         csrfCookie: request.csrfCookie,
         csrfHeader: request.csrfHeader,
-        sessionCredential: request.sessionCredential,
+        sessionCredential: credential.sessionCredential,
       });
       if (csrf.status !== "VALID") {
         return {
@@ -482,23 +547,123 @@ export class CustomerAccountTransportHandler {
     }
     return {
       correlationId: mutation.correlationId,
-      sessionCredential: request.sessionCredential,
+      sessionCredential: credential.sessionCredential,
       status: "VALID",
     };
   }
 
   private async resolvePrincipal(
-    request: CustomerAccountTransportRequest,
+    sessionCredential: string,
     correlationIdValue: CorrelationId,
-  ) {
-    if (!request.sessionCredential) {
-      return null;
-    }
+  ): Promise<AuthenticatedCustomerPrincipal | null> {
     const result = await this.options.sessionService.resolveSession({
       correlationId: correlationIdValue,
-      rawSessionToken: request.sessionCredential,
+      rawSessionToken: sessionCredential,
     });
     return result.status === "AUTHENTICATED" ? result.principal : null;
+  }
+
+  private async safeAccountCall<
+    TResult extends
+      | { readonly status: "OK" }
+      | {
+          readonly status: "DENIED";
+          readonly code: CustomerAccountFailureCode;
+        },
+  >(
+    operation: Promise<TResult>,
+    correlationIdValue: CorrelationId,
+  ): Promise<
+    | TResult
+    | {
+        readonly status: "TRANSPORT_FAILURE";
+        readonly response: CustomerAccountTransportResponse;
+      }
+  > {
+    try {
+      return await operation;
+    } catch {
+      return {
+        response: this.error(
+          503,
+          "TEMPORARILY_UNAVAILABLE",
+          correlationIdValue,
+        ),
+        status: "TRANSPORT_FAILURE",
+      };
+    }
+  }
+
+  private async safeRegistrationCall(
+    operation: Promise<CustomerRegistrationResult>,
+    correlationIdValue: CorrelationId,
+  ): Promise<
+    | CustomerRegistrationResult
+    | {
+        readonly status: "TRANSPORT_FAILURE";
+        readonly response: CustomerAccountTransportResponse;
+      }
+  > {
+    try {
+      return await operation;
+    } catch {
+      return {
+        response: this.error(
+          503,
+          "TEMPORARILY_UNAVAILABLE",
+          correlationIdValue,
+        ),
+        status: "TRANSPORT_FAILURE",
+      };
+    }
+  }
+
+  private async safeVerificationCall(
+    operation: Promise<CustomerEmailVerificationPublicResult>,
+    correlationIdValue: CorrelationId,
+  ): Promise<
+    | CustomerEmailVerificationPublicResult
+    | {
+        readonly status: "TRANSPORT_FAILURE";
+        readonly response: CustomerAccountTransportResponse;
+      }
+  > {
+    try {
+      return await operation;
+    } catch {
+      return {
+        response: this.error(
+          503,
+          "TEMPORARILY_UNAVAILABLE",
+          correlationIdValue,
+        ),
+        status: "TRANSPORT_FAILURE",
+      };
+    }
+  }
+
+  private async safeIdentityLinkCall(
+    operation: Promise<CustomerIdentityLinkResult>,
+    correlationIdValue: CorrelationId,
+  ): Promise<
+    | CustomerIdentityLinkResult
+    | {
+        readonly status: "TRANSPORT_FAILURE";
+        readonly response: CustomerAccountTransportResponse;
+      }
+  > {
+    try {
+      return await operation;
+    } catch {
+      return {
+        response: this.error(
+          503,
+          "TEMPORARILY_UNAVAILABLE",
+          correlationIdValue,
+        ),
+        status: "TRANSPORT_FAILURE",
+      };
+    }
   }
 
   private originAllowed(origin: string | null | undefined): boolean {
@@ -625,16 +790,61 @@ export const woocommerceCustomerAccountTrustBoundary = {
   sourceOfTruth: "KEYCORE",
 } as const;
 
+export const extractCustomerAccountSessionCredential = (
+  request: Pick<
+    CustomerAccountTransportRequest,
+    "sessionCredential" | "credentialSources"
+  >,
+):
+  | { readonly status: "OK"; readonly sessionCredential: string }
+  | {
+      readonly status: "MISSING" | "AMBIGUOUS" | "INVALID";
+    } => {
+  const candidates = [
+    ...(request.sessionCredential === undefined
+      ? []
+      : [request.sessionCredential]),
+    ...(request.credentialSources?.sessionCookie ?? []),
+    ...(request.credentialSources?.authorizationHeader ?? []).map(
+      parseBearerCredential,
+    ),
+    ...(request.credentialSources?.sessionHeader ?? []),
+  ];
+  const present = candidates.filter(
+    (candidate): candidate is string =>
+      candidate !== null && candidate !== undefined,
+  );
+  if (present.length === 0) {
+    return { status: "MISSING" };
+  }
+  if (present.some((candidate) => candidate.trim() !== candidate)) {
+    return { status: "INVALID" };
+  }
+  if (present.some((candidate) => !isSafeSessionCredential(candidate))) {
+    return { status: "INVALID" };
+  }
+  const unique = new Set(present);
+  if (present.length !== 1 || unique.size !== 1) {
+    return { status: "AMBIGUOUS" };
+  }
+  const [sessionCredential] = present;
+  if (!sessionCredential) {
+    return { status: "MISSING" };
+  }
+  return { sessionCredential, status: "OK" };
+};
+
 const parseLimit = (
   raw: string | undefined,
 ): number | undefined | "INVALID" => {
   if (raw === undefined) {
     return undefined;
   }
-  if (!/^[1-9][0-9]{0,2}$/u.test(raw)) {
+  if (!/^[1-9][0-9]*$/u.test(raw)) {
     return "INVALID";
   }
-  return Number(raw);
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : "INVALID";
 };
 
 const onlyFields = (
@@ -659,8 +869,14 @@ const hasDangerousAuthorityFields = (
     "providerSubject",
     "orderOwner",
     "supplierOrderId",
+    "supplierId",
     "externalSupplierOrderId",
+    "fulfillmentId",
     "fulfillmentReference",
+    "verificationState",
+    "emailVerificationState",
+    "authenticatedPrincipal",
+    "sessionPrincipal",
     "deliveryCapability",
     "rawSessionToken",
   ].some((field) => field in body);
@@ -696,6 +912,12 @@ const isSafeUuid = (value: string | undefined): value is string =>
 
 const isSafeCursor = (value: string): boolean =>
   value.length <= 1024 && /^[A-Za-z0-9_.-]+$/u.test(value);
+
+const isSafeSessionCredential = (value: string): boolean =>
+  value.length >= 43 && value.length <= 128 && /^[A-Za-z0-9_-]+$/u.test(value);
+
+const parseBearerCredential = (value: string): string =>
+  value.startsWith("Bearer ") ? value.slice("Bearer ".length) : value;
 
 const stableHash = (value: string): string =>
   createHash("sha256").update(value, "utf8").digest("hex");

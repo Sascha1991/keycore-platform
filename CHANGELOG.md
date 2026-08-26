@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Hardened KS-08-03 customer account transport boundaries with deterministic
+  fail-closed credential-source extraction, broader authority-field rejection,
+  redacted internal-failure mapping, origin/content/body/correlation regression
+  tests, token-leakage tests and pagination clamp preservation.
 - Added KS-08-03 customer account transport and shop integration foundation
   with transport-neutral v1 account/registration handlers, session-backed
   principal resolution, strict request DTO validation, Origin/CSRF/rate-limit
