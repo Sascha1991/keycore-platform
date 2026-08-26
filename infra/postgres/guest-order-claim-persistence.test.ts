@@ -156,7 +156,7 @@ describePostgres("PostgresGuestOrderClaimRepository", () => {
         }),
       ).resolves.toMatchObject({
         reasonCode: "CHECKOUT_EMAIL_SNAPSHOT_REQUIRED",
-        status: "ORDER_NOT_CLAIMABLE",
+        status: "CLAIM_ISSUE_DENIED",
       });
       await expect(
         database.query(
