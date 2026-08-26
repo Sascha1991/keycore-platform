@@ -82,6 +82,13 @@ production/integration work.
 
 Risk rules, manual review, velocity limits, dispute evidence, support tickets and supplier claim workflow.
 
+KS-09-01 adds deterministic fraud risk evaluation, policy-versioned persisted
+risk decisions, fact-fingerprint idempotency, a durable fraud manual-review
+case foundation, trusted review authority boundary and a fail-closed downstream
+fraud-clearance guard while leaving velocity limits, dispute evidence, support
+tickets, supplier claim workflow, production operator UI and external fraud
+providers for later Phase 09 tasks.
+
 ## Phase 10 – Monitoring and Operations
 
 Dashboards, alerts, health checks, dead-letter queues, backup/restore, runbooks and emergency controls.

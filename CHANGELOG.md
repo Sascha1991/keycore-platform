@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added KS-09-01 fraud risk and manual-review foundation with deterministic
+  trusted-fact rule evaluation, policy-versioned persisted decisions,
+  fact-fingerprint idempotency, PostgreSQL migration 020, one-active-fraud-case
+  review persistence, trusted review authority boundary, fail-closed
+  downstream clearance guard and documentation while leaving velocity limits,
+  external fraud providers, production operator UI, support tickets, dispute
+  evidence, supplier claims, Kinguin calls, Stripe mutations and real key
+  reveal out of scope.
 - Hardened KS-08-06 before merge by sanitizing customer-visible invoice
   references/timestamps, enforcing invoice state/download consistency, failing
   fast on duplicate activation registry keys, defensively copying registry
