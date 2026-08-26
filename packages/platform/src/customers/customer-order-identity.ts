@@ -179,6 +179,7 @@ export type OrderOwnershipBindingRepositoryResult =
 export interface OwnedOrderSnapshot {
   readonly orderId: OrderId;
   readonly customerId: CustomerId | null;
+  readonly checkoutEmailNormalized?: string | null;
   readonly recordVersion: number;
   readonly status: string;
   readonly paymentStatus: string;

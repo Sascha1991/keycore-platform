@@ -37,6 +37,7 @@ interface BindingRow {
 interface OwnedOrderRow {
   readonly id: string;
   readonly customer_id: string | null;
+  readonly checkout_email_normalized: string | null;
   readonly record_version: number;
   readonly status: string;
   readonly payment_status: string;
@@ -326,7 +327,7 @@ const bindingReturning = `
 `;
 
 const ownedOrderReturning = `
-  id::text, customer_id::text, record_version, status, payment_status,
+  id::text, customer_id::text, checkout_email_normalized, record_version, status, payment_status,
   procurement_status, fulfillment_status, updated_at
 `;
 
@@ -442,6 +443,7 @@ const bindingFromRow = (row: BindingRow): CustomerIdentityBinding => ({
 
 const orderFromRow = (row: OwnedOrderRow): OwnedOrderSnapshot => ({
   customerId: row.customer_id ? customerId(row.customer_id) : null,
+  checkoutEmailNormalized: row.checkout_email_normalized,
   fulfillmentStatus: row.fulfillment_status,
   orderId: orderId(row.id),
   paymentStatus: row.payment_status,

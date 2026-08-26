@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added KS-08-05 account-required guest order claim foundation with
+  purchase-time checkout email snapshots, hash-only one-time Kaufcode
+  credentials, trusted claim issuance/consume authority, authenticated
+  verified-account claim transport, PostgreSQL migration 019 and documentation
+  while leaving production guest claim email, production HTTP, WooCommerce,
+  frontend and real key reveal disabled.
 - Hardened KS-08-04 customer key access review coverage for stale account
   metadata, current persisted delivery authorization, cross-customer capability
   execution, order/fulfillment confusion, synthetic secret/capability/session

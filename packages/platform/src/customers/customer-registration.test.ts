@@ -418,8 +418,9 @@ describe("CustomerRegistrationService", () => {
 
   it("does not claim orders by email equality and only trusted synthetic evidence can bind unowned orders", async () => {
     const targetOrder = orderId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1");
+    const claimCode = "claim-code-with-enough-entropy-for-registration-test";
     const harness = registrationHarness({
-      claimAuthority: new FakeClaimAuthority(targetOrder),
+      claimAuthority: new FakeClaimAuthority(targetOrder, claimCode),
     });
     const owner = await registerAndVerify(harness, "claim@example.com");
     harness.identityRepository.addOrder({
@@ -434,6 +435,7 @@ describe("CustomerRegistrationService", () => {
     });
     await expect(
       registrationHarness().service.claimGuestOrder({
+        claimCode,
         correlationId: correlationId("corr-claim-email-only"),
         orderId: targetOrder,
         principal: principal(owner),
@@ -443,6 +445,7 @@ describe("CustomerRegistrationService", () => {
     const race = await Promise.all(
       Array.from({ length: 10 }, (_, index) =>
         harness.service.claimGuestOrder({
+          claimCode,
           correlationId: correlationId(`corr-claim-${index}`),
           orderId: targetOrder,
           principal: principal(owner),
@@ -458,6 +461,7 @@ describe("CustomerRegistrationService", () => {
     const other = await registerAndVerify(harness, "claim-other@example.com");
     await expect(
       harness.service.claimGuestOrder({
+        claimCode,
         correlationId: correlationId("corr-claim-conflict"),
         orderId: targetOrder,
         principal: principal(other),
@@ -474,6 +478,7 @@ describe("CustomerRegistrationService", () => {
     const realOrder = orderId("fd61be5e-44ea-4914-98ae-c4404dc31779");
     await expect(
       harness.service.claimGuestOrder({
+        claimCode: "legacy-claim-code-with-enough-entropy-for-denial",
         correlationId: correlationId("corr-real-claim-denied"),
         orderId: realOrder,
         principal: principal(customer),
@@ -575,21 +580,25 @@ class FakeIdentityAuthority implements CustomerIdentityBindingAuthorityPort {
 }
 
 class FakeClaimAuthority implements GuestOrderClaimAuthorityPort {
-  public constructor(private readonly order: OrderId) {}
+  public constructor(
+    private readonly order: OrderId,
+    private readonly claimCode: string,
+  ) {}
 
   public async verifiedGuestOrderClaim(input: {
     readonly principal: AuthenticatedCustomerPrincipal;
-    readonly orderId: OrderId;
+    readonly claimCode: string;
+    readonly orderId?: OrderId;
     readonly correlationId: CorrelationId;
   }) {
-    return input.orderId === this.order
+    return input.orderId === this.order && input.claimCode === this.claimCode
       ? {
           evidence: {
             actorId: "synthetic-claim-test",
             actorType: "SERVICE" as const,
             customerId: input.principal.customerId,
             expectedOrderVersion: 1,
-            orderId: input.orderId,
+            orderId: this.order,
             providerEvidenceId: `claim:${input.correlationId}`,
           },
           status: "AUTHORIZED" as const,

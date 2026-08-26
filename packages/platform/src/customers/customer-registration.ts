@@ -20,6 +20,7 @@ import {
   CustomerOrderIdentityService,
   normalizeCustomerEmail,
 } from "./customer-order-identity.js";
+import { isPlausibleGuestOrderClaimCode } from "./guest-order-claim.js";
 
 export type CustomerEmailVerificationPurpose = "EMAIL_VERIFICATION";
 
@@ -134,7 +135,8 @@ export interface GuestOrderClaimEvidence {
 export interface GuestOrderClaimAuthorityPort {
   verifiedGuestOrderClaim(input: {
     readonly principal: AuthenticatedCustomerPrincipal;
-    readonly orderId: OrderId;
+    readonly claimCode: string;
+    readonly orderId?: OrderId;
     readonly correlationId: CorrelationId;
   }): Promise<
     | {
@@ -196,7 +198,7 @@ export type CustomerIdentityLinkResult =
     };
 
 export type CustomerOrderClaimResult =
-  | { readonly status: "CLAIMED" | "ALREADY_OWNED" }
+  | { readonly status: "CLAIMED" | "ALREADY_OWNED"; readonly orderId: OrderId }
   | {
       readonly status:
         | "AUTHENTICATION_REQUIRED"
@@ -396,9 +398,20 @@ export class CustomerRegistrationService {
 
   public async claimGuestOrder(input: {
     readonly principal: AuthenticatedCustomerPrincipal | null;
-    readonly orderId: OrderId;
+    readonly claimCode: string;
+    readonly orderId?: OrderId;
     readonly correlationId: CorrelationId;
   }): Promise<CustomerOrderClaimResult> {
+    const auditOrderId = input.orderId ?? ("unknown-order" as OrderId);
+    if (!isPlausibleGuestOrderClaimCode(input.claimCode)) {
+      await this.auditOrderClaimDenied(
+        input.correlationId,
+        input.principal?.customerId ?? null,
+        auditOrderId,
+        "CLAIM_INVALID",
+      );
+      return { status: "CLAIM_DENIED" };
+    }
     const principalCheck = await this.requireAuthenticatedVerifiedCustomer(
       input.principal,
     );
@@ -406,7 +419,7 @@ export class CustomerRegistrationService {
       await this.auditOrderClaimDenied(
         input.correlationId,
         input.principal?.customerId ?? null,
-        input.orderId,
+        auditOrderId,
         principalCheck.status,
       );
       return { status: principalCheck.status };
@@ -416,19 +429,25 @@ export class CustomerRegistrationService {
       return { status: "AUTHENTICATION_REQUIRED" };
     }
     const authority = await this.claimAuthority.verifiedGuestOrderClaim({
+      claimCode: input.claimCode,
       correlationId: input.correlationId,
-      orderId: input.orderId,
+      ...(input.orderId ? { orderId: input.orderId } : {}),
       principal,
     });
+    const claimedOrderId =
+      authority.status === "AUTHORIZED"
+        ? authority.evidence.orderId
+        : auditOrderId;
     if (
       authority.status !== "AUTHORIZED" ||
       authority.evidence.customerId !== principalCheck.customer.id ||
-      authority.evidence.orderId !== input.orderId
+      (input.orderId !== undefined &&
+        authority.evidence.orderId !== input.orderId)
     ) {
       await this.auditOrderClaimDenied(
         input.correlationId,
         principalCheck.customer.id,
-        input.orderId,
+        claimedOrderId,
         authority.status === "DENIED"
           ? (authority.reasonCode ?? "UNTRUSTED_CLAIM_AUTHORITY")
           : "CLAIM_CONTEXT_MISMATCH",
@@ -449,13 +468,13 @@ export class CustomerRegistrationService {
       correlationId: input.correlationId,
       customerId: principalCheck.customer.id,
       expectedOrderVersion: authority.evidence.expectedOrderVersion,
-      orderId: input.orderId,
+      orderId: authority.evidence.orderId,
     });
     if (result.status === "BOUND" || result.status === "ALREADY_BOUND") {
       await this.audit({
         correlationId: input.correlationId,
         customerId: principalCheck.customer.id,
-        entityId: input.orderId,
+        entityId: authority.evidence.orderId,
         entityType: "ORDER",
         eventType:
           result.status === "BOUND"
@@ -463,9 +482,10 @@ export class CustomerRegistrationService {
             : "CUSTOMER_ORDER_CLAIM_DENIED",
         outcome: result.status === "BOUND" ? "SUCCEEDED" : "DENIED",
         reasonCode: result.status,
-        metadata: { orderId: input.orderId },
+        metadata: { orderId: authority.evidence.orderId },
       });
       return {
+        orderId: authority.evidence.orderId,
         status: result.status === "BOUND" ? "CLAIMED" : "ALREADY_OWNED",
       };
     }
@@ -478,7 +498,7 @@ export class CustomerRegistrationService {
     await this.auditOrderClaimDenied(
       input.correlationId,
       principalCheck.customer.id,
-      input.orderId,
+      authority.evidence.orderId,
       result.status,
     );
     return { status };

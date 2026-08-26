@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import type { AuditEvent } from "../domain/audit.js";
 import type { CorrelationId } from "../domain/identifiers.js";
-import { correlationId } from "../domain/identifiers.js";
+import { correlationId, orderId } from "../domain/identifiers.js";
 import type { CustomerAuthenticationService } from "./customer-authentication.js";
 import type {
   CustomerAccountService,
@@ -15,6 +15,7 @@ import type {
   CustomerRegistrationService,
   CustomerEmailVerificationPublicResult,
   CustomerIdentityLinkResult,
+  CustomerOrderClaimResult,
   CustomerRegistrationResult,
 } from "./customer-registration.js";
 import type {
@@ -39,6 +40,7 @@ export type CustomerAccountTransportFailureCode =
   | "AUTHENTICATION_REQUIRED"
   | "ACCESS_DENIED"
   | "RESOURCE_NOT_AVAILABLE"
+  | "CLAIM_INVALID"
   | "KEY_ACCESS_NOT_AVAILABLE"
   | "CONFLICT"
   | "RATE_LIMITED"
@@ -100,6 +102,11 @@ export interface CustomerAccountTransportResponse {
           "BOUND" | "ALREADY_BOUND"
         >;
         readonly apiVersion: typeof customerAccountTransportApiVersion;
+      }
+    | {
+        readonly status: "ORDER_CLAIMED" | "ORDER_ALREADY_OWNED";
+        readonly apiVersion: typeof customerAccountTransportApiVersion;
+        readonly orderId: string;
       }
     | {
         readonly status: "KEY_ACCESS_AUTHORIZED";
@@ -447,6 +454,73 @@ export class CustomerAccountTransportHandler {
       return this.error(401, "AUTHENTICATION_REQUIRED", common.correlationId);
     }
     return this.error(403, "ACCESS_DENIED", common.correlationId);
+  }
+
+  public async claimGuestOrder(
+    request: CustomerAccountTransportRequest,
+  ): Promise<CustomerAccountTransportResponse> {
+    const common = await this.validateAuthenticatedMutation(
+      request,
+      "claim-guest-order",
+      ["claimCode"],
+    );
+    if (common.status !== "VALID") {
+      return common.response;
+    }
+    if (
+      !onlyFields(request.body, ["claimCode", "orderId"]) ||
+      typeof request.body?.claimCode !== "string" ||
+      !isSafeClaimCode(request.body.claimCode) ||
+      (request.body.orderId !== undefined &&
+        (typeof request.body.orderId !== "string" ||
+          !isSafeUuid(request.body.orderId)))
+    ) {
+      return this.error(400, "BAD_REQUEST", common.correlationId);
+    }
+    const principal = await this.resolvePrincipal(
+      common.sessionCredential,
+      common.correlationId,
+    );
+    if (!principal) {
+      return this.error(401, "AUTHENTICATION_REQUIRED", common.correlationId);
+    }
+    const limited = await this.rateLimiterAllows(
+      "claim-guest-order",
+      `${principal.customerId}:${request.body.orderId ?? "code-only"}:${stableHash(request.body.claimCode)}`,
+      request,
+    );
+    if (limited !== "ALLOWED") {
+      return this.limiterError(limited, common.correlationId);
+    }
+    const result = await this.safeOrderClaimCall(
+      this.options.registrationService.claimGuestOrder({
+        claimCode: request.body.claimCode,
+        correlationId: common.correlationId,
+        ...(request.body.orderId
+          ? { orderId: orderId(request.body.orderId) }
+          : {}),
+        principal,
+      }),
+      common.correlationId,
+    );
+    if (result.status === "TRANSPORT_FAILURE") {
+      return result.response;
+    }
+    if (result.status === "CLAIMED" || result.status === "ALREADY_OWNED") {
+      return {
+        body: {
+          apiVersion: customerAccountTransportApiVersion,
+          orderId: result.orderId,
+          status:
+            result.status === "CLAIMED"
+              ? "ORDER_CLAIMED"
+              : "ORDER_ALREADY_OWNED",
+        },
+        headers: mutationHeaders,
+        statusCode: 200,
+      };
+    }
+    return this.mapOrderClaimFailure(result.status, common.correlationId);
   }
 
   public async prepareKeyAccess(
@@ -849,6 +923,30 @@ export class CustomerAccountTransportHandler {
     }
   }
 
+  private async safeOrderClaimCall(
+    operation: Promise<CustomerOrderClaimResult>,
+    correlationIdValue: CorrelationId,
+  ): Promise<
+    | CustomerOrderClaimResult
+    | {
+        readonly status: "TRANSPORT_FAILURE";
+        readonly response: CustomerAccountTransportResponse;
+      }
+  > {
+    try {
+      return await operation;
+    } catch {
+      return {
+        response: this.error(
+          503,
+          "TEMPORARILY_UNAVAILABLE",
+          correlationIdValue,
+        ),
+        status: "TRANSPORT_FAILURE",
+      };
+    }
+  }
+
   private async safeKeyAccessPrepareCall(
     operation: Promise<CustomerKeyAccessPrepareResult>,
     correlationIdValue: CorrelationId,
@@ -974,6 +1072,31 @@ export class CustomerAccountTransportHandler {
       return this.error(503, "TEMPORARILY_UNAVAILABLE", correlationIdValue);
     }
     return this.error(400, "BAD_REQUEST", correlationIdValue);
+  }
+
+  private mapOrderClaimFailure(
+    code: Exclude<
+      CustomerOrderClaimResult["status"],
+      "CLAIMED" | "ALREADY_OWNED"
+    >,
+    correlationIdValue: CorrelationId,
+  ): CustomerAccountTransportResponse {
+    if (code === "AUTHENTICATION_REQUIRED") {
+      return this.error(401, "AUTHENTICATION_REQUIRED", correlationIdValue);
+    }
+    if (code === "AUTHENTICATION_UNTRUSTED" || code === "EMAIL_NOT_VERIFIED") {
+      return this.error(403, "ACCESS_DENIED", correlationIdValue);
+    }
+    if (code === "CUSTOMER_NOT_FOUND") {
+      return this.error(401, "AUTHENTICATION_REQUIRED", correlationIdValue);
+    }
+    if (code === "ORDER_NOT_FOUND" || code === "CLAIM_DENIED") {
+      return this.error(409, "CLAIM_INVALID", correlationIdValue);
+    }
+    if (code === "OWNERSHIP_CONFLICT") {
+      return this.error(409, "CLAIM_INVALID", correlationIdValue);
+    }
+    return this.error(409, "CLAIM_INVALID", correlationIdValue);
   }
 
   private mapKeyAccessFailure(
@@ -1181,6 +1304,11 @@ const isSafeOpaqueId = (value: string): boolean =>
 
 const isSafeSecretInput = (value: string): boolean =>
   /^[A-Za-z0-9_-]{43,128}$/u.test(value);
+
+const isSafeClaimCode = (value: string): boolean =>
+  value.length >= 16 &&
+  value.length <= 128 &&
+  /^[A-Za-z0-9_-]+(?:-[A-Za-z0-9_-]+)*$/u.test(value);
 
 const parseBearerCredential = (value: string): string =>
   value.startsWith("Bearer ") ? value.slice("Bearer ".length) : value;

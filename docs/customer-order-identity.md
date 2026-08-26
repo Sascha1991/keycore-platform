@@ -47,6 +47,12 @@ used external subject to a different customer fails closed with
 `OrderOwnershipBindingAuthorityPort`. Plain caller-created metadata objects are
 not trust boundaries. Existing legacy orders may remain unowned.
 
+KS-08-05 adds an optional immutable guest-checkout email snapshot on
+`keycore_orders.checkout_email_normalized`. The snapshot is purchase-time
+contact context, not ownership proof. PostgreSQL prevents changing a non-null
+snapshot, and secure guest claim uses it only together with an authenticated
+verified account, a one-time claim credential and trusted claim authority.
+
 Ownership binding is concurrency-safe:
 
 - missing ownership authority returns `UNTRUSTED_AUTHORITY`;
@@ -128,3 +134,9 @@ External identity linking requires an authenticated verified customer and
 trusted `CustomerIdentityBindingAuthorityPort` evidence. Guest order claiming
 remains fail-closed unless future trusted order-claim evidence is supplied; email
 equality alone is never ownership proof.
+
+KS-08-05 supplies the first transport-neutral trusted guest-claim evidence path:
+hash-only one-time Kaufcode plus verified account email matching the
+purchase-time checkout email snapshot for the exact unclaimed order. Successful
+claim still mutates ownership only through the same
+`OrderOwnershipBindingAuthorityPort` boundary.

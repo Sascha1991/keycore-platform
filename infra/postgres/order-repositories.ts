@@ -33,6 +33,7 @@ interface OrderRow {
   readonly product_id: string;
   readonly price_lock_id: string;
   readonly customer_id: string | null;
+  readonly checkout_email_normalized: string | null;
   readonly customer_amount_minor: string;
   readonly currency: string;
   readonly quantity: number;
@@ -126,7 +127,7 @@ export class PostgresOrderRepository implements OrderRepository {
       const inserted = await client.query<OrderRow>(
         `
           INSERT INTO keycore_orders(
-            id, product_id, price_lock_id, customer_id, customer_amount_minor, currency,
+            id, product_id, price_lock_id, customer_id, checkout_email_normalized, customer_amount_minor, currency,
             quantity, status, payment_status, procurement_status,
             fulfillment_status, risk_status, refund_status, record_version,
             idempotency_key, idempotency_fingerprint, correlation_id,
@@ -134,7 +135,7 @@ export class PostgresOrderRepository implements OrderRepository {
           )
           VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-            $11, $12, $13, $14, $15, $16, $17, $18, $19
+            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
           )
           RETURNING ${orderReturning}
         `,
@@ -285,6 +286,7 @@ export class PostgresOrderRepository implements OrderRepository {
 
 const orderReturning = `
   id::text, product_id::text, price_lock_id::text, customer_id::text,
+  checkout_email_normalized,
   customer_amount_minor::text, currency, quantity, status, payment_status,
   procurement_status, fulfillment_status, risk_status, refund_status,
   record_version, idempotency_key, idempotency_fingerprint, correlation_id,
@@ -309,6 +311,7 @@ const orderValues = (order: KeyCoreOrder): readonly unknown[] => [
   order.productId,
   order.priceLockId,
   order.customerId ?? null,
+  order.checkoutEmailNormalized ?? null,
   order.customerAmount.amountMinor.toString(),
   order.currency,
   order.quantity,
@@ -437,6 +440,7 @@ const orderFromRow = (row: OrderRow): KeyCoreOrder => ({
   createdAt: row.created_at,
   currency: currency(row.currency),
   customerId: row.customer_id ? customerId(row.customer_id) : null,
+  checkoutEmailNormalized: row.checkout_email_normalized,
   customerAmount: moneyFrom(row.customer_amount_minor, row.currency),
   fulfillmentStatus: row.fulfillment_status,
   id: orderId(row.id),
