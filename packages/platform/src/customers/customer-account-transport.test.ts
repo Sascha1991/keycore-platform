@@ -10,8 +10,10 @@ import { InMemoryFulfillmentRepository } from "../../../../infra/fulfillment/in-
 import {
   CustomerAccountService,
   CustomerAccountTransportHandler,
+  CustomerActivationInstructionsService,
   type CustomerAccountTransportRequest,
   CustomerAuthenticationService,
+  CustomerInvoiceAccessService,
   CustomerKeyAccessService,
   CustomerKeyDeliveryService,
   CustomerOrderIdentityService,
@@ -122,6 +124,113 @@ describe("CustomerAccountTransportHandler", () => {
     expect(harness.accountRepository.detailCalls).toBe(1);
     expect(harness.deliveryCalls).toBe(0);
     expect(harness.decryptCalls).toBe(0);
+  });
+
+  it("returns customer invoice metadata and activation instructions through separate read endpoints", async () => {
+    const harness = await transportHarness();
+    const invoice = await harness.handler.getInvoiceMetadata(
+      harness.request("GET", {
+        path: { orderId: String(harness.ownedOrder) },
+        route: "invoice",
+      }),
+    );
+    const activation = await harness.handler.getActivationInstructions(
+      harness.request("GET", {
+        path: { orderId: String(harness.ownedOrder) },
+        route: "activation",
+      }),
+    );
+
+    expect(invoice).toMatchObject({
+      body: {
+        invoice: {
+          downloadAvailable: true,
+          invoiceReference: "KR-INV-TRANSPORT-1",
+          status: "AVAILABLE",
+        },
+        orderId: harness.ownedOrder,
+        status: "OK",
+      },
+      headers: { "Cache-Control": "private, no-store" },
+      statusCode: 200,
+    });
+    expect(activation).toMatchObject({
+      body: {
+        activationInstructions: {
+          instructionCode: "STEAM_ACTIVATION_CODE",
+          platform: "STEAM",
+          status: "AVAILABLE",
+          title: "Steam activation",
+        },
+        orderId: harness.ownedOrder,
+        status: "OK",
+      },
+      headers: { "Cache-Control": "private, no-store" },
+      statusCode: 200,
+    });
+    expect(safeJson([invoice, activation])).not.toMatch(
+      /deliveryCapability|fulfillmentReference|TEST-AAAAA-BBBBB-CCCCC|KEYRANO-KS0806/iu,
+    );
+    expect(harness.deliveryCalls).toBe(0);
+    expect(harness.decryptCalls).toBe(0);
+  });
+
+  it("rejects injected invoice and activation authority fields before resolving sessions", async () => {
+    const harness = await transportHarness();
+    const invalidInvoiceRequests = [
+      harness.request("GET", {
+        body: { invoiceOwnerId: harness.otherCustomerId },
+        path: { orderId: String(harness.ownedOrder) },
+        route: "invoice-owner-injected",
+      }),
+      harness.request("GET", {
+        path: {
+          invoiceReference: "KR-INV-FORGED",
+          orderId: String(harness.ownedOrder),
+        },
+        route: "invoice-path-injected",
+      }),
+      harness.request("GET", {
+        path: { orderId: String(harness.ownedOrder) },
+        query: { invoiceReference: "KR-INV-FORGED" },
+        route: "invoice-query-injected",
+      }),
+    ];
+    const invalidActivationRequests = [
+      harness.request("GET", {
+        body: { platformOverride: "STEAM" },
+        path: { orderId: String(harness.ownedOrder) },
+        route: "activation-platform-injected",
+      }),
+      harness.request("GET", {
+        path: {
+          instructionCode: "STEAM_ACTIVATION_CODE",
+          orderId: String(harness.ownedOrder),
+        },
+        route: "activation-path-injected",
+      }),
+      harness.request("GET", {
+        path: { orderId: String(harness.ownedOrder) },
+        query: { platform: "STEAM" },
+        route: "activation-query-injected",
+      }),
+    ];
+
+    for (const request of invalidInvoiceRequests) {
+      await expect(
+        harness.handler.getInvoiceMetadata(request),
+      ).resolves.toMatchObject({
+        statusCode: 400,
+      });
+    }
+    for (const request of invalidActivationRequests) {
+      await expect(
+        harness.handler.getActivationInstructions(request),
+      ).resolves.toMatchObject({
+        statusCode: 400,
+      });
+    }
+    expect(harness.sessionService.resolveCalls).toBe(0);
   });
 
   it("denies missing, malformed, expired and revoked sessions without account reads", async () => {
@@ -903,14 +1012,25 @@ const transportHarness = async (
     emailVerificationState:
       options.verifiedCustomer === false ? "UNVERIFIED" : "VERIFIED",
   });
-  const ownedOrder = orderId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1");
+  const ownedOrder = orderId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   const ownedFulfillmentId = "ffffffff-ffff-4fff-8fff-fffffffffff1";
   const wrongOwnerOrder = orderId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
   const legacyRealOrder = orderId("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
   const guestOrder = orderId("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
   accountRepository.addOrder(
     orderFixture(created.customerId, ownedOrder, {
+      activation: {
+        instructionCode: "STEAM_ACTIVATION_CODE",
+        platform: "STEAM",
+        source: "STRUCTURED",
+      },
       fulfillment: fulfillmentFixture(ownedFulfillmentId, ownedOrder),
+      invoice: {
+        downloadAvailable: true,
+        invoiceReference: "KR-INV-TRANSPORT-1",
+        issuedAt: new Date("2026-08-26T08:30:00.000Z"),
+        status: "AVAILABLE",
+      },
     }),
   );
   accountRepository.addOrder(
@@ -1084,6 +1204,18 @@ const transportHarness = async (
       now: () => now,
       repository: accountRepository,
     }),
+    activationInstructionsService: new CustomerActivationInstructionsService({
+      audit,
+      environment: "CI",
+      now: () => now,
+      repository: accountRepository,
+    }),
+    invoiceAccessService: new CustomerInvoiceAccessService({
+      audit,
+      environment: "CI",
+      now: () => now,
+      repository: accountRepository,
+    }),
     keyAccessService,
     config: {
       allowedOrigins: options.allowedOrigins ?? [allowedOrigin],
@@ -1242,6 +1374,8 @@ const orderFixture = (
   fixtureOrderId: OrderId,
   options: {
     readonly fulfillment?: CustomerAccountOrderProjection["fulfillment"];
+    readonly invoice?: CustomerAccountOrderProjection["invoice"];
+    readonly activation?: CustomerAccountOrderProjection["activation"];
   },
 ): CustomerAccountOrderProjection => ({
   createdAt: now,
@@ -1249,8 +1383,8 @@ const orderFixture = (
   customerId: owner,
   fulfillment: options.fulfillment ?? null,
   fulfillmentStatus: "PENDING",
-  invoice: null,
-  activation: null,
+  invoice: options.invoice ?? null,
+  activation: options.activation ?? null,
   orderId: fixtureOrderId,
   paymentStatus: "CAPTURED",
   procurementStatus: "SUCCEEDED",

@@ -58,6 +58,8 @@ transport-neutral handlers:
 - account summary;
 - owned order history;
 - owned order detail;
+- invoice metadata;
+- activation instructions;
 - registration request;
 - email verification;
 - identity linking.
@@ -89,6 +91,12 @@ account order detail
 ```
 
 Order detail must not decrypt or reveal automatically.
+
+Invoice and activation-instruction views must also come from KeyCore account
+transport handlers. WooCommerce must not invent invoice references, download
+URLs, activation platforms or instruction codes from browser request fields,
+product titles, order notes or supplier free text. A future adapter may render
+only the safe KeyCore DTOs returned for the authenticated owned order.
 
 WooCommerce must not store product keys, delivery capabilities, encrypted key
 material or supplier key payloads in order/customer metadata. It may only render

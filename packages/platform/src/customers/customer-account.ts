@@ -673,7 +673,7 @@ const customerDeliveryStatus = (
   return "UNAVAILABLE";
 };
 
-const invoiceSummary = (
+export const invoiceSummary = (
   invoice: CustomerAccountInvoiceProjection | null | undefined,
 ): InvoiceSummary => {
   if (!invoice) {
@@ -690,7 +690,7 @@ const invoiceSummary = (
   };
 };
 
-const activationInstructions = (
+export const activationInstructions = (
   activation: CustomerAccountActivationProjection | null | undefined,
 ): ActivationInstructions => {
   if (

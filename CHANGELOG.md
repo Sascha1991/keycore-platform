@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added KS-08-06 customer invoice and activation-instruction foundation with
+  explicit owned-order read services, transport-neutral invoice and activation
+  endpoints, curated structured activation registry validation, authority-field
+  rejection tests and documentation while leaving production invoice generation,
+  PDF rendering, tax/legal accounting, WooCommerce/frontend exposure and real
+  key reveal disabled.
 - Hardened KS-08-05 guest order claim before merge by preventing claim-time
   checkout email snapshot backfill, making snapshot updates fully immutable,
   replacing permissive test issuance authority with persisted order/snapshot
