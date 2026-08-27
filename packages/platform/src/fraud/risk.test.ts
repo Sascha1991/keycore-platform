@@ -8,14 +8,23 @@ import {
   canonicalFraudRiskFacts,
   correlationId,
   currency,
+  defaultFraudVelocityWindows,
+  emailVelocitySubjectKey,
   evaluateFraudRiskFacts,
   fraudRiskFactFingerprint,
+  fraudRiskVelocityPolicyVersion,
   customerId,
   money,
   orderId,
   productId,
   riskFactsFromOrder,
+  validateFraudVelocityPolicy,
   type AuditEvent,
+  type FraudVelocityFacts,
+  type FraudVelocityEventAuthorityPort,
+  type FraudVelocityPolicy,
+  type FraudVelocitySubjectType,
+  type FraudVelocityWindowId,
   type FraudManualReviewAuthorityPort,
   type FraudRiskFacts,
   type FraudRiskRule,
@@ -31,6 +40,16 @@ const leakageMarkers = [
   "KEYRANO_KS0901_CLAIM_CODE_DO_NOT_LEAK",
   "KEYRANO_KS0901_RULE_SECRET_DO_NOT_LEAK",
 ] as const;
+const velocityLeakageMarkers = [
+  "KEYRANO_KS0902_RAW_EMAIL_DO_NOT_LEAK@example.test",
+  "KEYRANO_KS0902_PRODUCT_KEY_DO_NOT_LEAK",
+  "KEYRANO_KS0902_STRIPE_SECRET_DO_NOT_LEAK",
+  "KEYRANO_KS0902_KINGUIN_SECRET_DO_NOT_LEAK",
+  "KEYRANO_KS0902_SESSION_DO_NOT_LEAK",
+  "KEYRANO_KS0902_CLAIM_CODE_DO_NOT_LEAK",
+  "KEYRANO_KS0902_CORRELATION_SECRET_DO_NOT_LEAK",
+] as const;
+const velocityCorrelationTestKey = "test-velocity-correlation-key-000001";
 
 describe("fraud risk and manual review foundation", () => {
   it("allows normal trusted facts with persisted policy version and deterministic reasons", async () => {
@@ -709,6 +728,652 @@ describe("fraud risk and manual review foundation", () => {
   });
 });
 
+describe("fraud velocity limits", () => {
+  it("derives deterministic pseudonymous checkout-email subjects without raw email fallback", () => {
+    const same = emailVelocitySubjectKey(
+      velocityCorrelationTestKey,
+      "buyer@example.test",
+    );
+    expect(
+      emailVelocitySubjectKey(velocityCorrelationTestKey, "buyer@example.test"),
+    ).toBe(same);
+    expect(
+      emailVelocitySubjectKey(velocityCorrelationTestKey, "other@example.test"),
+    ).not.toBe(same);
+    expect(same).toMatch(/^v1:[a-f0-9]{64}$/u);
+    expect(same).not.toContain("buyer@example.test");
+    expect(() =>
+      emailVelocitySubjectKey("short", "buyer@example.test"),
+    ).toThrow("Invalid fraud velocity correlation secret");
+  });
+
+  it("correlates customer and checkout-email subjects without exposing raw email", async () => {
+    const repository = new InMemoryFraudRiskRepository({
+      velocityCorrelationSecret: velocityCorrelationTestKey,
+    });
+    const sharedCustomer = customerId("44444444-4444-4444-8444-444444444444");
+    const otherCustomer = customerId("55555555-5555-4555-8555-555555555555");
+    const sameCustomerA = orderFixture("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", {
+      customerId: sharedCustomer,
+    });
+    const sameCustomerB = orderFixture("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02", {
+      customerId: sharedCustomer,
+    });
+    const differentCustomer = orderFixture(
+      "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee03",
+      {
+        customerId: otherCustomer,
+      },
+    );
+    const sameEmailA = orderFixture("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee04", {
+      checkoutEmailNormalized: "same@example.test",
+      customerId: null,
+    });
+    const sameEmailB = orderFixture("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee05", {
+      checkoutEmailNormalized: "same@example.test",
+      customerId: null,
+    });
+    const differentEmail = orderFixture(
+      "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee06",
+      {
+        checkoutEmailNormalized: "different@example.test",
+        customerId: null,
+      },
+    );
+    for (const order of [
+      sameCustomerA,
+      sameCustomerB,
+      differentCustomer,
+      sameEmailA,
+      sameEmailB,
+      differentEmail,
+    ]) {
+      repository.addOrder(order);
+    }
+    await repository.recordOrderVelocityEvent({
+      eventType: "PAYMENT_CONFIRMED",
+      occurredAt: now,
+      orderId: sameCustomerA.id,
+      recordedAt: now,
+    });
+    await repository.recordOrderVelocityEvent({
+      eventType: "PAYMENT_CONFIRMED",
+      occurredAt: now,
+      orderId: sameEmailA.id,
+      recordedAt: now,
+    });
+
+    const sameCustomerFacts = await repository.loadVelocityFacts({
+      evaluatedAt: now,
+      orderId: sameCustomerB.id,
+      windows: defaultFraudVelocityWindows,
+    });
+    const differentCustomerFacts = await repository.loadVelocityFacts({
+      evaluatedAt: now,
+      orderId: differentCustomer.id,
+      windows: defaultFraudVelocityWindows,
+    });
+    const sameEmailFacts = await repository.loadVelocityFacts({
+      evaluatedAt: now,
+      orderId: sameEmailB.id,
+      windows: defaultFraudVelocityWindows,
+    });
+    const differentEmailFacts = await repository.loadVelocityFacts({
+      evaluatedAt: now,
+      orderId: differentEmail.id,
+      windows: defaultFraudVelocityWindows,
+    });
+
+    expect(findAggregate(sameCustomerFacts, "CUSTOMER", "PT24H")).toMatchObject(
+      { amountMinorTotal: 2999n, eventCount: 1 },
+    );
+    expect(
+      findAggregate(differentCustomerFacts, "CUSTOMER", "PT24H"),
+    ).toMatchObject({ amountMinorTotal: 0n, eventCount: 0 });
+    expect(
+      findAggregate(sameEmailFacts, "CHECKOUT_EMAIL", "PT24H"),
+    ).toMatchObject({ amountMinorTotal: 2999n, eventCount: 1 });
+    expect(
+      findAggregate(differentEmailFacts, "CHECKOUT_EMAIL", "PT24H"),
+    ).toMatchObject({ amountMinorTotal: 0n, eventCount: 0 });
+    expect(safeJson(sameEmailFacts)).not.toContain("same@example.test");
+    expect(safeJson(sameEmailFacts)).toContain(
+      emailVelocitySubjectKey(velocityCorrelationTestKey, "same@example.test"),
+    );
+  });
+
+  it("records trusted velocity events idempotently and applies KS09_POLICY_V2 thresholds", async () => {
+    const harness = velocityHarness();
+    await expect(
+      harness.service.recordVelocityEventForOrder({
+        correlationId: correlationId("velocity-record-a"),
+        orderId: harness.orders.customerA1.id,
+      }),
+    ).resolves.toEqual({
+      insertedEventCount: 1,
+      status: "RECORDED",
+      subjectEventCount: 1,
+    });
+    await expect(
+      harness.service.recordVelocityEventForOrder({
+        correlationId: correlationId("velocity-record-a-replay"),
+        orderId: harness.orders.customerA1.id,
+      }),
+    ).resolves.toEqual({
+      insertedEventCount: 0,
+      status: "IDEMPOTENT",
+      subjectEventCount: 1,
+    });
+
+    const allow = await harness.service.evaluateOrder({
+      correlationId: correlationId("velocity-allow"),
+      orderId: harness.orders.customerA1.id,
+    });
+    expect(allow).toMatchObject({
+      evaluation: {
+        decision: "ALLOW",
+        policyVersion: fraudRiskVelocityPolicyVersion,
+        reasonCodes: ["RISK_POLICY_ALLOW"],
+      },
+      status: "EVALUATED",
+    });
+
+    await harness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-record-b"),
+      orderId: harness.orders.customerA2.id,
+    });
+    const review = await harness.service.evaluateOrder({
+      correlationId: correlationId("velocity-review"),
+      orderId: harness.orders.customerA1.id,
+    });
+    expect(review).toMatchObject({
+      evaluation: {
+        decision: "REVIEW",
+        reasonCodes: ["VELOCITY_AMOUNT_REVIEW", "VELOCITY_ORDER_COUNT_REVIEW"],
+      },
+      reviewCase: { source: "FRAUD", status: "OPEN" },
+      status: "EVALUATED",
+    });
+
+    await harness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-record-c"),
+      orderId: harness.orders.customerA3.id,
+    });
+    const deny = await harness.service.evaluateOrder({
+      correlationId: correlationId("velocity-deny"),
+      orderId: harness.orders.customerA1.id,
+    });
+    expect(deny).toMatchObject({
+      evaluation: {
+        decision: "DENY",
+        reasonCodes: ["VELOCITY_AMOUNT_DENY", "VELOCITY_ORDER_COUNT_DENY"],
+      },
+      status: "EVALUATED",
+    });
+  });
+
+  it("does not record velocity events for orders without captured payment", async () => {
+    const harness = velocityHarness();
+    harness.repository.addOrder({
+      ...harness.orders.customerA1,
+      paymentStatus: "PENDING",
+      status: "AWAITING_PAYMENT",
+    });
+
+    await expect(
+      harness.service.recordVelocityEventForOrder({
+        correlationId: correlationId("velocity-uncaptured-payment"),
+        orderId: harness.orders.customerA1.id,
+      }),
+    ).resolves.toEqual({
+      reasonCode: "VELOCITY_SIGNAL_UNAVAILABLE",
+      status: "UNAVAILABLE",
+    });
+  });
+
+  it("fails closed when no supported authoritative velocity subject exists", async () => {
+    const repository = new InMemoryFraudRiskRepository({
+      velocityCorrelationSecret: velocityCorrelationTestKey,
+    });
+    const legacyGuest = orderFixture("cccccccc-cccc-4ccc-8ccc-cccccccccc01", {
+      checkoutEmailNormalized: null,
+      customerId: null,
+    });
+    repository.addOrder(legacyGuest);
+    const service = new FraudRiskService({
+      now: () => now,
+      repository,
+      velocity: {
+        eventAuthority: new TrustedVelocityEventAuthority(now),
+        policy: velocityPolicy(),
+        repository,
+      },
+    });
+
+    await expect(
+      repository.loadVelocityFacts({
+        evaluatedAt: now,
+        orderId: legacyGuest.id,
+        windows: defaultFraudVelocityWindows,
+      }),
+    ).resolves.toBe("UNAVAILABLE");
+    const result = await service.evaluateOrder({
+      correlationId: correlationId("velocity-no-subject"),
+      orderId: legacyGuest.id,
+    });
+
+    expect(result).toMatchObject({
+      evaluation: {
+        decision: "REVIEW",
+        reasonCodes: ["VELOCITY_SIGNAL_UNAVAILABLE"],
+      },
+      status: "EVALUATED",
+    });
+  });
+
+  it("invalidates stale velocity clearance when another trusted event changes the aggregate", async () => {
+    const harness = velocityHarness();
+    await harness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-stale-record-a"),
+      orderId: harness.orders.customerA1.id,
+    });
+    await harness.service.evaluateOrder({
+      correlationId: correlationId("velocity-stale-allow"),
+      orderId: harness.orders.customerA1.id,
+    });
+    await expect(
+      harness.service.isFraudCleared(harness.orders.customerA1.id),
+    ).resolves.toMatchObject({ status: "CLEARED" });
+
+    await harness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-stale-record-b"),
+      orderId: harness.orders.customerA2.id,
+    });
+
+    await expect(
+      harness.service.isFraudCleared(harness.orders.customerA1.id),
+    ).resolves.toEqual({
+      reasonCode: "FRAUD_DECISION_MISSING",
+      status: "BLOCKED",
+    });
+  });
+
+  it("invalidates clearance and approved review when rolling velocity events age out", async () => {
+    const allowHarness = velocityHarness();
+    allowHarness.eventAuthority.occurredAt = new Date(
+      now.getTime() - 24 * 60 * 60 * 1000 + 1_000,
+    );
+    await allowHarness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-aging-record"),
+      orderId: allowHarness.orders.customerA1.id,
+    });
+    await allowHarness.service.evaluateOrder({
+      correlationId: correlationId("velocity-aging-allow"),
+      orderId: allowHarness.orders.customerA1.id,
+    });
+    await expect(
+      allowHarness.service.isFraudCleared(allowHarness.orders.customerA1.id),
+    ).resolves.toMatchObject({ status: "CLEARED" });
+    allowHarness.now = new Date(now.getTime() + 2_000);
+    await expect(
+      allowHarness.service.isFraudCleared(allowHarness.orders.customerA1.id),
+    ).resolves.toEqual({
+      reasonCode: "FRAUD_DECISION_MISSING",
+      status: "BLOCKED",
+    });
+
+    const reviewHarness = velocityHarness({
+      manualReviewAuthority: new TrustedFraudAuthority("operator:velocity"),
+    });
+    await reviewHarness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-aging-review-record-a"),
+      orderId: reviewHarness.orders.customerA1.id,
+    });
+    await reviewHarness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-aging-review-record-b"),
+      orderId: reviewHarness.orders.customerA2.id,
+    });
+    const review = await requireReview(
+      reviewHarness.service,
+      reviewHarness.orders.customerA1.id,
+      "velocity-aging-review-open",
+    );
+    await reviewHarness.service.resolveManualReview({
+      caseId: review.reviewCase.caseId,
+      correlationId: correlationId("velocity-aging-review-approve"),
+      expectedFactFingerprint: review.evaluation.factFingerprint,
+      resolution: "APPROVE",
+    });
+    await expect(
+      reviewHarness.service.isFraudCleared(reviewHarness.orders.customerA1.id),
+    ).resolves.toMatchObject({ status: "CLEARED" });
+    reviewHarness.now = new Date(now.getTime() + 24 * 60 * 60 * 1000 + 1);
+    await expect(
+      reviewHarness.service.isFraudCleared(reviewHarness.orders.customerA1.id),
+    ).resolves.toEqual({
+      reasonCode: "FRAUD_DECISION_MISSING",
+      status: "BLOCKED",
+    });
+  });
+
+  it("keeps window boundaries, currency isolation and future timestamp anomalies safe", async () => {
+    const harness = velocityHarness();
+    harness.eventAuthority.occurredAt = new Date(
+      now.getTime() - 15 * 60 * 1000,
+    );
+    await harness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-boundary-in"),
+      orderId: harness.orders.customerA1.id,
+    });
+    harness.eventAuthority.occurredAt = new Date(
+      now.getTime() - 15 * 60 * 1000 - 1,
+    );
+    await harness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-boundary-out"),
+      orderId: harness.orders.customerA2.id,
+    });
+    await harness.repository.recordOrderVelocityEvent({
+      eventType: "PAYMENT_CONFIRMED",
+      occurredAt: new Date(now.getTime() + 1),
+      orderId: harness.orders.customerA3.id,
+      recordedAt: new Date(now.getTime() + 1),
+    });
+    harness.eventAuthority.occurredAt = now;
+    const result = await harness.service.evaluateOrder({
+      correlationId: correlationId("velocity-anomaly"),
+      orderId: harness.orders.customerA1.id,
+    });
+
+    expect(result).toMatchObject({
+      evaluation: {
+        decision: "REVIEW",
+      },
+      status: "EVALUATED",
+    });
+    expect(
+      result.status === "EVALUATED" ? result.evaluation.reasonCodes : [],
+    ).toContain("VELOCITY_TIMESTAMP_ANOMALY");
+  });
+
+  it("fails closed when checkout-email velocity requires an unavailable correlation secret", async () => {
+    const repository = new InMemoryFraudRiskRepository();
+    const guest = orderFixture("cccccccc-cccc-4ccc-8ccc-cccccccccccc", {
+      checkoutEmailNormalized: velocityLeakageMarkers[0],
+      customerId: null,
+    });
+    repository.addOrder(guest);
+    const service = new FraudRiskService({
+      repository,
+      velocity: { policy: velocityPolicy(), repository },
+    });
+
+    const result = await service.evaluateOrder({
+      correlationId: correlationId("velocity-secret-missing"),
+      orderId: guest.id,
+    });
+    expect(result).toMatchObject({
+      evaluation: {
+        decision: "REVIEW",
+        reasonCodes: ["VELOCITY_SIGNAL_UNAVAILABLE"],
+      },
+      status: "EVALUATED",
+    });
+    expect(safeJson(result)).not.toMatch(
+      /RAW_EMAIL|PRODUCT_KEY|STRIPE_SECRET|KINGUIN_SECRET|SESSION|CLAIM_CODE|CORRELATION_SECRET/iu,
+    );
+  });
+
+  it("requires trusted event authority and rejects arbitrary timestamp input", async () => {
+    const repository = new InMemoryFraudRiskRepository({
+      velocityCorrelationSecret: velocityCorrelationTestKey,
+    });
+    const order = orderFixture("cccccccc-cccc-4ccc-8ccc-cccccccccc02", {});
+    repository.addOrder(order);
+    const noAuthorityService = new FraudRiskService({
+      now: () => now,
+      repository,
+      velocity: { policy: velocityPolicy(), repository },
+    });
+    await expect(
+      noAuthorityService.recordVelocityEventForOrder({
+        correlationId: correlationId("velocity-no-authority"),
+        orderId: order.id,
+      }),
+    ).resolves.toEqual({
+      reasonCode: "VELOCITY_SIGNAL_UNAVAILABLE",
+      status: "UNAVAILABLE",
+    });
+
+    const service = new FraudRiskService({
+      now: () => now,
+      repository,
+      velocity: {
+        eventAuthority: new TrustedVelocityEventAuthority(
+          new Date(now.getTime() + 1),
+        ),
+        policy: velocityPolicy(),
+        repository,
+      },
+    });
+    await expect(
+      service.recordVelocityEventForOrder({
+        correlationId: correlationId("velocity-future-authority"),
+        orderId: order.id,
+      }),
+    ).resolves.toEqual({
+      reasonCode: "VELOCITY_SIGNAL_UNAVAILABLE",
+      status: "UNAVAILABLE",
+    });
+  });
+
+  it("handles guest to customer partial idempotency without misleading counts", async () => {
+    const repository = new InMemoryFraudRiskRepository({
+      velocityCorrelationSecret: velocityCorrelationTestKey,
+    });
+    const eventAuthority = new TrustedVelocityEventAuthority(now);
+    const guest = orderFixture("cccccccc-cccc-4ccc-8ccc-cccccccccc03", {
+      checkoutEmailNormalized: "claim@example.test",
+      customerId: null,
+    });
+    repository.addOrder(guest);
+    const service = new FraudRiskService({
+      now: () => now,
+      repository,
+      velocity: { eventAuthority, policy: velocityPolicy(), repository },
+    });
+
+    await expect(
+      service.recordVelocityEventForOrder({
+        correlationId: correlationId("velocity-guest-record"),
+        orderId: guest.id,
+      }),
+    ).resolves.toEqual({
+      insertedEventCount: 1,
+      status: "RECORDED",
+      subjectEventCount: 1,
+    });
+    repository.addOrder({
+      ...guest,
+      customerId: customerId("66666666-6666-4666-8666-666666666666"),
+    });
+    await expect(
+      service.recordVelocityEventForOrder({
+        correlationId: correlationId("velocity-guest-claimed-record"),
+        orderId: guest.id,
+      }),
+    ).resolves.toEqual({
+      insertedEventCount: 1,
+      status: "RECORDED",
+      subjectEventCount: 2,
+    });
+    await expect(
+      service.recordVelocityEventForOrder({
+        correlationId: correlationId("velocity-guest-claimed-replay"),
+        orderId: guest.id,
+      }),
+    ).resolves.toEqual({
+      insertedEventCount: 0,
+      status: "IDEMPOTENT",
+      subjectEventCount: 2,
+    });
+  });
+
+  it("fails closed when the velocity repository cannot load aggregates", async () => {
+    const repository = new InMemoryFraudRiskRepository();
+    const order = orderFixture("cccccccc-cccc-4ccc-8ccc-cccccccccccd", {});
+    repository.addOrder(order);
+    const service = new FraudRiskService({
+      repository,
+      velocity: {
+        policy: velocityPolicy(),
+        repository: new ThrowingVelocityRepository(),
+      },
+    });
+
+    const result = await service.evaluateOrder({
+      correlationId: correlationId("velocity-repository-failure"),
+      orderId: order.id,
+    });
+
+    expect(result).toMatchObject({
+      evaluation: {
+        decision: "REVIEW",
+        reasonCodes: ["VELOCITY_SIGNAL_UNAVAILABLE"],
+      },
+      status: "EVALUATED",
+    });
+  });
+
+  it("fails closed for incomplete, duplicate or malformed velocity facts", async () => {
+    const order = orderFixture("cccccccc-cccc-4ccc-8ccc-cccccccccc04", {});
+    const repository = new InMemoryFraudRiskRepository();
+    repository.addOrder(order);
+    const malformedFacts: FraudVelocityFacts = {
+      aggregates: [
+        {
+          amountMinorTotal: 0n,
+          currency: "EUR",
+          eventCount: 0,
+          eventType: "PAYMENT_CONFIRMED",
+          subjectType: "CUSTOMER",
+          window: "PT24H",
+        },
+      ],
+      evaluatedAt: now,
+      hasFutureEventAnomaly: false,
+      status: "AVAILABLE",
+      subjects: [
+        { subjectKey: order.customerId ?? "", subjectType: "CUSTOMER" },
+      ],
+    };
+    for (const velocityFacts of [
+      malformedFacts,
+      {
+        ...malformedFacts,
+        aggregates: [
+          ...malformedFacts.aggregates,
+          ...malformedFacts.aggregates,
+        ],
+      },
+      {
+        ...malformedFacts,
+        aggregates: malformedFacts.aggregates.map((aggregate) => ({
+          ...aggregate,
+          eventCount: Number.MAX_SAFE_INTEGER + 1,
+        })),
+      },
+    ]) {
+      const service = new FraudRiskService({
+        now: () => now,
+        repository,
+        velocity: {
+          policy: velocityPolicy(),
+          repository: new StaticVelocityRepository(velocityFacts),
+        },
+      });
+      await expect(
+        service.evaluateOrder({
+          correlationId: correlationId(
+            `velocity-malformed-${safeJson(velocityFacts).length}`,
+          ),
+          orderId: order.id,
+        }),
+      ).resolves.toMatchObject({
+        evaluation: {
+          decision: "REVIEW",
+          reasonCodes: ["VELOCITY_SIGNAL_UNAVAILABLE"],
+        },
+        status: "EVALUATED",
+      });
+    }
+  });
+
+  it("rejects invalid velocity policy configuration", () => {
+    expect(() =>
+      validateFraudVelocityPolicy(
+        velocityPolicy({ count: { deny: 1, review: 2 } }),
+      ),
+    ).toThrow("Invalid fraud velocity threshold configuration");
+    expect(() =>
+      validateFraudVelocityPolicy(
+        velocityPolicy({ window: { durationMs: 0, id: "PT15M" } }),
+      ),
+    ).toThrow("Invalid fraud velocity window configuration");
+    expect(() =>
+      validateFraudVelocityPolicy({
+        thresholds: [
+          ...velocityPolicy().thresholds,
+          ...velocityPolicy().thresholds,
+        ],
+        windows: [...defaultFraudVelocityWindows],
+      }),
+    ).toThrow("Invalid fraud velocity threshold configuration");
+    expect(() =>
+      validateFraudVelocityPolicy(
+        velocityPolicy({
+          window: { durationMs: 24 * 60 * 60 * 1000, id: "PT15M" },
+        }),
+      ),
+    ).toThrow("Invalid fraud velocity window configuration");
+    expect(() =>
+      validateFraudVelocityPolicy(
+        velocityPolicy({ count: { deny: 0, review: 0 } }),
+      ),
+    ).toThrow("Invalid fraud velocity threshold configuration");
+  });
+
+  it("deep-freezes validated velocity policy against caller mutation", async () => {
+    const policy = velocityPolicy();
+    const harness = velocityHarness({ policy });
+    await harness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-freeze-record-a"),
+      orderId: harness.orders.customerA1.id,
+    });
+    const threshold = policy.thresholds[0];
+    if (!threshold?.count) {
+      throw new Error("expected velocity count threshold");
+    }
+    (threshold.count as { review: number | bigint }).review = 99;
+    await harness.service.recordVelocityEventForOrder({
+      correlationId: correlationId("velocity-freeze-record-b"),
+      orderId: harness.orders.customerA2.id,
+    });
+
+    await expect(
+      harness.service.evaluateOrder({
+        correlationId: correlationId("velocity-freeze-review"),
+        orderId: harness.orders.customerA1.id,
+      }),
+    ).resolves.toMatchObject({
+      evaluation: {
+        decision: "REVIEW",
+        reasonCodes: ["VELOCITY_AMOUNT_REVIEW", "VELOCITY_ORDER_COUNT_REVIEW"],
+      },
+      status: "EVALUATED",
+    });
+  });
+});
+
 const requireReview = async (
   service: FraudRiskService,
   requestedOrderId: ReturnType<typeof orderId>,
@@ -737,6 +1402,99 @@ const harnessOrder = (): KeyCoreOrder =>
 
 const fraudFacts = (order: KeyCoreOrder): FraudRiskFacts =>
   riskFactsFromOrder(order, "VERIFIED");
+
+const velocityHarness = (
+  options: {
+    readonly manualReviewAuthority?: FraudManualReviewAuthorityPort;
+    readonly policy?: FraudVelocityPolicy;
+  } = {},
+) => {
+  const repository = new InMemoryFraudRiskRepository({
+    velocityCorrelationSecret: velocityCorrelationTestKey,
+  });
+  const eventAuthority = new TrustedVelocityEventAuthority(now);
+  const sharedCustomer = customerId("33333333-3333-4333-8333-333333333333");
+  repository.setCustomerVerification(sharedCustomer, "VERIFIED");
+  const orders = {
+    customerA1: orderFixture("dddddddd-dddd-4ddd-8ddd-dddddddddd01", {
+      createdAt: new Date(now.getTime() - 25 * 60 * 60 * 1000),
+      customerId: sharedCustomer,
+    }),
+    customerA2: orderFixture("dddddddd-dddd-4ddd-8ddd-dddddddddd02", {
+      createdAt: new Date(now.getTime() - 25 * 60 * 60 * 1000),
+      customerId: sharedCustomer,
+    }),
+    customerA3: orderFixture("dddddddd-dddd-4ddd-8ddd-dddddddddd03", {
+      createdAt: new Date(now.getTime() - 25 * 60 * 60 * 1000),
+      customerId: sharedCustomer,
+    }),
+  };
+  const state = { now };
+  Object.values(orders).forEach((order) => repository.addOrder(order));
+  return {
+    eventAuthority,
+    get now() {
+      return state.now;
+    },
+    set now(value: Date) {
+      state.now = value;
+    },
+    orders,
+    repository,
+    service: new FraudRiskService({
+      ...(options.manualReviewAuthority
+        ? { manualReviewAuthority: options.manualReviewAuthority }
+        : {}),
+      now: () => state.now,
+      repository,
+      velocity: {
+        eventAuthority,
+        policy: options.policy ?? velocityPolicy(),
+        repository,
+      },
+    }),
+  };
+};
+
+const velocityPolicy = (
+  overrides: {
+    readonly amountMinor?: FraudVelocityPolicy["thresholds"][number]["amountMinor"];
+    readonly count?: FraudVelocityPolicy["thresholds"][number]["count"];
+    readonly currency?: string;
+    readonly window?: FraudVelocityPolicy["windows"][number];
+  } = {},
+): FraudVelocityPolicy => ({
+  thresholds: [
+    {
+      amountMinor: overrides.amountMinor ?? { deny: 8_000n, review: 5_000n },
+      count: overrides.count ?? { deny: 3, review: 2 },
+      currency: overrides.currency ?? "EUR",
+      eventType: "PAYMENT_CONFIRMED",
+      window: overrides.window?.id ?? "PT24H",
+    },
+  ],
+  windows: overrides.window
+    ? [overrides.window]
+    : [...defaultFraudVelocityWindows],
+});
+
+const findAggregate = (
+  facts: FraudVelocityFacts | "UNAVAILABLE",
+  subjectType: FraudVelocitySubjectType,
+  window: FraudVelocityWindowId,
+) => {
+  if (facts === "UNAVAILABLE") {
+    throw new Error("expected velocity facts");
+  }
+  const aggregate = facts.aggregates.find(
+    (candidate) =>
+      candidate.subjectType === subjectType && candidate.window === window,
+  );
+  if (!aggregate) {
+    throw new Error("expected velocity aggregate");
+  }
+  return aggregate;
+};
 
 const fraudHarness = () => {
   const repository = new InMemoryFraudRiskRepository();
@@ -830,6 +1588,22 @@ class TrustedFraudAuthority implements FraudManualReviewAuthorityPort {
   }
 }
 
+class TrustedVelocityEventAuthority implements FraudVelocityEventAuthorityPort {
+  public constructor(public occurredAt: Date) {}
+
+  public async authorizePaymentConfirmedVelocityEvent(): Promise<{
+    readonly status: "AUTHORIZED";
+    readonly eventType: "PAYMENT_CONFIRMED";
+    readonly occurredAt: Date;
+  }> {
+    return {
+      eventType: "PAYMENT_CONFIRMED",
+      occurredAt: this.occurredAt,
+      status: "AUTHORIZED",
+    };
+  }
+}
+
 class CapturingAudit {
   public readonly events: AuditEvent[] = [];
 
@@ -841,6 +1615,22 @@ class CapturingAudit {
 class ThrowingFraudRiskRepository extends InMemoryFraudRiskRepository {
   public override async loadFacts(): Promise<null> {
     throw new Error(leakageMarkers.join(" "));
+  }
+}
+
+class ThrowingVelocityRepository extends InMemoryFraudRiskRepository {
+  public override async loadVelocityFacts(): Promise<"UNAVAILABLE"> {
+    throw new Error(velocityLeakageMarkers.join(" "));
+  }
+}
+
+class StaticVelocityRepository extends InMemoryFraudRiskRepository {
+  public constructor(private readonly facts: FraudVelocityFacts) {
+    super();
+  }
+
+  public override async loadVelocityFacts(): Promise<FraudVelocityFacts> {
+    return this.facts;
   }
 }
 

@@ -1,8 +1,17 @@
+import { randomUUID } from "node:crypto";
+
 import {
   customerId,
   currency,
+  emailVelocitySubjectKey,
   money,
   orderId,
+  type FraudVelocityAggregate,
+  type FraudVelocityEventType,
+  type FraudVelocityFacts,
+  type FraudVelocityRepository,
+  type FraudVelocitySubject,
+  type FraudVelocityWindow,
   type FraudManualReviewCase,
   type FraudRiskEvaluation,
   type FraudRiskFacts,
@@ -55,8 +64,35 @@ interface FraudFactRow {
   readonly email_verification_state: "VERIFIED" | "UNVERIFIED" | null;
 }
 
-export class PostgresFraudRiskRepository implements FraudRiskRepository {
-  public constructor(private readonly db: TransactionalQueryable) {}
+interface FraudVelocityOrderRow {
+  readonly id: string;
+  readonly customer_id: string | null;
+  readonly checkout_email_normalized: string | null;
+  readonly customer_amount_minor: string;
+  readonly currency: string;
+  readonly payment_status: OrderPaymentStatus;
+  readonly created_at: Date;
+}
+
+interface FraudVelocityAggregateRow {
+  readonly subject_type: FraudVelocitySubject["subjectType"];
+  readonly event_type: FraudVelocityEventType;
+  readonly window_id: FraudVelocityWindow["id"];
+  readonly event_count: string;
+  readonly amount_minor_total: string;
+  readonly currency: string;
+  readonly has_future_event_anomaly: boolean;
+}
+
+export class PostgresFraudRiskRepository
+  implements FraudRiskRepository, FraudVelocityRepository
+{
+  public constructor(
+    private readonly db: TransactionalQueryable,
+    private readonly options: {
+      readonly velocityCorrelationSecret?: string;
+    } = {},
+  ) {}
 
   public async loadFacts(
     requestedOrderId: OrderId,
@@ -289,6 +325,182 @@ export class PostgresFraudRiskRepository implements FraudRiskRepository {
         : { status: "STALE_EVALUATION" };
     });
   }
+
+  public async recordOrderVelocityEvent(input: {
+    readonly orderId: OrderId;
+    readonly eventType: FraudVelocityEventType;
+    readonly occurredAt: Date;
+    readonly recordedAt: Date;
+  }): Promise<{
+    readonly status: "RECORDED" | "IDEMPOTENT" | "UNAVAILABLE";
+    readonly subjectEventCount: number;
+    readonly insertedEventCount: number;
+  }> {
+    return this.db.transaction(async (client) => {
+      const order = await loadVelocityOrder(client, input.orderId);
+      if (
+        !order ||
+        order.payment_status !== "CAPTURED" ||
+        !validTimestamp(input.occurredAt) ||
+        !validTimestamp(input.recordedAt) ||
+        input.occurredAt.getTime() < order.created_at.getTime() ||
+        input.occurredAt.getTime() > input.recordedAt.getTime()
+      ) {
+        return {
+          insertedEventCount: 0,
+          status: "UNAVAILABLE",
+          subjectEventCount: 0,
+        };
+      }
+      const subjects = velocitySubjectsForOrder(
+        order,
+        this.options.velocityCorrelationSecret,
+      );
+      if (subjects === "UNAVAILABLE" || subjects.length === 0) {
+        return {
+          insertedEventCount: 0,
+          status: "UNAVAILABLE",
+          subjectEventCount: 0,
+        };
+      }
+      let insertedCount = 0;
+      for (const subject of subjects) {
+        const inserted = await client.query<{ readonly id: string }>(
+          `
+            INSERT INTO fraud_velocity_events(
+              id, event_type, order_id, subject_type, subject_key,
+              amount_minor, currency, occurred_at, recorded_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (event_type, order_id, subject_type)
+            DO NOTHING
+            RETURNING id::text
+          `,
+          [
+            randomUUID(),
+            input.eventType,
+            input.orderId,
+            subject.subjectType,
+            subject.subjectKey,
+            order.customer_amount_minor,
+            order.currency,
+            input.occurredAt,
+            input.recordedAt,
+          ],
+        );
+        if (inserted.rows[0]) {
+          insertedCount += 1;
+        }
+      }
+      return {
+        insertedEventCount: insertedCount,
+        subjectEventCount: subjects.length,
+        status: insertedCount === 0 ? "IDEMPOTENT" : "RECORDED",
+      };
+    });
+  }
+
+  public async loadVelocityFacts(input: {
+    readonly orderId: OrderId;
+    readonly evaluatedAt: Date;
+    readonly windows: readonly FraudVelocityWindow[];
+  }): Promise<FraudVelocityFacts | "UNAVAILABLE"> {
+    return this.db.transaction(async (client) => {
+      const order = await loadVelocityOrder(client, input.orderId);
+      if (!order) {
+        return "UNAVAILABLE";
+      }
+      const subjects = velocitySubjectsForOrder(
+        order,
+        this.options.velocityCorrelationSecret,
+      );
+      if (subjects === "UNAVAILABLE" || subjects.length === 0) {
+        return "UNAVAILABLE";
+      }
+      const result = await client.query<FraudVelocityAggregateRow>(
+        `
+          WITH subjects AS (
+            SELECT *
+            FROM unnest($1::text[], $2::text[]) AS subject(subject_type, subject_key)
+          ),
+          velocity_windows AS (
+            SELECT *
+            FROM unnest($3::text[], $4::timestamptz[]) AS velocity_window(window_id, window_start)
+          ),
+          future AS (
+            SELECT EXISTS (
+              SELECT 1
+              FROM fraud_velocity_events event
+              INNER JOIN subjects subject
+                ON subject.subject_type = event.subject_type
+                AND subject.subject_key = event.subject_key
+              WHERE event.event_type = 'PAYMENT_CONFIRMED'
+                AND event.occurred_at > $6
+            ) AS has_future_event_anomaly
+          )
+          SELECT
+            subject.subject_type,
+            'PAYMENT_CONFIRMED'::text AS event_type,
+            velocity_window.window_id,
+            count(event.id)::text AS event_count,
+            COALESCE(sum(event.amount_minor), 0)::text AS amount_minor_total,
+            $5::text AS currency,
+            future.has_future_event_anomaly
+          FROM subjects subject
+          CROSS JOIN velocity_windows velocity_window
+          CROSS JOIN future
+          LEFT JOIN fraud_velocity_events event
+            ON event.subject_type = subject.subject_type
+            AND event.subject_key = subject.subject_key
+            AND event.event_type = 'PAYMENT_CONFIRMED'
+            AND event.currency = $5
+            AND event.occurred_at >= velocity_window.window_start
+            AND event.occurred_at <= $6
+          GROUP BY subject.subject_type, velocity_window.window_id, future.has_future_event_anomaly
+          ORDER BY subject.subject_type, velocity_window.window_id
+        `,
+        [
+          subjects.map((subject) => subject.subjectType),
+          subjects.map((subject) => subject.subjectKey),
+          input.windows.map((window) => window.id),
+          input.windows.map(
+            (window) =>
+              new Date(input.evaluatedAt.getTime() - window.durationMs),
+          ),
+          order.currency,
+          input.evaluatedAt,
+        ],
+      );
+      const aggregates: FraudVelocityAggregate[] = [];
+      for (const row of result.rows) {
+        const eventCount = Number(row.event_count);
+        if (!Number.isSafeInteger(eventCount) || eventCount < 0) {
+          return "UNAVAILABLE";
+        }
+        const amountMinorTotal = BigInt(row.amount_minor_total);
+        if (amountMinorTotal < 0n) {
+          return "UNAVAILABLE";
+        }
+        aggregates.push({
+          amountMinorTotal,
+          currency: row.currency,
+          eventCount,
+          eventType: row.event_type,
+          subjectType: row.subject_type,
+          window: row.window_id,
+        });
+      }
+      return {
+        aggregates,
+        evaluatedAt: input.evaluatedAt,
+        hasFutureEventAnomaly: Boolean(
+          result.rows[0]?.has_future_event_anomaly,
+        ),
+        status: "AVAILABLE",
+        subjects,
+      };
+    });
+  }
 }
 
 const evaluationReturning = `
@@ -391,6 +603,55 @@ const factsFromRow = (row: FraudFactRow): FraudRiskFacts => ({
   orderStatus: row.status,
   paymentStatus: row.payment_status,
 });
+
+const loadVelocityOrder = async (
+  db: Queryable,
+  requestedOrderId: OrderId,
+): Promise<FraudVelocityOrderRow | null> => {
+  const result = await db.query<FraudVelocityOrderRow>(
+    `
+      SELECT
+        id::text,
+        customer_id::text,
+        checkout_email_normalized,
+        customer_amount_minor,
+        currency,
+        payment_status,
+        created_at
+      FROM keycore_orders
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [requestedOrderId],
+  );
+  return result.rows[0] ?? null;
+};
+
+const velocitySubjectsForOrder = (
+  order: FraudVelocityOrderRow,
+  velocityCorrelationSecret: string | undefined,
+): readonly FraudVelocitySubject[] | "UNAVAILABLE" => {
+  const subjects: FraudVelocitySubject[] = [];
+  if (order.customer_id) {
+    subjects.push({ subjectKey: order.customer_id, subjectType: "CUSTOMER" });
+  }
+  if (order.checkout_email_normalized) {
+    if (!velocityCorrelationSecret) {
+      return "UNAVAILABLE";
+    }
+    subjects.push({
+      subjectKey: emailVelocitySubjectKey(
+        velocityCorrelationSecret,
+        order.checkout_email_normalized,
+      ),
+      subjectType: "CHECKOUT_EMAIL",
+    });
+  }
+  return subjects;
+};
+
+const validTimestamp = (value: Date): boolean =>
+  value instanceof Date && Number.isFinite(value.getTime());
 
 const evaluationValues = (
   evaluation: FraudRiskEvaluation,

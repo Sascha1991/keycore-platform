@@ -1,14 +1,27 @@
+import { randomUUID } from "node:crypto";
+
 import type {
   FraudManualReviewCase,
   FraudRiskEvaluation,
   FraudRiskFacts,
   FraudRiskRepository,
+  FraudVelocityAggregate,
+  FraudVelocityEventType,
+  FraudVelocityFacts,
+  FraudVelocityRepository,
+  FraudVelocitySubject,
+  FraudVelocityWindow,
   KeyCoreOrder,
   OrderId,
 } from "../../packages/platform/src/contracts.js";
-import { riskFactsFromOrder } from "../../packages/platform/src/contracts.js";
+import {
+  emailVelocitySubjectKey,
+  riskFactsFromOrder,
+} from "../../packages/platform/src/contracts.js";
 
-export class InMemoryFraudRiskRepository implements FraudRiskRepository {
+export class InMemoryFraudRiskRepository
+  implements FraudRiskRepository, FraudVelocityRepository
+{
   private readonly orders = new Map<OrderId, KeyCoreOrder>();
   private readonly customerVerification = new Map<
     string,
@@ -18,7 +31,14 @@ export class InMemoryFraudRiskRepository implements FraudRiskRepository {
   private readonly evaluationKeys = new Map<string, string>();
   private readonly evaluationSequence = new Map<string, number>();
   private readonly reviewCases = new Map<string, FraudManualReviewCase>();
+  private readonly velocityEvents = new Map<string, InMemoryVelocityEvent>();
   private sequence = 0;
+
+  public constructor(
+    private readonly options: {
+      readonly velocityCorrelationSecret?: string;
+    } = {},
+  ) {}
 
   public addOrder(order: KeyCoreOrder): void {
     this.orders.set(order.id, order);
@@ -185,6 +205,160 @@ export class InMemoryFraudRiskRepository implements FraudRiskRepository {
     this.reviewCases.set(input.caseId, resolved);
     return { reviewCase: resolved, status: "RESOLVED" };
   }
+
+  public async recordOrderVelocityEvent(input: {
+    readonly orderId: OrderId;
+    readonly eventType: FraudVelocityEventType;
+    readonly occurredAt: Date;
+    readonly recordedAt: Date;
+  }): Promise<{
+    readonly status: "RECORDED" | "IDEMPOTENT" | "UNAVAILABLE";
+    readonly subjectEventCount: number;
+    readonly insertedEventCount: number;
+  }> {
+    const order = this.orders.get(input.orderId);
+    if (
+      !order ||
+      order.paymentStatus !== "CAPTURED" ||
+      !validTimestamp(input.occurredAt) ||
+      !validTimestamp(input.recordedAt) ||
+      input.occurredAt.getTime() < order.createdAt.getTime() ||
+      input.occurredAt.getTime() > input.recordedAt.getTime()
+    ) {
+      return {
+        insertedEventCount: 0,
+        status: "UNAVAILABLE",
+        subjectEventCount: 0,
+      };
+    }
+    const subjects = this.subjectsForOrder(order);
+    if (subjects === "UNAVAILABLE" || subjects.length === 0) {
+      return {
+        insertedEventCount: 0,
+        status: "UNAVAILABLE",
+        subjectEventCount: 0,
+      };
+    }
+    let recorded = 0;
+    for (const subject of subjects) {
+      const key = `${input.eventType}:${input.orderId}:${subject.subjectType}`;
+      if (this.velocityEvents.has(key)) {
+        continue;
+      }
+      this.velocityEvents.set(key, {
+        amountMinor: order.customerAmount.amountMinor,
+        currency: order.currency,
+        eventId: randomUUID(),
+        eventType: input.eventType,
+        occurredAt: input.occurredAt,
+        orderId: input.orderId,
+        recordedAt: input.recordedAt,
+        subjectKey: subject.subjectKey,
+        subjectType: subject.subjectType,
+      });
+      recorded += 1;
+    }
+    return {
+      insertedEventCount: recorded,
+      subjectEventCount: subjects.length,
+      status: recorded === 0 ? "IDEMPOTENT" : "RECORDED",
+    };
+  }
+
+  public async loadVelocityFacts(input: {
+    readonly orderId: OrderId;
+    readonly evaluatedAt: Date;
+    readonly windows: readonly FraudVelocityWindow[];
+  }): Promise<FraudVelocityFacts | "UNAVAILABLE"> {
+    const order = this.orders.get(input.orderId);
+    if (!order) {
+      return "UNAVAILABLE";
+    }
+    const subjects = this.subjectsForOrder(order);
+    if (subjects === "UNAVAILABLE" || subjects.length === 0) {
+      return "UNAVAILABLE";
+    }
+    const aggregates: FraudVelocityAggregate[] = [];
+    const subjectKeys = new Set(subjects.map((subject) => subject.subjectKey));
+    const subjectTypes = new Map(
+      subjects.map(
+        (subject) => [subject.subjectKey, subject.subjectType] as const,
+      ),
+    );
+    const relevantEvents = [...this.velocityEvents.values()].filter((event) =>
+      subjectKeys.has(event.subjectKey),
+    );
+    for (const subject of subjects) {
+      for (const window of input.windows) {
+        const windowStart = new Date(
+          input.evaluatedAt.getTime() - window.durationMs,
+        );
+        const events = relevantEvents.filter(
+          (event) =>
+            event.subjectKey === subject.subjectKey &&
+            event.eventType === "PAYMENT_CONFIRMED" &&
+            event.currency === order.currency &&
+            event.occurredAt.getTime() >= windowStart.getTime() &&
+            event.occurredAt.getTime() <= input.evaluatedAt.getTime(),
+        );
+        aggregates.push({
+          amountMinorTotal: events.reduce(
+            (total, event) => total + event.amountMinor,
+            0n,
+          ),
+          currency: order.currency,
+          eventCount: events.length,
+          eventType: "PAYMENT_CONFIRMED",
+          subjectType:
+            subjectTypes.get(subject.subjectKey) ?? subject.subjectType,
+          window: window.id,
+        });
+      }
+    }
+    return {
+      aggregates,
+      evaluatedAt: input.evaluatedAt,
+      hasFutureEventAnomaly: relevantEvents.some(
+        (event) => event.occurredAt.getTime() > input.evaluatedAt.getTime(),
+      ),
+      status: "AVAILABLE",
+      subjects,
+    };
+  }
+
+  private subjectsForOrder(
+    order: KeyCoreOrder,
+  ): readonly FraudVelocitySubject[] | "UNAVAILABLE" {
+    const subjects: FraudVelocitySubject[] = [];
+    if (order.customerId) {
+      subjects.push({ subjectKey: order.customerId, subjectType: "CUSTOMER" });
+    }
+    if (order.checkoutEmailNormalized) {
+      if (!this.options.velocityCorrelationSecret) {
+        return "UNAVAILABLE";
+      }
+      subjects.push({
+        subjectKey: emailVelocitySubjectKey(
+          this.options.velocityCorrelationSecret,
+          order.checkoutEmailNormalized,
+        ),
+        subjectType: "CHECKOUT_EMAIL",
+      });
+    }
+    return subjects;
+  }
+}
+
+interface InMemoryVelocityEvent {
+  readonly eventId: string;
+  readonly eventType: FraudVelocityEventType;
+  readonly orderId: OrderId;
+  readonly subjectType: FraudVelocitySubject["subjectType"];
+  readonly subjectKey: string;
+  readonly amountMinor: bigint;
+  readonly currency: string;
+  readonly occurredAt: Date;
+  readonly recordedAt: Date;
 }
 
 const evaluationKey = (evaluation: FraudRiskEvaluation): string =>
@@ -196,3 +370,6 @@ const required = <TValue>(value: TValue | undefined): TValue => {
   }
   return value;
 };
+
+const validTimestamp = (value: Date): boolean =>
+  value instanceof Date && Number.isFinite(value.getTime());
