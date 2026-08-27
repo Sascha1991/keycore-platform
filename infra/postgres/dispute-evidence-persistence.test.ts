@@ -269,7 +269,7 @@ const insertDisputeFixture = async (
       )
       VALUES (
         'PAYMENT_CAPTURED', $1, '{"type":"SERVICE","id":"stripe"}'::jsonb,
-        'pg-dispute-audit', jsonb_build_object('type', 'ORDER', 'id', $2),
+        'pg-dispute-audit', jsonb_build_object('type', 'ORDER', 'id', $2::text),
         'TEST', 'SUCCEEDED', 'PAYMENT_CAPTURED', '{}'::jsonb
       )
     `,
