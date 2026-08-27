@@ -1,0 +1,18 @@
+DROP TRIGGER IF EXISTS support_case_events_no_delete ON support_case_events;
+DROP TRIGGER IF EXISTS support_case_events_no_update ON support_case_events;
+DROP FUNCTION IF EXISTS prevent_support_case_event_mutation();
+DROP TRIGGER IF EXISTS support_cases_ownership_immutable ON support_cases;
+DROP FUNCTION IF EXISTS prevent_support_case_ownership_change();
+DROP INDEX IF EXISTS support_case_links_case_idx;
+DROP INDEX IF EXISTS support_case_links_fulfillment_idx;
+DROP INDEX IF EXISTS support_case_links_fraud_evaluation_idx;
+DROP INDEX IF EXISTS support_case_links_fraud_review_idx;
+DROP INDEX IF EXISTS support_case_links_dispute_idx;
+DROP TABLE IF EXISTS support_case_links;
+DROP INDEX IF EXISTS support_case_events_case_occurred_idx;
+DROP TABLE IF EXISTS support_case_events;
+DROP INDEX IF EXISTS support_messages_case_created_idx;
+DROP TABLE IF EXISTS support_messages;
+DROP INDEX IF EXISTS support_cases_order_idx;
+DROP INDEX IF EXISTS support_cases_customer_list_idx;
+DROP TABLE IF EXISTS support_cases;

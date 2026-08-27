@@ -101,6 +101,14 @@ Audit failure does not roll back durable evidence creation.
 
 Production dispute submission is not ready in KS-09-03.
 
+## Support Case Linkage
+
+KS-09-04 may reference a dispute evidence snapshot from a support case as a
+safe exact-order link. The support case stores only the snapshot identifier and
+order-bound reference metadata. It does not copy evidence sections, payment
+references, supplier payloads, Product Keys or customer-visible evidence into
+support messages.
+
 Not included:
 
 - Stripe Dispute API integration;

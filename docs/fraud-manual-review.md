@@ -101,3 +101,10 @@ event is produced when the audit port rejects the write.
 KS-09-02 added velocity limits as fraud signals only. Future Phase 09 work may
 add production operator UI, dispute evidence, support tickets, supplier claim
 workflow and external fraud provider normalization.
+
+## Support Case Linkage
+
+KS-09-04 may reference fraud manual-review cases or fraud risk evaluations from
+a support case as exact-order internal links. Support does not expose fraud
+internals to customer projections and does not grant fraud approval,
+rejection, clearance or review-resolution authority.
