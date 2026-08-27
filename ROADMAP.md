@@ -110,6 +110,19 @@ fulfillment reference links, append-only history and PostgreSQL migration 023
 while leaving production helpdesk integration, email, UI, refunds, supplier
 claims, Stripe/Kinguin mutations and product-key reveal out of scope.
 
+KS-09-05 adds the provider-neutral Supplier Claim workflow with trusted
+operator/system authority, exact-order support/procurement/fulfillment/evidence
+binding, structured reported-problem categories, durable idempotency,
+optimistic concurrency, append-only history and a separate fail-closed external
+submission operation while leaving production supplier adapters, Kinguin claim
+or key-return mutations, Stripe refunds, replacement fulfillment, operator UI
+and production supplier-claim policy disabled.
+
+With KS-09-01 through KS-09-05, Phase 09 backend/application foundation scope
+is complete. Production operator authority and UI, real supplier claim APIs,
+supplier-specific claim policy, production refund/replacement integrations,
+retention and operational controls remain future production/integration work.
+
 ## Phase 10 – Monitoring and Operations
 
 Dashboards, alerts, health checks, dead-letter queues, backup/restore, runbooks and emergency controls.

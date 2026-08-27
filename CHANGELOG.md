@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added KS-09-05 supplier claim workflow foundation with provider-neutral
+  structured claims, fail-closed trusted authority and submission ports,
+  authoritative supplier derivation, exact-order support/procurement/
+  fulfillment/evidence binding, idempotent creation, optimistic concurrency,
+  append-only history, PostgreSQL migration 024 and ambiguity-safe prepared
+  submission operations while leaving Kinguin claim/key-return mutations,
+  Stripe refunds, replacement fulfillment, production UI and Product Key access
+  disabled.
+
 - Hardened KS-09-04 before merge by adding runtime validation for support
   categories, priorities, visibility, statuses, resolution codes, IDs,
   correlation IDs and pagination, preventing operator-created false ownership
