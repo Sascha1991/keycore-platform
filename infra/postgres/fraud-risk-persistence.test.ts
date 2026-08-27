@@ -207,8 +207,13 @@ describe.skipIf(!connectionString)("PostgresFraudRiskRepository", () => {
 
   it("fails closed without a velocity correlation secret and avoids partial event persistence", async () => {
     await withDatabase(async (database) => {
+      const customer = await createCustomer(
+        database,
+        "velocity-owner@example.test",
+      );
       const order = await createOrder(database, {
-        checkoutEmailNormalized: "velocity-secret-missing@example.test",
+        checkoutEmailNormalized: "velocity-missing-correlation@example.test",
+        customerId: customer,
         paymentStatus: "CAPTURED",
         status: "PAYMENT_CAPTURED",
       });
@@ -426,6 +431,7 @@ const createOrder = async (
     readonly status: string;
     readonly paymentStatus: string;
     readonly checkoutEmailNormalized?: string | null;
+    readonly customerId?: string | null;
     readonly createdAt?: Date;
   },
 ): Promise<OrderId> => {
@@ -462,18 +468,19 @@ const createOrder = async (
   await database.query(
     `
       INSERT INTO keycore_orders(
-        id, product_id, price_lock_id, checkout_email_normalized, customer_amount_minor, currency,
+        id, product_id, price_lock_id, customer_id, checkout_email_normalized, customer_amount_minor, currency,
         quantity, status, payment_status, procurement_status, fulfillment_status,
         risk_status, refund_status, record_version, idempotency_key,
         idempotency_fingerprint, correlation_id, created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, 2999, 'EUR', 1, $5, $6, 'NOT_STARTED', 'NOT_STARTED',
-        'NOT_EVALUATED', 'NOT_REQUESTED', 1, $7, $8, 'pg-fraud-order', $9, $9)
+      VALUES ($1, $2, $3, $4, $5, 2999, 'EUR', 1, $6, $7, 'NOT_STARTED', 'NOT_STARTED',
+        'NOT_EVALUATED', 'NOT_REQUESTED', 1, $8, $9, 'pg-fraud-order', $10, $10)
     `,
     [
       createdOrderId,
       productId,
       priceLockId,
+      input.customerId ?? null,
       input.checkoutEmailNormalized ?? null,
       input.status,
       input.paymentStatus,
@@ -483,6 +490,24 @@ const createOrder = async (
     ],
   );
   return createdOrderId;
+};
+
+const createCustomer = async (
+  database: PostgresTestDatabase,
+  emailNormalized: string,
+): Promise<string> => {
+  const id = randomUUID();
+  await database.query(
+    `
+      INSERT INTO keycore_customers(
+        id, email_normalized, email_verification_state, record_version,
+        created_at, updated_at
+      )
+      VALUES ($1, $2, 'VERIFIED', 1, $3, $3)
+    `,
+    [id, emailNormalized, now],
+  );
+  return id;
 };
 
 const velocityPolicy = (): FraudVelocityPolicy => ({
