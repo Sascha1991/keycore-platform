@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added KS-09-02 fraud velocity limits with durable `PAYMENT_CONFIRMED`
+  velocity events, pseudonymous checkout-email correlation, typed window and
+  threshold policy, `KS09_POLICY_V2` fingerprints, fail-closed unavailable
+  signal handling, PostgreSQL migration 021 and documentation while leaving
+  production velocity policy approval, external fraud providers, support
+  tickets, dispute evidence, supplier claims, Kinguin calls, Stripe mutations
+  and real key reveal out of scope.
 - Added KS-09-01 fraud risk and manual-review foundation with deterministic
   trusted-fact rule evaluation, policy-versioned persisted decisions,
   fact-fingerprint idempotency, PostgreSQL migration 020, one-active-fraud-case

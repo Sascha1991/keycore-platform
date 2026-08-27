@@ -1,7 +1,8 @@
 # Fraud Manual Review
 
-KS-09-01 adds a durable fraud manual-review case foundation. It does not add a
-production admin UI, production operator authentication, support tickets,
+KS-09-01 adds a durable fraud manual-review case foundation. KS-09-02 velocity
+`REVIEW` decisions flow through the same `FRAUD` review case model. It does not
+add a production admin UI, production operator authentication, support tickets,
 dispute evidence or supplier claim workflow.
 
 ## Model
@@ -97,6 +98,6 @@ event is produced when the audit port rejects the write.
 
 ## Future Work
 
-Future Phase 09 work may add production operator UI, velocity limits, dispute
-evidence, support tickets, supplier claim workflow and external fraud provider
-normalization.
+KS-09-02 added velocity limits as fraud signals only. Future Phase 09 work may
+add production operator UI, dispute evidence, support tickets, supplier claim
+workflow and external fraud provider normalization.

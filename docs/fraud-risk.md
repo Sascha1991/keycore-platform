@@ -1,9 +1,10 @@
 # Fraud Risk
 
-KS-09-01 adds the KeyCore fraud risk foundation for Phase 09. It is supplier
+KS-09-01 adds the KeyCore fraud risk foundation for Phase 09. KS-09-02 extends
+it with durable fraud velocity limits. The fraud foundation is supplier
 neutral, payment-provider neutral and deterministic. It does not integrate an
-external fraud vendor, Stripe Radar, Kinguin, production operator UI, customer
-fraud disclosures or velocity limits.
+external fraud vendor, Stripe Radar, Kinguin, production operator UI or
+customer fraud disclosures.
 
 Public storefront branding remains KeyRaNo:
 
@@ -59,7 +60,7 @@ currency, payment status, supplier, product price, risk score, risk decision,
 country, IP reputation, order ownership and verification state are not
 authority.
 
-KS-09-01 facts include only currently persisted facts:
+KS-09-01 base facts include only currently persisted facts:
 
 - order ID;
 - optional customer ID;
@@ -75,10 +76,17 @@ KS-09-01 facts include only currently persisted facts:
 No IP, device, geolocation, billing address, Radar field or external fraud
 vendor signal is fabricated.
 
+When KS-09-02 velocity policy is configured, the service also attaches trusted
+velocity facts loaded from `fraud_velocity_events` for the current evaluation
+time. Velocity subjects are limited to internal `CUSTOMER` IDs and
+pseudonymous `CHECKOUT_EMAIL` subjects derived from the immutable checkout
+email snapshot. Raw email is not stored in velocity events.
+
 ## Policy Versioning
 
-Every evaluation stores `KS09_POLICY_V1`. Historical decisions must not be
-silently reinterpreted under a later policy.
+KS-09-01 evaluations store `KS09_POLICY_V1`. KS-09-02 velocity-enabled
+evaluations store `KS09_POLICY_V2`. Historical decisions must not be silently
+reinterpreted under a later policy.
 
 The policy version is part of both the stored evaluation identity and the fact
 fingerprint input. A later `KS09_POLICY_V2` evaluation for the same order facts
@@ -104,24 +112,31 @@ Fingerprint inputs are:
 - payment status;
 - order risk status;
 - order creation timestamp;
-- policy version.
+- policy version;
+- velocity aggregate facts when evaluating under `KS09_POLICY_V2`.
 
 The fingerprint intentionally excludes volatile values such as correlation IDs,
-random IDs, audit timestamps and repository fetch timestamps.
+random IDs, audit timestamps and repository fetch timestamps. Velocity
+`evaluatedAt` is not fingerprinted; the stable aggregate result for that
+evaluation is.
 
 ## Rules
 
 KS-09-01 ships a deliberately conservative deterministic rule set:
 
-| Rule ID                           | Condition                                              | Decision       | Reason Code                                           |
-| --------------------------------- | ------------------------------------------------------ | -------------- | ----------------------------------------------------- |
-| `RISK_AMOUNT_VALID`               | amount minor is zero or negative                       | `DENY`         | `INVALID_ORDER_AMOUNT`                                |
-| `RISK_ORDER_STATE_VALID`          | order is `CANCELLED`, `FAILED` or `REFUNDED`           | `DENY`         | `ORDER_STATE_INVALID`                                 |
-| `RISK_PAYMENT_CAPTURED`           | payment status is not `CAPTURED`                       | `REVIEW`       | `PAYMENT_NOT_CONFIRMED`                               |
-| `RISK_CUSTOMER_VERIFICATION`      | owned customer exists and is explicitly unverified     | `REVIEW`       | `CUSTOMER_UNVERIFIED`                                 |
-| `RISK_EXISTING_ORDER_RISK_STATUS` | existing order risk status is review-required/rejected | review or deny | `MANUAL_REVIEW_POLICY_MATCH` or `ORDER_STATE_INVALID` |
-| currency support check            | currency outside configured supported set              | `REVIEW`       | `CURRENCY_UNSUPPORTED`                                |
-| rule exception guard              | any rule throws                                        | `REVIEW`       | `RISK_RULE_EXCEPTION`                                 |
+| Rule ID                           | Condition                                              | Decision       | Reason Code                                                  |
+| --------------------------------- | ------------------------------------------------------ | -------------- | ------------------------------------------------------------ |
+| `RISK_AMOUNT_VALID`               | amount minor is zero or negative                       | `DENY`         | `INVALID_ORDER_AMOUNT`                                       |
+| `RISK_ORDER_STATE_VALID`          | order is `CANCELLED`, `FAILED` or `REFUNDED`           | `DENY`         | `ORDER_STATE_INVALID`                                        |
+| `RISK_PAYMENT_CAPTURED`           | payment status is not `CAPTURED`                       | `REVIEW`       | `PAYMENT_NOT_CONFIRMED`                                      |
+| `RISK_CUSTOMER_VERIFICATION`      | owned customer exists and is explicitly unverified     | `REVIEW`       | `CUSTOMER_UNVERIFIED`                                        |
+| `RISK_EXISTING_ORDER_RISK_STATUS` | existing order risk status is review-required/rejected | review or deny | `MANUAL_REVIEW_POLICY_MATCH` or `ORDER_STATE_INVALID`        |
+| currency support check            | currency outside configured supported set              | `REVIEW`       | `CURRENCY_UNSUPPORTED`                                       |
+| rule exception guard              | any rule throws                                        | `REVIEW`       | `RISK_RULE_EXCEPTION`                                        |
+| velocity unavailable              | required velocity facts unavailable                    | `REVIEW`       | `VELOCITY_SIGNAL_UNAVAILABLE`                                |
+| velocity timestamp anomaly        | future velocity event exists                           | `REVIEW`       | `VELOCITY_TIMESTAMP_ANOMALY`                                 |
+| velocity count threshold          | configured count threshold crossed                     | review or deny | `VELOCITY_ORDER_COUNT_REVIEW` or `VELOCITY_ORDER_COUNT_DENY` |
+| velocity amount threshold         | configured amount threshold crossed                    | review or deny | `VELOCITY_AMOUNT_REVIEW` or `VELOCITY_AMOUNT_DENY`           |
 
 Reason codes are stable, machine-readable and safe for audit/logs. They never
 include PII, Product Keys, credentials or dynamic provider payloads.
@@ -152,6 +167,11 @@ It does not mean highest UUID, insertion order, arbitrary latest row or a stale
 approved review for older facts. If the current facts have no matching
 evaluation yet, the guard fails closed and requires re-evaluation.
 
+Under `KS09_POLICY_V2`, current facts include current velocity aggregates. If
+another trusted payment-confirmed event changes a relevant aggregate after an
+earlier `ALLOW` or approved `REVIEW`, the previous decision no longer matches
+the current fingerprint and downstream clearance fails closed.
+
 ## Downstream Guard
 
 `FraudRiskService.isFraudCleared(orderId)` is the KS-09-01 downstream guard
@@ -166,6 +186,9 @@ foundation. It fails closed when:
 The guard is not broadly wired into production orchestration in KS-09-01.
 Future tasks can integrate it at protected supplier procurement, key retrieval
 or customer delivery transitions.
+
+See `docs/fraud-velocity-limits.md` for KS-09-02 velocity event semantics,
+windows, pseudonymization, threshold configuration and retention limitations.
 
 ## Failure Behavior
 
@@ -188,7 +211,7 @@ user agent, address or billing details.
 
 - PRODUCTION FRAUD POLICY APPROVED: NO
 - EXTERNAL FRAUD PROVIDER CONNECTED: NO
-- PRODUCTION VELOCITY LIMITS READY: NO
+- PRODUCTION VELOCITY POLICY APPROVED: NO
 - STRIPE RADAR INTEGRATED: NO
 - KINGUIN CALLED BY FRAUD EVALUATION: NO
 - REAL KEY REVEAL ENABLED BY FRAUD REVIEW: NO

@@ -89,6 +89,13 @@ fraud-clearance guard while leaving velocity limits, dispute evidence, support
 tickets, supplier claim workflow, production operator UI and external fraud
 providers for later Phase 09 tasks.
 
+KS-09-02 adds durable server-authoritative fraud velocity signals,
+pseudonymous checkout-email correlation, deterministic windowed count/amount
+rules, `KS09_POLICY_V2` fact fingerprints and fail-closed stale-clearance
+behavior while leaving production velocity policy approval, dispute evidence,
+support tickets, supplier claim workflow, production operator UI and external
+fraud providers for later Phase 09 tasks.
+
 ## Phase 10 – Monitoring and Operations
 
 Dashboards, alerts, health checks, dead-letter queues, backup/restore, runbooks and emergency controls.
