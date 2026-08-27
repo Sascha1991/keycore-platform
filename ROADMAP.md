@@ -96,6 +96,13 @@ behavior while leaving production velocity policy approval, dispute evidence,
 support tickets, supplier claim workflow, production operator UI and external
 fraud providers for later Phase 09 tasks.
 
+KS-09-03 adds a provider-neutral dispute evidence snapshot foundation with
+authoritative persisted fact sourcing, mandatory order/payment sections,
+explicit optional absence/ambiguity, deterministic fingerprints, immutable
+finalized snapshots, exact-order-bound export and fail-closed trusted authority
+gates while leaving Stripe dispute submission, support tickets, supplier claim
+workflow and production operator UI for later Phase 09 tasks.
+
 ## Phase 10 – Monitoring and Operations
 
 Dashboards, alerts, health checks, dead-letter queues, backup/restore, runbooks and emergency controls.
