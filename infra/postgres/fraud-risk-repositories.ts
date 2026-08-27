@@ -423,9 +423,9 @@ export class PostgresFraudRiskRepository
             SELECT *
             FROM unnest($1::text[], $2::text[]) AS subject(subject_type, subject_key)
           ),
-          windows AS (
+          velocity_windows AS (
             SELECT *
-            FROM unnest($3::text[], $4::bigint[]) AS window(window_id, duration_ms)
+            FROM unnest($3::text[], $4::timestamptz[]) AS velocity_window(window_id, window_start)
           ),
           future AS (
             SELECT EXISTS (
@@ -441,29 +441,32 @@ export class PostgresFraudRiskRepository
           SELECT
             subject.subject_type,
             'PAYMENT_CONFIRMED'::text AS event_type,
-            window.window_id,
+            velocity_window.window_id,
             count(event.id)::text AS event_count,
             COALESCE(sum(event.amount_minor), 0)::text AS amount_minor_total,
             $5::text AS currency,
             future.has_future_event_anomaly
           FROM subjects subject
-          CROSS JOIN windows window
+          CROSS JOIN velocity_windows velocity_window
           CROSS JOIN future
           LEFT JOIN fraud_velocity_events event
             ON event.subject_type = subject.subject_type
             AND event.subject_key = subject.subject_key
             AND event.event_type = 'PAYMENT_CONFIRMED'
             AND event.currency = $5
-            AND event.occurred_at >= $6 - (window.duration_ms * interval '1 millisecond')
+            AND event.occurred_at >= velocity_window.window_start
             AND event.occurred_at <= $6
-          GROUP BY subject.subject_type, window.window_id, future.has_future_event_anomaly
-          ORDER BY subject.subject_type, window.window_id
+          GROUP BY subject.subject_type, velocity_window.window_id, future.has_future_event_anomaly
+          ORDER BY subject.subject_type, velocity_window.window_id
         `,
         [
           subjects.map((subject) => subject.subjectType),
           subjects.map((subject) => subject.subjectKey),
           input.windows.map((window) => window.id),
-          input.windows.map((window) => window.durationMs),
+          input.windows.map(
+            (window) =>
+              new Date(input.evaluatedAt.getTime() - window.durationMs),
+          ),
           order.currency,
           input.evaluatedAt,
         ],
