@@ -158,7 +158,7 @@ describe.skipIf(!connectionString)("PostgresFraudRiskRepository", () => {
           UPDATE keycore_orders
           SET payment_status = 'CAPTURED',
             status = 'PAYMENT_CAPTURED',
-            currency = 'USD',
+            risk_status = 'REVIEW_REQUIRED',
             updated_at = $2
           WHERE id = $1
         `,
@@ -172,7 +172,7 @@ describe.skipIf(!connectionString)("PostgresFraudRiskRepository", () => {
       expect(second).toMatchObject({
         evaluation: {
           decision: "REVIEW",
-          reasonCodes: ["CURRENCY_UNSUPPORTED"],
+          reasonCodes: ["MANUAL_REVIEW_POLICY_MATCH"],
         },
         reviewCase: { status: "OPEN" },
         status: "EVALUATED",
