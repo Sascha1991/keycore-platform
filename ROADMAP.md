@@ -103,6 +103,13 @@ finalized snapshots, exact-order-bound export and fail-closed trusted authority
 gates while leaving Stripe dispute submission, support tickets, supplier claim
 workflow and production operator UI for later Phase 09 tasks.
 
+KS-09-04 adds a provider-neutral Support Case foundation with authenticated
+customer-owned order support, account-only customer cases, fail-closed trusted
+operator actions, structured messages/internal notes, exact-order dispute/fraud/
+fulfillment reference links, append-only history and PostgreSQL migration 023
+while leaving production helpdesk integration, email, UI, refunds, supplier
+claims, Stripe/Kinguin mutations and product-key reveal out of scope.
+
 ## Phase 10 – Monitoring and Operations
 
 Dashboards, alerts, health checks, dead-letter queues, backup/restore, runbooks and emergency controls.

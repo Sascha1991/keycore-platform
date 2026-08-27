@@ -31,7 +31,8 @@ export type PrefixAuditEventType =
   | `PRICING_${string}`
   | `PROCUREMENT_${string}`
   | `REFUND_${string}`
-  | `STOREFRONT_${string}`;
+  | `STOREFRONT_${string}`
+  | `SUPPORT_${string}`;
 
 export type AuditEventType =
   (typeof auditEventTypes)[number] | PrefixAuditEventType;

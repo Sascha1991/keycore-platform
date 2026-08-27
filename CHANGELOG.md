@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Hardened KS-09-04 before merge by adding runtime validation for support
+  categories, priorities, visibility, statuses, resolution codes, IDs,
+  correlation IDs and pagination, preventing operator-created false ownership
+  on unclaimed orders, narrowing customer support projections, making support
+  messages and links append-only, adding database exact-order link backstops
+  and auditing operator actions without message bodies.
+- Added KS-09-04 support case foundation with provider-neutral internal
+  `SupportCase` records, authenticated customer-owned order support,
+  account-only customer cases, fail-closed trusted operator authority,
+  customer/internal message visibility, immutable ownership, append-only
+  support history, exact-order dispute/fraud/fulfillment reference links,
+  PostgreSQL migration 023 and audit-safe metadata while leaving production
+  helpdesk integration, email, UI, refunds, supplier claims, Stripe/Kinguin
+  mutations and product-key reveal out of scope.
 - Added KS-09-03 dispute evidence foundation with provider-neutral structured
   evidence snapshots, mandatory order/payment sections, explicit optional
   absence and ambiguity states, deterministic fingerprints, PostgreSQL
