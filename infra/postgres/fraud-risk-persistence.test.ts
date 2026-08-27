@@ -7,6 +7,7 @@ import {
   correlationId,
   defaultFraudVelocityWindows,
   orderId,
+  type FraudVelocityEventAuthorityPort,
   type FraudVelocityPolicy,
   type OrderId,
 } from "../../packages/platform/src/contracts.js";
@@ -149,6 +150,7 @@ describe.skipIf(!connectionString)("PostgresFraudRiskRepository", () => {
         now: () => now,
         repository: repository(database, velocityCorrelationTestKey),
         velocity: {
+          eventAuthority: new TrustedVelocityEventAuthority(now),
           policy: velocityPolicy(),
           repository: repository(database, velocityCorrelationTestKey),
         },
@@ -158,8 +160,6 @@ describe.skipIf(!connectionString)("PostgresFraudRiskRepository", () => {
         Array.from({ length: 6 }, (_, index) =>
           service.recordVelocityEventForOrder({
             correlationId: correlationId(`pg-velocity-concurrent-${index}`),
-            eventType: "PAYMENT_CONFIRMED",
-            occurredAt: now,
             orderId: order,
           }),
         ),
@@ -202,6 +202,35 @@ describe.skipIf(!connectionString)("PostgresFraudRiskRepository", () => {
         [order],
       );
       expect(persisted.rows[0]?.count).toBe("1");
+    });
+  });
+
+  it("fails closed without a velocity correlation secret and avoids partial event persistence", async () => {
+    await withDatabase(async (database) => {
+      const order = await createOrder(database, {
+        checkoutEmailNormalized: "velocity-secret-missing@example.test",
+        paymentStatus: "CAPTURED",
+        status: "PAYMENT_CAPTURED",
+      });
+
+      await expect(
+        repository(database).recordOrderVelocityEvent({
+          eventType: "PAYMENT_CONFIRMED",
+          occurredAt: now,
+          orderId: order,
+          recordedAt: now,
+        }),
+      ).resolves.toEqual({
+        insertedEventCount: 0,
+        status: "UNAVAILABLE",
+        subjectEventCount: 0,
+      });
+
+      const persisted = await database.query<{ readonly count: string }>(
+        "SELECT count(*)::text FROM fraud_velocity_events WHERE order_id = $1",
+        [order],
+      );
+      expect(persisted.rows[0]?.count).toBe("0");
     });
   });
 
@@ -262,11 +291,13 @@ describe.skipIf(!connectionString)("PostgresFraudRiskRepository", () => {
     await withDatabase(async (database) => {
       const first = await createOrder(database, {
         checkoutEmailNormalized: "velocity@example.test",
+        createdAt: new Date(now.getTime() - 60 * 60 * 1000),
         paymentStatus: "CAPTURED",
         status: "PAYMENT_CAPTURED",
       });
       const second = await createOrder(database, {
         checkoutEmailNormalized: "velocity@example.test",
+        createdAt: new Date(now.getTime() - 60 * 60 * 1000),
         paymentStatus: "CAPTURED",
         status: "PAYMENT_CAPTURED",
       });
@@ -274,6 +305,7 @@ describe.skipIf(!connectionString)("PostgresFraudRiskRepository", () => {
         now: () => now,
         repository: repository(database, velocityCorrelationTestKey),
         velocity: {
+          eventAuthority: new TrustedVelocityEventAuthority(now),
           policy: velocityPolicy(),
           repository: repository(database, velocityCorrelationTestKey),
         },
@@ -282,24 +314,31 @@ describe.skipIf(!connectionString)("PostgresFraudRiskRepository", () => {
       await expect(
         service.recordVelocityEventForOrder({
           correlationId: correlationId("pg-velocity-first"),
-          eventType: "PAYMENT_CONFIRMED",
-          occurredAt: now,
           orderId: first,
         }),
-      ).resolves.toEqual({ eventCount: 1, status: "RECORDED" });
+      ).resolves.toEqual({
+        insertedEventCount: 1,
+        status: "RECORDED",
+        subjectEventCount: 1,
+      });
       await expect(
         service.recordVelocityEventForOrder({
           correlationId: correlationId("pg-velocity-first-replay"),
-          eventType: "PAYMENT_CONFIRMED",
-          occurredAt: now,
           orderId: first,
         }),
-      ).resolves.toEqual({ eventCount: 1, status: "IDEMPOTENT" });
-      await service.recordVelocityEventForOrder({
-        correlationId: correlationId("pg-velocity-second"),
+      ).resolves.toEqual({
+        insertedEventCount: 0,
+        status: "IDEMPOTENT",
+        subjectEventCount: 1,
+      });
+      await repository(
+        database,
+        velocityCorrelationTestKey,
+      ).recordOrderVelocityEvent({
         eventType: "PAYMENT_CONFIRMED",
         occurredAt: new Date(now.getTime() - 15 * 60 * 1000),
         orderId: second,
+        recordedAt: now,
       });
 
       const persisted = await database.query<{
@@ -387,11 +426,13 @@ const createOrder = async (
     readonly status: string;
     readonly paymentStatus: string;
     readonly checkoutEmailNormalized?: string | null;
+    readonly createdAt?: Date;
   },
 ): Promise<OrderId> => {
   const productId = randomUUID();
   const priceLockId = randomUUID();
   const createdOrderId = orderId(randomUUID());
+  const createdAt = input.createdAt ?? now;
   await database.query(
     "INSERT INTO products(id, product_type, title, platform) VALUES ($1, 'DIGITAL_KEY', 'Fraud Fixture', 'PC')",
     [productId],
@@ -414,7 +455,7 @@ const createOrder = async (
       `source-${priceLockId}`,
       `lock-${priceLockId}`,
       `fingerprint-${priceLockId}`,
-      now,
+      createdAt,
       new Date(now.getTime() + 60_000),
     ],
   );
@@ -438,7 +479,7 @@ const createOrder = async (
       input.paymentStatus,
       `order-${createdOrderId}`,
       `fingerprint-${createdOrderId}`,
-      now,
+      createdAt,
     ],
   );
   return createdOrderId;
@@ -456,3 +497,19 @@ const velocityPolicy = (): FraudVelocityPolicy => ({
   ],
   windows: [...defaultFraudVelocityWindows],
 });
+
+class TrustedVelocityEventAuthority implements FraudVelocityEventAuthorityPort {
+  public constructor(private readonly occurredAt: Date) {}
+
+  public async authorizePaymentConfirmedVelocityEvent(): Promise<{
+    readonly status: "AUTHORIZED";
+    readonly eventType: "PAYMENT_CONFIRMED";
+    readonly occurredAt: Date;
+  }> {
+    return {
+      eventType: "PAYMENT_CONFIRMED",
+      occurredAt: this.occurredAt,
+      status: "AUTHORIZED",
+    };
+  }
+}

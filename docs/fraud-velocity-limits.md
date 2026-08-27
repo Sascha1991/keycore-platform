@@ -28,7 +28,7 @@ KS-09-02 does not strip plus aliases, dots or provider-specific formatting.
 Checkout-email velocity uses:
 
 ```text
-HMAC-SHA-256(dedicatedVelocityCorrelationSecret, checkoutEmailNormalized)
+v1:HMAC-SHA-256(dedicatedVelocityCorrelationSecret, checkoutEmailNormalized)
 ```
 
 The raw checkout email and HMAC secret are not stored in
@@ -42,9 +42,12 @@ The dedicated correlation secret is purpose-specific. It must not reuse session
 signing keys, CSRF keys, encryption master keys, claim-token secrets, Stripe
 secrets or Kinguin secrets.
 
-Secret rotation is not implemented in KS-09-02. Changing the correlation secret
-breaks historical cross-key email correlation unless a future planned rotation
-strategy records versioned correlation material safely.
+Checkout-email subject keys are version-prefixed as `v1:<hex>`. Full secret
+rotation is not implemented in KS-09-02. Changing the correlation secret changes
+current fraud fingerprints and breaks historical cross-key email correlation
+unless a future planned rotation strategy records versioned correlation material
+safely. Old approvals must fail closed after correlation-key rotation until the
+order is re-evaluated.
 
 ## Event Semantics
 
@@ -52,21 +55,37 @@ KS-09-02 records one event type:
 
 - `PAYMENT_CONFIRMED`
 
-An event is eligible only for an existing order whose persisted
-`payment_status` is `CAPTURED`. Failed requests, page views, fraud evaluations,
-duplicate webhooks, key reveal attempts and retries of the same logical event
-do not create additional velocity contributions.
+An event is eligible only when trusted service composition provides
+`FraudVelocityEventAuthorityPort` approval and the existing order has persisted
+`payment_status = CAPTURED`. The production default event authority fails
+closed. Failed requests, page views, fraud evaluations, duplicate webhooks, key
+reveal attempts and retries of the same logical event do not create additional
+velocity contributions.
+
+`occurredAt` comes from the trusted event authority, not from browser or
+request input. The service rejects invalid timestamps and timestamps in the
+future relative to the trusted service clock. Repositories additionally reject
+invalid timestamps and events before the order creation timestamp. PostgreSQL
+does not use a `CHECK (occurred_at <= now())`; timestamp trust belongs at the
+trusted event-authority boundary.
 
 One logical order may create one event per supported subject type. For example,
 an owned order with an immutable checkout email snapshot may contribute one
 `CUSTOMER` event and one `CHECKOUT_EMAIL` event. The unique key
 `(event_type, order_id, subject_type)` prevents duplicates for the same subject.
+Recording returns both `subjectEventCount` and `insertedEventCount`, so a
+guest-to-customer partial replay can report one newly inserted subject event
+without pretending both subject rows were newly written.
 
 For guest-to-customer transitions, historical checkout-email events remain
 correlated to the checkout-email subject. If the same order later has a
 customer subject and event recording is retried, the customer subject can be
 recorded separately, but a single subject aggregate cannot double-count the
 same order.
+
+If no supported subject can be derived, velocity facts are unavailable. The
+service must not treat an order with no `CUSTOMER` and no `CHECKOUT_EMAIL` as
+an available zero-velocity case.
 
 ## Windows
 
@@ -121,14 +140,18 @@ review and deny limits for order count, amount in minor units or both.
 Configuration validation rejects:
 
 - missing windows;
-- duplicate or non-positive windows;
+- duplicate windows;
+- non-canonical window durations;
 - unsupported event types;
 - invalid currency codes;
 - thresholds with neither count nor amount;
-- negative, non-integer, unsafe or unordered thresholds.
+- duplicate `(window, eventType, currency)` threshold definitions;
+- zero, negative, non-integer, unsafe or unordered thresholds.
 
 Invalid security-critical configuration fails at construction/startup. KS-09-02
-does not define production-approved threshold values.
+does not define production-approved threshold values. Validated policy is
+defensively deep-copied and frozen so caller mutation after service
+construction cannot alter live fraud behavior.
 
 ## Rules
 
@@ -167,6 +190,14 @@ Historical evaluation explanation uses the persisted evaluation and
 fingerprint. Current clearance uses current trusted time and current velocity
 facts.
 
+Rolling windows are time-authoritative. If an event ages out of the active
+window, current velocity facts and fingerprints change; old `ALLOW` decisions
+and old approved `REVIEW` cases no longer clear until re-evaluation.
+
+If underlying event membership changes but the configured aggregate facts are
+identical for the current policy, the fingerprint may remain identical because
+KS-09-02 fingerprints decision-relevant aggregate facts, not exact event IDs.
+
 ## Persistence
 
 Migration 021 adds `fraud_velocity_events`.
@@ -196,8 +227,15 @@ occurred_at)`;
 - order inspection by `(order_id, occurred_at)`.
 
 Velocity snapshots are loaded in a repository operation using the explicit
-evaluation time. PostgreSQL executes the subject lookup and aggregate reads in
-a transaction. It does not require global application serialization.
+evaluation time. PostgreSQL calculates all configured subject/window aggregates
+and the future-event anomaly in one SQL statement, so the result is a coherent
+statement snapshot under PostgreSQL `READ COMMITTED`. It does not require global
+application serialization.
+
+Future-event anomaly detection is scoped to the same derived subject type,
+subject key and `PAYMENT_CONFIRMED` event semantics. It is subject-wide rather
+than currency-specific, because a future commercial event for the subject is a
+timestamp integrity signal even when the current order currency differs.
 
 ## Data Minimization
 

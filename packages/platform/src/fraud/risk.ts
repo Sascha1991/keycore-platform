@@ -178,7 +178,8 @@ export interface FraudVelocityRepository {
     readonly recordedAt: Date;
   }): Promise<{
     readonly status: "RECORDED" | "IDEMPOTENT" | "UNAVAILABLE";
-    readonly eventCount: number;
+    readonly subjectEventCount: number;
+    readonly insertedEventCount: number;
   }>;
   loadVelocityFacts(input: {
     readonly orderId: OrderId;
@@ -203,6 +204,32 @@ export interface FraudVelocityWindowThresholds {
 export interface FraudVelocityPolicy {
   readonly windows: readonly FraudVelocityWindow[];
   readonly thresholds: readonly FraudVelocityWindowThresholds[];
+}
+
+export interface FraudVelocityEventAuthorityPort {
+  authorizePaymentConfirmedVelocityEvent(input: {
+    readonly orderId: OrderId;
+    readonly correlationId: CorrelationId;
+  }): Promise<
+    | {
+        readonly status: "AUTHORIZED";
+        readonly eventType: "PAYMENT_CONFIRMED";
+        readonly occurredAt: Date;
+      }
+    | { readonly status: "DENIED"; readonly reasonCode: string }
+  >;
+}
+
+export class FailClosedFraudVelocityEventAuthority implements FraudVelocityEventAuthorityPort {
+  public async authorizePaymentConfirmedVelocityEvent(): Promise<{
+    readonly status: "DENIED";
+    readonly reasonCode: string;
+  }> {
+    return {
+      reasonCode: "FRAUD_VELOCITY_EVENT_AUTHORITY_NOT_CONFIGURED",
+      status: "DENIED",
+    };
+  }
 }
 
 export interface FraudManualReviewAuthorityPort {
@@ -236,6 +263,7 @@ export interface FraudRiskServiceOptions {
   readonly velocity?: {
     readonly repository: FraudVelocityRepository;
     readonly policy: FraudVelocityPolicy;
+    readonly eventAuthority?: FraudVelocityEventAuthorityPort;
   };
   readonly manualReviewAuthority?: FraudManualReviewAuthorityPort;
   readonly rules?: readonly FraudRiskRule[];
@@ -391,13 +419,12 @@ export class FraudRiskService {
 
   public async recordVelocityEventForOrder(input: {
     readonly orderId: OrderId;
-    readonly eventType: FraudVelocityEventType;
-    readonly occurredAt: Date;
     readonly correlationId: CorrelationId;
   }): Promise<
     | {
         readonly status: "RECORDED" | "IDEMPOTENT";
-        readonly eventCount: number;
+        readonly subjectEventCount: number;
+        readonly insertedEventCount: number;
       }
     | {
         readonly status: "UNAVAILABLE";
@@ -411,12 +438,37 @@ export class FraudRiskService {
       };
     }
     try {
+      const authorized = await (
+        this.options.velocity.eventAuthority ??
+        new FailClosedFraudVelocityEventAuthority()
+      ).authorizePaymentConfirmedVelocityEvent({
+        correlationId: input.correlationId,
+        orderId: input.orderId,
+      });
+      if (authorized.status !== "AUTHORIZED") {
+        return {
+          reasonCode: "VELOCITY_SIGNAL_UNAVAILABLE",
+          status: "UNAVAILABLE",
+        };
+      }
+      const recordedAt = this.now();
+      if (
+        authorized.eventType !== "PAYMENT_CONFIRMED" ||
+        !isValidVelocityTimestamp(authorized.occurredAt) ||
+        !isValidVelocityTimestamp(recordedAt) ||
+        authorized.occurredAt.getTime() > recordedAt.getTime()
+      ) {
+        return {
+          reasonCode: "VELOCITY_SIGNAL_UNAVAILABLE",
+          status: "UNAVAILABLE",
+        };
+      }
       const result =
         await this.options.velocity.repository.recordOrderVelocityEvent({
-          eventType: input.eventType,
-          occurredAt: input.occurredAt,
+          eventType: authorized.eventType,
+          occurredAt: authorized.occurredAt,
           orderId: input.orderId,
-          recordedAt: this.now(),
+          recordedAt,
         });
       if (result.status === "UNAVAILABLE") {
         return {
@@ -429,15 +481,20 @@ export class FraudRiskService {
         entityId: input.orderId,
         eventType: "FRAUD_VELOCITY_EVENT_RECORDED",
         metadata: {
-          eventCount: result.eventCount,
-          eventType: input.eventType,
+          eventType: authorized.eventType,
+          insertedEventCount: result.insertedEventCount,
           orderId: input.orderId,
           policyVersion: this.policyVersion,
+          subjectEventCount: result.subjectEventCount,
         },
         outcome: "SUCCEEDED",
         reasonCode: result.status,
       });
-      return { eventCount: result.eventCount, status: result.status };
+      return {
+        insertedEventCount: result.insertedEventCount,
+        status: result.status,
+        subjectEventCount: result.subjectEventCount,
+      };
     } catch {
       return {
         reasonCode: "VELOCITY_SIGNAL_UNAVAILABLE",
@@ -581,19 +638,11 @@ export class FraudRiskService {
     } catch {
       velocity = "UNAVAILABLE";
     }
-    return {
-      ...facts,
-      velocity:
-        velocity === "UNAVAILABLE"
-          ? {
-              aggregates: [],
-              evaluatedAt,
-              hasFutureEventAnomaly: false,
-              status: "UNAVAILABLE",
-              subjects: [],
-            }
-          : velocity,
-    };
+    const normalized =
+      velocity === "UNAVAILABLE"
+        ? unavailableVelocityFacts(evaluatedAt)
+        : validateVelocityFactsForPolicy(velocity, facts, this.velocityPolicy);
+    return { ...facts, velocity: normalized };
   }
 
   private async auditEvaluation(
@@ -837,7 +886,10 @@ export const validateFraudVelocityPolicy = (
 ): FraudVelocityPolicy => {
   const windowIds = new Set<FraudVelocityWindowId>();
   for (const window of policy.windows) {
-    if (!Number.isSafeInteger(window.durationMs) || window.durationMs <= 0) {
+    if (
+      !Number.isSafeInteger(window.durationMs) ||
+      canonicalVelocityWindowDurations[window.id] !== window.durationMs
+    ) {
       throw new Error("Invalid fraud velocity window configuration");
     }
     windowIds.add(window.id);
@@ -845,6 +897,7 @@ export const validateFraudVelocityPolicy = (
   if (windowIds.size !== policy.windows.length || windowIds.size === 0) {
     throw new Error("Invalid fraud velocity window configuration");
   }
+  const thresholdKeys = new Set<string>();
   for (const threshold of policy.thresholds) {
     if (
       !windowIds.has(threshold.window) ||
@@ -858,14 +911,32 @@ export const validateFraudVelocityPolicy = (
     if (!threshold.count && !threshold.amountMinor) {
       throw new Error("Invalid fraud velocity threshold configuration");
     }
+    const thresholdKey = `${threshold.window}:${threshold.eventType}:${threshold.currency}`;
+    if (thresholdKeys.has(thresholdKey)) {
+      throw new Error("Invalid fraud velocity threshold configuration");
+    }
+    thresholdKeys.add(thresholdKey);
     validateThreshold(threshold.count);
     validateThreshold(threshold.amountMinor);
   }
-  return {
-    thresholds: policy.thresholds.map((threshold) => ({ ...threshold })),
+  return deepFreezeFraudVelocityPolicy({
+    thresholds: policy.thresholds.map((threshold) => ({
+      ...threshold,
+      ...(threshold.amountMinor
+        ? { amountMinor: { ...threshold.amountMinor } }
+        : {}),
+      ...(threshold.count ? { count: { ...threshold.count } } : {}),
+    })),
     windows: policy.windows.map((window) => ({ ...window })),
-  };
+  });
 };
+
+const canonicalVelocityWindowDurations: Record<FraudVelocityWindowId, number> =
+  {
+    PT15M: 15 * 60 * 1000,
+    PT1H: 60 * 60 * 1000,
+    PT24H: 24 * 60 * 60 * 1000,
+  };
 
 const validateThreshold = (
   threshold: FraudVelocityThreshold | undefined,
@@ -875,7 +946,7 @@ const validateThreshold = (
   }
   const review = toSafeThresholdBigInt(threshold.review);
   const deny = toSafeThresholdBigInt(threshold.deny);
-  if (review < 0n || deny < 0n || review > deny) {
+  if (review <= 0n || deny <= 0n || review > deny) {
     throw new Error("Invalid fraud velocity threshold configuration");
   }
 };
@@ -889,6 +960,98 @@ const toSafeThresholdBigInt = (value: number | bigint): bigint => {
   }
   return BigInt(value);
 };
+
+const deepFreezeFraudVelocityPolicy = (
+  policy: FraudVelocityPolicy,
+): FraudVelocityPolicy => {
+  for (const threshold of policy.thresholds) {
+    if (threshold.count) {
+      Object.freeze(threshold.count);
+    }
+    if (threshold.amountMinor) {
+      Object.freeze(threshold.amountMinor);
+    }
+    Object.freeze(threshold);
+  }
+  for (const window of policy.windows) {
+    Object.freeze(window);
+  }
+  Object.freeze(policy.thresholds);
+  Object.freeze(policy.windows);
+  return Object.freeze(policy);
+};
+
+const unavailableVelocityFacts = (evaluatedAt: Date): FraudVelocityFacts => ({
+  aggregates: [],
+  evaluatedAt,
+  hasFutureEventAnomaly: false,
+  status: "UNAVAILABLE",
+  subjects: [],
+});
+
+const validateVelocityFactsForPolicy = (
+  velocity: FraudVelocityFacts,
+  facts: FraudRiskFacts,
+  policy: FraudVelocityPolicy,
+): FraudVelocityFacts => {
+  if (
+    velocity.status !== "AVAILABLE" ||
+    velocity.subjects.length === 0 ||
+    !isValidVelocityTimestamp(velocity.evaluatedAt)
+  ) {
+    return unavailableVelocityFacts(velocity.evaluatedAt);
+  }
+  const subjectTypes = new Set<string>();
+  const subjectKeys = new Set<string>();
+  for (const subject of velocity.subjects) {
+    if (
+      (subject.subjectType !== "CUSTOMER" &&
+        subject.subjectType !== "CHECKOUT_EMAIL") ||
+      subjectTypes.has(subject.subjectType) ||
+      subjectKeys.has(`${subject.subjectType}:${subject.subjectKey}`) ||
+      subject.subjectKey.trim().length === 0
+    ) {
+      return unavailableVelocityFacts(velocity.evaluatedAt);
+    }
+    subjectTypes.add(subject.subjectType);
+    subjectKeys.add(`${subject.subjectType}:${subject.subjectKey}`);
+  }
+  const aggregateKeys = new Set<string>();
+  for (const aggregate of velocity.aggregates) {
+    const key = `${aggregate.subjectType}:${aggregate.eventType}:${aggregate.window}:${aggregate.currency}`;
+    if (
+      aggregate.eventType !== "PAYMENT_CONFIRMED" ||
+      !subjectTypes.has(aggregate.subjectType) ||
+      !policy.windows.some((window) => window.id === aggregate.window) ||
+      aggregate.currency !== facts.currency ||
+      aggregate.eventCount < 0 ||
+      !Number.isSafeInteger(aggregate.eventCount) ||
+      aggregate.amountMinorTotal < 0n ||
+      aggregateKeys.has(key)
+    ) {
+      return unavailableVelocityFacts(velocity.evaluatedAt);
+    }
+    aggregateKeys.add(key);
+  }
+  const expectedKeys = new Set<string>();
+  for (const subject of velocity.subjects) {
+    for (const window of policy.windows) {
+      expectedKeys.add(
+        `${subject.subjectType}:PAYMENT_CONFIRMED:${window.id}:${facts.currency}`,
+      );
+    }
+  }
+  if (
+    aggregateKeys.size !== expectedKeys.size ||
+    [...expectedKeys].some((key) => !aggregateKeys.has(key))
+  ) {
+    return unavailableVelocityFacts(velocity.evaluatedAt);
+  }
+  return velocity;
+};
+
+const isValidVelocityTimestamp = (value: Date): boolean =>
+  value instanceof Date && Number.isFinite(value.getTime());
 
 const evaluateVelocityThresholds = (
   velocity: FraudVelocityFacts,
@@ -1011,9 +1174,9 @@ export const emailVelocitySubjectKey = (
   if (secret.length < 32) {
     throw new Error("Invalid fraud velocity correlation secret");
   }
-  return createHmac("sha256", secret)
+  return `v1:${createHmac("sha256", secret)
     .update(emailNormalized, "utf8")
-    .digest("hex");
+    .digest("hex")}`;
 };
 
 export const riskFactsFromOrder = (

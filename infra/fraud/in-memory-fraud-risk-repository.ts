@@ -213,15 +213,31 @@ export class InMemoryFraudRiskRepository
     readonly recordedAt: Date;
   }): Promise<{
     readonly status: "RECORDED" | "IDEMPOTENT" | "UNAVAILABLE";
-    readonly eventCount: number;
+    readonly subjectEventCount: number;
+    readonly insertedEventCount: number;
   }> {
     const order = this.orders.get(input.orderId);
-    if (!order || order.paymentStatus !== "CAPTURED") {
-      return { eventCount: 0, status: "UNAVAILABLE" };
+    if (
+      !order ||
+      order.paymentStatus !== "CAPTURED" ||
+      !validTimestamp(input.occurredAt) ||
+      !validTimestamp(input.recordedAt) ||
+      input.occurredAt.getTime() < order.createdAt.getTime() ||
+      input.occurredAt.getTime() > input.recordedAt.getTime()
+    ) {
+      return {
+        insertedEventCount: 0,
+        status: "UNAVAILABLE",
+        subjectEventCount: 0,
+      };
     }
     const subjects = this.subjectsForOrder(order);
-    if (subjects === "UNAVAILABLE") {
-      return { eventCount: 0, status: "UNAVAILABLE" };
+    if (subjects === "UNAVAILABLE" || subjects.length === 0) {
+      return {
+        insertedEventCount: 0,
+        status: "UNAVAILABLE",
+        subjectEventCount: 0,
+      };
     }
     let recorded = 0;
     for (const subject of subjects) {
@@ -243,7 +259,8 @@ export class InMemoryFraudRiskRepository
       recorded += 1;
     }
     return {
-      eventCount: subjects.length,
+      insertedEventCount: recorded,
+      subjectEventCount: subjects.length,
       status: recorded === 0 ? "IDEMPOTENT" : "RECORDED",
     };
   }
@@ -258,7 +275,7 @@ export class InMemoryFraudRiskRepository
       return "UNAVAILABLE";
     }
     const subjects = this.subjectsForOrder(order);
-    if (subjects === "UNAVAILABLE") {
+    if (subjects === "UNAVAILABLE" || subjects.length === 0) {
       return "UNAVAILABLE";
     }
     const aggregates: FraudVelocityAggregate[] = [];
@@ -353,3 +370,6 @@ const required = <TValue>(value: TValue | undefined): TValue => {
   }
   return value;
 };
+
+const validTimestamp = (value: Date): boolean =>
+  value instanceof Date && Number.isFinite(value.getTime());

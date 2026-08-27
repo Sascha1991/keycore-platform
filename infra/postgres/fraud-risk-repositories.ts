@@ -71,6 +71,7 @@ interface FraudVelocityOrderRow {
   readonly customer_amount_minor: string;
   readonly currency: string;
   readonly payment_status: OrderPaymentStatus;
+  readonly created_at: Date;
 }
 
 interface FraudVelocityAggregateRow {
@@ -80,10 +81,7 @@ interface FraudVelocityAggregateRow {
   readonly event_count: string;
   readonly amount_minor_total: string;
   readonly currency: string;
-}
-
-interface FraudVelocityFutureRow {
-  readonly exists: boolean;
+  readonly has_future_event_anomaly: boolean;
 }
 
 export class PostgresFraudRiskRepository
@@ -335,19 +333,35 @@ export class PostgresFraudRiskRepository
     readonly recordedAt: Date;
   }): Promise<{
     readonly status: "RECORDED" | "IDEMPOTENT" | "UNAVAILABLE";
-    readonly eventCount: number;
+    readonly subjectEventCount: number;
+    readonly insertedEventCount: number;
   }> {
     return this.db.transaction(async (client) => {
       const order = await loadVelocityOrder(client, input.orderId);
-      if (!order || order.payment_status !== "CAPTURED") {
-        return { eventCount: 0, status: "UNAVAILABLE" };
+      if (
+        !order ||
+        order.payment_status !== "CAPTURED" ||
+        !validTimestamp(input.occurredAt) ||
+        !validTimestamp(input.recordedAt) ||
+        input.occurredAt.getTime() < order.created_at.getTime() ||
+        input.occurredAt.getTime() > input.recordedAt.getTime()
+      ) {
+        return {
+          insertedEventCount: 0,
+          status: "UNAVAILABLE",
+          subjectEventCount: 0,
+        };
       }
       const subjects = velocitySubjectsForOrder(
         order,
         this.options.velocityCorrelationSecret,
       );
-      if (subjects === "UNAVAILABLE") {
-        return { eventCount: 0, status: "UNAVAILABLE" };
+      if (subjects === "UNAVAILABLE" || subjects.length === 0) {
+        return {
+          insertedEventCount: 0,
+          status: "UNAVAILABLE",
+          subjectEventCount: 0,
+        };
       }
       let insertedCount = 0;
       for (const subject of subjects) {
@@ -379,7 +393,8 @@ export class PostgresFraudRiskRepository
         }
       }
       return {
-        eventCount: subjects.length,
+        insertedEventCount: insertedCount,
+        subjectEventCount: subjects.length,
         status: insertedCount === 0 ? "IDEMPOTENT" : "RECORDED",
       };
     });
@@ -399,67 +414,85 @@ export class PostgresFraudRiskRepository
         order,
         this.options.velocityCorrelationSecret,
       );
-      if (subjects === "UNAVAILABLE") {
+      if (subjects === "UNAVAILABLE" || subjects.length === 0) {
         return "UNAVAILABLE";
       }
-      const aggregates: FraudVelocityAggregate[] = [];
-      for (const subject of subjects) {
-        for (const window of input.windows) {
-          const result = await client.query<FraudVelocityAggregateRow>(
-            `
-              SELECT
-                $1::text AS subject_type,
-                'PAYMENT_CONFIRMED'::text AS event_type,
-                $2::text AS window_id,
-                count(*)::text AS event_count,
-                COALESCE(sum(amount_minor), 0)::text AS amount_minor_total,
-                $3::text AS currency
-              FROM fraud_velocity_events
-              WHERE subject_type = $1
-                AND subject_key = $4
-                AND event_type = 'PAYMENT_CONFIRMED'
-                AND currency = $3
-                AND occurred_at >= $5
-                AND occurred_at <= $6
-            `,
-            [
-              subject.subjectType,
-              window.id,
-              order.currency,
-              subject.subjectKey,
-              new Date(input.evaluatedAt.getTime() - window.durationMs),
-              input.evaluatedAt,
-            ],
-          );
-          const row = result.rows[0];
-          if (!row) {
-            return "UNAVAILABLE";
-          }
-          aggregates.push({
-            amountMinorTotal: BigInt(row.amount_minor_total),
-            currency: row.currency,
-            eventCount: Number(row.event_count),
-            eventType: row.event_type,
-            subjectType: row.subject_type,
-            window: row.window_id,
-          });
-        }
-      }
-      const future = await client.query<FraudVelocityFutureRow>(
+      const result = await client.query<FraudVelocityAggregateRow>(
         `
-          SELECT EXISTS (
-            SELECT 1
-            FROM fraud_velocity_events
-            WHERE subject_key = ANY($1)
-              AND occurred_at > $2
-          ) AS exists
+          WITH subjects AS (
+            SELECT *
+            FROM unnest($1::text[], $2::text[]) AS subject(subject_type, subject_key)
+          ),
+          windows AS (
+            SELECT *
+            FROM unnest($3::text[], $4::bigint[]) AS window(window_id, duration_ms)
+          ),
+          future AS (
+            SELECT EXISTS (
+              SELECT 1
+              FROM fraud_velocity_events event
+              INNER JOIN subjects subject
+                ON subject.subject_type = event.subject_type
+                AND subject.subject_key = event.subject_key
+              WHERE event.event_type = 'PAYMENT_CONFIRMED'
+                AND event.occurred_at > $6
+            ) AS has_future_event_anomaly
+          )
+          SELECT
+            subject.subject_type,
+            'PAYMENT_CONFIRMED'::text AS event_type,
+            window.window_id,
+            count(event.id)::text AS event_count,
+            COALESCE(sum(event.amount_minor), 0)::text AS amount_minor_total,
+            $5::text AS currency,
+            future.has_future_event_anomaly
+          FROM subjects subject
+          CROSS JOIN windows window
+          CROSS JOIN future
+          LEFT JOIN fraud_velocity_events event
+            ON event.subject_type = subject.subject_type
+            AND event.subject_key = subject.subject_key
+            AND event.event_type = 'PAYMENT_CONFIRMED'
+            AND event.currency = $5
+            AND event.occurred_at >= $6 - (window.duration_ms * interval '1 millisecond')
+            AND event.occurred_at <= $6
+          GROUP BY subject.subject_type, window.window_id, future.has_future_event_anomaly
+          ORDER BY subject.subject_type, window.window_id
         `,
-        [subjects.map((subject) => subject.subjectKey), input.evaluatedAt],
+        [
+          subjects.map((subject) => subject.subjectType),
+          subjects.map((subject) => subject.subjectKey),
+          input.windows.map((window) => window.id),
+          input.windows.map((window) => window.durationMs),
+          order.currency,
+          input.evaluatedAt,
+        ],
       );
+      const aggregates: FraudVelocityAggregate[] = [];
+      for (const row of result.rows) {
+        const eventCount = Number(row.event_count);
+        if (!Number.isSafeInteger(eventCount) || eventCount < 0) {
+          return "UNAVAILABLE";
+        }
+        const amountMinorTotal = BigInt(row.amount_minor_total);
+        if (amountMinorTotal < 0n) {
+          return "UNAVAILABLE";
+        }
+        aggregates.push({
+          amountMinorTotal,
+          currency: row.currency,
+          eventCount,
+          eventType: row.event_type,
+          subjectType: row.subject_type,
+          window: row.window_id,
+        });
+      }
       return {
         aggregates,
         evaluatedAt: input.evaluatedAt,
-        hasFutureEventAnomaly: Boolean(future.rows[0]?.exists),
+        hasFutureEventAnomaly: Boolean(
+          result.rows[0]?.has_future_event_anomaly,
+        ),
         status: "AVAILABLE",
         subjects,
       };
@@ -580,7 +613,8 @@ const loadVelocityOrder = async (
         checkout_email_normalized,
         customer_amount_minor,
         currency,
-        payment_status
+        payment_status,
+        created_at
       FROM keycore_orders
       WHERE id = $1
       LIMIT 1
@@ -612,6 +646,9 @@ const velocitySubjectsForOrder = (
   }
   return subjects;
 };
+
+const validTimestamp = (value: Date): boolean =>
+  value instanceof Date && Number.isFinite(value.getTime());
 
 const evaluationValues = (
   evaluation: FraudRiskEvaluation,

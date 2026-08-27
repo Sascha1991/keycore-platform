@@ -9,6 +9,12 @@
   production velocity policy approval, external fraud providers, support
   tickets, dispute evidence, supplier claims, Kinguin calls, Stripe mutations
   and real key reveal out of scope.
+- Hardened KS-09-02 before merge by requiring trusted velocity event authority,
+  rejecting no-subject velocity as unavailable, versioning checkout-email
+  subject keys, validating event timestamps and velocity aggregate completeness,
+  freezing validated velocity policy, rejecting duplicate/zero/non-canonical
+  configuration, making PostgreSQL velocity snapshots one-statement coherent
+  and clarifying partial guest-to-customer event counts.
 - Added KS-09-01 fraud risk and manual-review foundation with deterministic
   trusted-fact rule evaluation, policy-versioned persisted decisions,
   fact-fingerprint idempotency, PostgreSQL migration 020, one-active-fraud-case
