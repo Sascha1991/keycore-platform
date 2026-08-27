@@ -75,7 +75,7 @@ CREATE TABLE fraud_manual_review_cases (
 );
 
 CREATE UNIQUE INDEX fraud_manual_review_cases_one_open_fraud_case_idx
-  ON fraud_manual_review_cases(order_id, source)
+  ON fraud_manual_review_cases(evaluation_id, source)
   WHERE status = 'OPEN';
 
 CREATE INDEX fraud_manual_review_cases_order_idx

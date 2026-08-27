@@ -80,12 +80,34 @@ vendor signal is fabricated.
 Every evaluation stores `KS09_POLICY_V1`. Historical decisions must not be
 silently reinterpreted under a later policy.
 
+The policy version is part of both the stored evaluation identity and the fact
+fingerprint input. A later `KS09_POLICY_V2` evaluation for the same order facts
+must be evaluated and approved independently; a `KS09_POLICY_V1` approval is not
+blanket authority for later policy versions.
+
 ## Fact Fingerprint
 
 The service canonicalizes the trusted fact snapshot and stores a SHA-256 fact
 fingerprint. The fingerprint supports idempotency, explainability and safe
 re-evaluation detection. It is not authentication authority and does not hash
 secrets.
+
+Fingerprint inputs are:
+
+- order ID;
+- optional customer ID;
+- customer verification state;
+- checkout email snapshot presence;
+- order amount minor;
+- currency;
+- order status;
+- payment status;
+- order risk status;
+- order creation timestamp;
+- policy version.
+
+The fingerprint intentionally excludes volatile values such as correlation IDs,
+random IDs, audit timestamps and repository fetch timestamps.
 
 ## Rules
 
@@ -109,14 +131,26 @@ account is separate from key-access eligibility and order-claim policy.
 
 ## Idempotency And Re-Evaluation
 
-The persistence model is immutable evaluation history plus current evaluation by
-latest `(evaluatedAt, id)`. The tuple `(orderId, policyVersion,
-factFingerprint)` is unique, so repeated evaluation of unchanged facts returns
-the same persisted evaluation.
+The persistence model is immutable evaluation history. The tuple `(orderId,
+policyVersion, factFingerprint)` is unique, so repeated evaluation of unchanged
+facts returns the same persisted evaluation.
 
 When trusted facts change, the fact fingerprint changes and a new evaluation can
 be persisted. Review approvals are bound to the evaluation fingerprint and do
 not become blanket permanent authorization for materially changed facts.
+
+For downstream clearance, "current fraud decision" means:
+
+```text
+load current trusted facts
+-> derive current policy-versioned fact fingerprint
+-> find the evaluation for orderId + current policyVersion + current fingerprint
+-> apply decision/review semantics for that exact evaluation
+```
+
+It does not mean highest UUID, insertion order, arbitrary latest row or a stale
+approved review for older facts. If the current facts have no matching
+evaluation yet, the guard fails closed and requires re-evaluation.
 
 ## Downstream Guard
 
@@ -124,6 +158,7 @@ not become blanket permanent authorization for materially changed facts.
 foundation. It fails closed when:
 
 - no decision exists;
+- current trusted facts no longer match a persisted current-policy evaluation;
 - the current decision is `REVIEW` and there is no matching approved review;
 - the current decision is `DENY`;
 - the repository is unavailable.
@@ -137,6 +172,10 @@ or customer delivery transitions.
 Missing facts or repository failure do not return `ALLOW`. Rule exceptions do
 not get skipped to `ALLOW`; they produce `REVIEW` with `RISK_RULE_EXCEPTION`.
 Errors are redacted.
+
+Audit writes are best-effort in KS-09-01. An audit append failure does not roll
+back or change the authoritative fraud-risk persistence state, and the service
+does not fabricate a successful audit event when the audit port fails.
 
 ## Data Minimization
 

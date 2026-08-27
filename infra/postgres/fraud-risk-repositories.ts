@@ -119,7 +119,10 @@ export class PostgresFraudRiskRepository implements FraudRiskRepository {
       }
       let reviewCase: FraudManualReviewCase | null = null;
       if (input.openReviewCase) {
-        const existing = await findOpenCase(client, evaluation.orderId);
+        const existing = await findOpenCaseForEvaluation(
+          client,
+          evaluation.riskDecisionId,
+        );
         if (existing) {
           reviewCase = existing;
         } else {
@@ -145,7 +148,10 @@ export class PostgresFraudRiskRepository implements FraudRiskRepository {
           reviewCase =
             insertedCase.rows[0] !== undefined
               ? caseFromRow(insertedCase.rows[0])
-              : await findOpenCase(client, evaluation.orderId);
+              : await findOpenCaseForEvaluation(
+                  client,
+                  evaluation.riskDecisionId,
+                );
         }
       }
       return {
@@ -169,6 +175,14 @@ export class PostgresFraudRiskRepository implements FraudRiskRepository {
       [requestedOrderId],
     );
     return result.rows[0] ? evaluationFromRow(result.rows[0]) : null;
+  }
+
+  public async findEvaluationByFingerprint(input: {
+    readonly orderId: OrderId;
+    readonly policyVersion: FraudRiskEvaluation["policyVersion"];
+    readonly factFingerprint: string;
+  }): Promise<FraudRiskEvaluation | null> {
+    return findEvaluationByFingerprint(this.db, input);
   }
 
   public async findOpenFraudReviewCase(
@@ -304,7 +318,11 @@ const caseReturning = `
 
 const findEvaluationByFingerprint = async (
   db: Queryable,
-  evaluation: FraudRiskEvaluation,
+  input: {
+    readonly orderId: OrderId;
+    readonly policyVersion: FraudRiskEvaluation["policyVersion"];
+    readonly factFingerprint: string;
+  },
 ): Promise<FraudRiskEvaluation | null> => {
   const result = await db.query<FraudEvaluationRow>(
     `
@@ -315,7 +333,7 @@ const findEvaluationByFingerprint = async (
         AND fact_fingerprint = $3
       LIMIT 1
     `,
-    [evaluation.orderId, evaluation.policyVersion, evaluation.factFingerprint],
+    [input.orderId, input.policyVersion, input.factFingerprint],
   );
   return result.rows[0] ? evaluationFromRow(result.rows[0]) : null;
 };
@@ -334,6 +352,24 @@ const findOpenCase = async (
       LIMIT 1
     `,
     [requestedOrderId],
+  );
+  return result.rows[0] ? caseFromRow(result.rows[0]) : null;
+};
+
+const findOpenCaseForEvaluation = async (
+  db: Queryable,
+  evaluationId: string,
+): Promise<FraudManualReviewCase | null> => {
+  const result = await db.query<FraudReviewCaseRow>(
+    `
+      SELECT ${caseReturning}
+      FROM fraud_manual_review_cases
+      WHERE evaluation_id = $1
+        AND source = 'FRAUD'
+        AND status = 'OPEN'
+      LIMIT 1
+    `,
+    [evaluationId],
   );
   return result.rows[0] ? caseFromRow(result.rows[0]) : null;
 };

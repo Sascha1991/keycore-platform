@@ -16,6 +16,7 @@ import type {
 
 export const fraudRiskPolicyVersion = "KS09_POLICY_V1" as const;
 
+export type FraudRiskPolicyVersion = string;
 export type FraudRiskDecision = "ALLOW" | "REVIEW" | "DENY";
 export type FraudManualReviewStatus =
   "OPEN" | "APPROVED" | "REJECTED" | "CANCELLED";
@@ -53,7 +54,7 @@ export interface FraudRiskEvaluation {
   readonly riskScore: number;
   readonly reasonCodes: readonly FraudRiskReasonCode[];
   readonly evaluatedAt: Date;
-  readonly policyVersion: typeof fraudRiskPolicyVersion;
+  readonly policyVersion: FraudRiskPolicyVersion;
   readonly factFingerprint: string;
 }
 
@@ -94,6 +95,11 @@ export interface FraudRiskRepository {
     readonly reviewCase?: FraudManualReviewCase | null;
   }>;
   getCurrentEvaluation(orderId: OrderId): Promise<FraudRiskEvaluation | null>;
+  findEvaluationByFingerprint(input: {
+    readonly orderId: OrderId;
+    readonly policyVersion: FraudRiskEvaluation["policyVersion"];
+    readonly factFingerprint: string;
+  }): Promise<FraudRiskEvaluation | null>;
   findOpenFraudReviewCase(
     orderId: OrderId,
   ): Promise<FraudManualReviewCase | null>;
@@ -300,7 +306,7 @@ export class FraudRiskService {
   ): Promise<FraudClearanceResult> {
     try {
       const current =
-        await this.options.repository.getCurrentEvaluation(orderIdValue);
+        await this.loadCurrentAuthoritativeEvaluation(orderIdValue);
       if (!current) {
         return { reasonCode: "FRAUD_DECISION_MISSING", status: "BLOCKED" };
       }
@@ -309,11 +315,6 @@ export class FraudRiskService {
       }
       if (current.decision === "DENY") {
         return { reasonCode: "FRAUD_DENIED", status: "BLOCKED" };
-      }
-      const review =
-        await this.options.repository.findOpenFraudReviewCase(orderIdValue);
-      if (review) {
-        return { reasonCode: "FRAUD_REVIEW_REQUIRED", status: "BLOCKED" };
       }
       const resolved =
         await this.options.repository.findFraudReviewCaseForEvaluation(
@@ -338,11 +339,12 @@ export class FraudRiskService {
       if (!openCase) {
         return { reasonCode: "FRAUD_REVIEW_NOT_FOUND", status: "DENIED" };
       }
-      const current = await this.options.repository.getCurrentEvaluation(
+      const current = await this.loadCurrentAuthoritativeEvaluation(
         openCase.orderId,
       );
       if (
         !current ||
+        current.riskDecisionId !== openCase.evaluationId ||
         current.factFingerprint !== openCase.factFingerprint ||
         input.expectedFactFingerprint !== openCase.factFingerprint
       ) {
@@ -392,6 +394,21 @@ export class FraudRiskService {
     caseId: string,
   ): Promise<FraudManualReviewCase | null> {
     return this.options.repository.findFraudReviewCaseById(caseId);
+  }
+
+  private async loadCurrentAuthoritativeEvaluation(
+    orderIdValue: OrderId,
+  ): Promise<FraudRiskEvaluation | null> {
+    const facts = await this.options.repository.loadFacts(orderIdValue);
+    if (!facts) {
+      return null;
+    }
+    const factFingerprint = fraudRiskFactFingerprint(facts);
+    return this.options.repository.findEvaluationByFingerprint({
+      factFingerprint,
+      orderId: orderIdValue,
+      policyVersion: fraudRiskPolicyVersion,
+    });
   }
 
   private async auditEvaluation(
@@ -480,18 +497,22 @@ export class FraudRiskService {
     readonly reasonCode: string;
     readonly metadata: Readonly<Record<string, string | number | boolean>>;
   }): Promise<void> {
-    await this.options.audit?.append({
-      actor: { id: "fraud-risk-service", type: "SERVICE" },
-      correlationId: input.correlationId,
-      entity: { id: input.entityId, type: "FRAUD_RISK" },
-      environment: this.environment,
-      eventType: input.eventType,
-      metadata: { reasonCode: input.reasonCode, ...input.metadata },
-      outcome: input.outcome,
-      reasonCode: input.reasonCode,
-      timestampUtc: this.now(),
-      uuid: randomUUID(),
-    });
+    try {
+      await this.options.audit?.append({
+        actor: { id: "fraud-risk-service", type: "SERVICE" },
+        correlationId: input.correlationId,
+        entity: { id: input.entityId, type: "FRAUD_RISK" },
+        environment: this.environment,
+        eventType: input.eventType,
+        metadata: { reasonCode: input.reasonCode, ...input.metadata },
+        outcome: input.outcome,
+        reasonCode: input.reasonCode,
+        timestampUtc: this.now(),
+        uuid: randomUUID(),
+      });
+    } catch {
+      // Audit is best-effort in KS-09-01; authoritative fraud state remains in persistence.
+    }
   }
 }
 
@@ -597,12 +618,21 @@ export const defaultFraudRiskRules: readonly FraudRiskRule[] = [
   },
 ];
 
-export const fraudRiskFactFingerprint = (facts: FraudRiskFacts): string =>
+export const fraudRiskFactFingerprint = (
+  facts: FraudRiskFacts,
+  policyVersion: FraudRiskEvaluation["policyVersion"] = fraudRiskPolicyVersion,
+): string =>
   createHash("sha256")
-    .update(JSON.stringify(canonicalFraudRiskFacts(facts)), "utf8")
+    .update(
+      JSON.stringify(canonicalFraudRiskFacts(facts, policyVersion)),
+      "utf8",
+    )
     .digest("hex");
 
-export const canonicalFraudRiskFacts = (facts: FraudRiskFacts) => ({
+export const canonicalFraudRiskFacts = (
+  facts: FraudRiskFacts,
+  policyVersion: FraudRiskEvaluation["policyVersion"] = fraudRiskPolicyVersion,
+) => ({
   checkoutEmailSnapshotPresent: facts.checkoutEmailSnapshotPresent,
   createdAt: facts.createdAt.toISOString(),
   currency: facts.currency,
@@ -613,7 +643,7 @@ export const canonicalFraudRiskFacts = (facts: FraudRiskFacts) => ({
   orderRiskStatus: facts.orderRiskStatus,
   orderStatus: facts.orderStatus,
   paymentStatus: facts.paymentStatus,
-  policyVersion: fraudRiskPolicyVersion,
+  policyVersion,
 });
 
 export const riskFactsFromOrder = (

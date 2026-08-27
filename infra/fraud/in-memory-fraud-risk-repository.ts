@@ -68,7 +68,7 @@ export class InMemoryFraudRiskRepository implements FraudRiskRepository {
         [...this.reviewCases.values()].find(
           (candidate) =>
             candidate.source === "FRAUD" &&
-            candidate.orderId === evaluation.orderId &&
+            candidate.evaluationId === evaluation.riskDecisionId &&
             candidate.status === "OPEN",
         ) ?? null;
       if (!reviewCase) {
@@ -98,6 +98,21 @@ export class InMemoryFraudRiskRepository implements FraudRiskRepository {
             (this.evaluationSequence.get(right.riskDecisionId) ?? 0) -
               (this.evaluationSequence.get(left.riskDecisionId) ?? 0),
         )[0] ?? null
+    );
+  }
+
+  public async findEvaluationByFingerprint(input: {
+    readonly orderId: OrderId;
+    readonly policyVersion: FraudRiskEvaluation["policyVersion"];
+    readonly factFingerprint: string;
+  }): Promise<FraudRiskEvaluation | null> {
+    return (
+      [...this.evaluations.values()].find(
+        (evaluation) =>
+          evaluation.orderId === input.orderId &&
+          evaluation.policyVersion === input.policyVersion &&
+          evaluation.factFingerprint === input.factFingerprint,
+      ) ?? null
     );
   }
 

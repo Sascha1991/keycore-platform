@@ -10,6 +10,11 @@
   external fraud providers, production operator UI, support tickets, dispute
   evidence, supplier claims, Kinguin calls, Stripe mutations and real key
   reveal out of scope.
+- Hardened KS-09-01 before merge by binding clearance and review resolution to
+  current authoritative facts, policy version and fact fingerprint, scoping open
+  fraud review uniqueness to the exact evaluation, retaining stale review
+  history, documenting best-effort audit behavior and adding adversarial stale
+  approval, replay, concurrency, policy-isolation and fingerprint tests.
 - Hardened KS-08-06 before merge by sanitizing customer-visible invoice
   references/timestamps, enforcing invoice state/download consistency, failing
   fast on duplicate activation registry keys, defensively copying registry

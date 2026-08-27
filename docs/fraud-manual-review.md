@@ -6,7 +6,8 @@ dispute evidence or supplier claim workflow.
 
 ## Model
 
-A `REVIEW` fraud decision can open one active `FRAUD` review case for the order.
+A `REVIEW` fraud decision can open one active `FRAUD` review case for the exact
+fraud evaluation.
 
 Case fields include:
 
@@ -20,7 +21,9 @@ Case fields include:
 - opened/resolved timestamps;
 - safe operator reference when resolved.
 
-At most one active `FRAUD` case can exist for an order.
+At most one active `FRAUD` case can exist for an evaluation. Historical or stale
+cases are retained for explainability. A later evaluation created from changed
+facts can open its own current review case without deleting old review history.
 
 ## Distinction From Fulfillment Review
 
@@ -59,17 +62,21 @@ email or deliver Product Keys. It does not call Kinguin and does not mutate
 Stripe. It changes fraud-review authorization state only.
 
 `APPROVED` can clear `FraudRiskService.isFraudCleared(orderId)` only for the
-current matching evaluation/fact fingerprint.
+current matching evaluation/fact fingerprint/policy version. The guard reloads
+current trusted facts before accepting the approval.
 
 `REJECTED` remains blocked.
 
 Replay resolution is idempotent/safe and does not create another case.
+Once a case is resolved, later approval or rejection replays cannot flip the
+durable result.
 
 ## Stale Evaluations
 
 Review cases are tied to the evaluation ID and fact fingerprint. If facts change
-and a new current evaluation exists, approval of an older review is denied as
-stale. An approval for old facts cannot become blanket permanent authorization.
+or the current policy-versioned fingerprint no longer matches the case,
+approval of an older review is denied as stale. An approval for old facts cannot
+become blanket permanent authorization.
 
 ## Audit
 
@@ -83,6 +90,10 @@ Audit metadata may include safe order IDs, evaluation IDs, case IDs, decision,
 policy version, reason codes, fact fingerprint and safe operator reference. It
 must not include Product Keys, passwords, session tokens, claim codes, delivery
 capabilities, Stripe secrets or Kinguin secrets.
+
+Audit writes are best-effort for this foundation. A failed audit append does not
+change the already persisted fraud state, and no synthetic successful audit
+event is produced when the audit port rejects the write.
 
 ## Future Work
 

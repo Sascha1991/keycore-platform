@@ -134,6 +134,59 @@ describe.skipIf(!connectionString)("PostgresFraudRiskRepository", () => {
       ).rejects.toThrow();
     });
   });
+
+  it("opens a new current review case after changed facts while retaining stale review history", async () => {
+    await withDatabase(async (database) => {
+      const order = await createOrder(database, {
+        paymentStatus: "PENDING",
+        status: "AWAITING_PAYMENT",
+      });
+      const service = new FraudRiskService({
+        now: () => now,
+        repository: repository(database),
+      });
+      const first = await service.evaluateOrder({
+        correlationId: correlationId("pg-fraud-review-history-first"),
+        orderId: order,
+      });
+      if (first.status !== "EVALUATED" || !first.reviewCase) {
+        throw new Error("expected first fraud review case");
+      }
+
+      await database.query(
+        `
+          UPDATE keycore_orders
+          SET payment_status = 'CAPTURED',
+            status = 'PAYMENT_CAPTURED',
+            currency = 'USD',
+            updated_at = $2
+          WHERE id = $1
+        `,
+        [order, new Date(now.getTime() + 2_000)],
+      );
+      const second = await service.evaluateOrder({
+        correlationId: correlationId("pg-fraud-review-history-second"),
+        orderId: order,
+      });
+
+      expect(second).toMatchObject({
+        evaluation: {
+          decision: "REVIEW",
+          reasonCodes: ["CURRENCY_UNSUPPORTED"],
+        },
+        reviewCase: { status: "OPEN" },
+        status: "EVALUATED",
+      });
+      expect(
+        second.status === "EVALUATED" ? second.reviewCase?.caseId : null,
+      ).not.toBe(first.reviewCase.caseId);
+      const cases = await database.query<{ readonly count: string }>(
+        "SELECT count(*) FROM fraud_manual_review_cases WHERE order_id = $1 AND source = 'FRAUD'",
+        [order],
+      );
+      expect(cases.rows[0]?.count).toBe("2");
+    });
+  });
 });
 
 const withDatabase = async (

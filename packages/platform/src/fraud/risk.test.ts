@@ -5,14 +5,19 @@ import { describe, expect, it } from "vitest";
 import { InMemoryFraudRiskRepository } from "../../../../infra/fraud/in-memory-fraud-risk-repository.js";
 import {
   FraudRiskService,
+  canonicalFraudRiskFacts,
   correlationId,
   currency,
+  evaluateFraudRiskFacts,
+  fraudRiskFactFingerprint,
   customerId,
   money,
   orderId,
   productId,
+  riskFactsFromOrder,
   type AuditEvent,
   type FraudManualReviewAuthorityPort,
+  type FraudRiskFacts,
   type FraudRiskRule,
   type KeyCoreOrder,
 } from "../contracts.js";
@@ -24,6 +29,7 @@ const leakageMarkers = [
   "KEYRANO_KS0901_KINGUIN_SECRET_DO_NOT_LEAK",
   "KEYRANO_KS0901_SESSION_DO_NOT_LEAK",
   "KEYRANO_KS0901_CLAIM_CODE_DO_NOT_LEAK",
+  "KEYRANO_KS0901_RULE_SECRET_DO_NOT_LEAK",
 ] as const;
 
 describe("fraud risk and manual review foundation", () => {
@@ -332,6 +338,352 @@ describe("fraud risk and manual review foundation", () => {
     });
   });
 
+  it("does not treat approved stale facts as blanket permanent clearance", async () => {
+    const harness = fraudHarness();
+    const approvedService = new FraudRiskService({
+      manualReviewAuthority: new TrustedFraudAuthority("operator:stale"),
+      repository: harness.repository,
+    });
+    const review = await requireReview(
+      harness.service,
+      harness.orders.paymentPending.id,
+      "fraud-stale-clear-open",
+    );
+    await approvedService.resolveManualReview({
+      caseId: review.reviewCase.caseId,
+      correlationId: correlationId("fraud-stale-clear-approve"),
+      expectedFactFingerprint: review.evaluation.factFingerprint,
+      resolution: "APPROVE",
+    });
+    await expect(
+      approvedService.isFraudCleared(harness.orders.paymentPending.id),
+    ).resolves.toMatchObject({ status: "CLEARED" });
+
+    harness.repository.addOrder({
+      ...harness.orders.paymentPending,
+      paymentStatus: "CAPTURED",
+      updatedAt: new Date(now.getTime() + 3_000),
+    });
+
+    await expect(
+      approvedService.isFraudCleared(harness.orders.paymentPending.id),
+    ).resolves.toEqual({
+      reasonCode: "FRAUD_DECISION_MISSING",
+      status: "BLOCKED",
+    });
+  });
+
+  it("does not let an approved REVIEW override a newer DENY", async () => {
+    const harness = fraudHarness();
+    const service = new FraudRiskService({
+      manualReviewAuthority: new TrustedFraudAuthority("operator:deny"),
+      repository: harness.repository,
+    });
+    const review = await requireReview(
+      harness.service,
+      harness.orders.paymentPending.id,
+      "fraud-approved-then-deny-open",
+    );
+    await service.resolveManualReview({
+      caseId: review.reviewCase.caseId,
+      correlationId: correlationId("fraud-approved-then-deny-approve"),
+      expectedFactFingerprint: review.evaluation.factFingerprint,
+      resolution: "APPROVE",
+    });
+    harness.repository.addOrder({
+      ...harness.orders.paymentPending,
+      paymentStatus: "PENDING",
+      status: "FAILED",
+      updatedAt: new Date(now.getTime() + 4_000),
+    });
+    const deny = await service.evaluateOrder({
+      correlationId: correlationId("fraud-approved-then-deny-evaluate"),
+      orderId: harness.orders.paymentPending.id,
+    });
+
+    expect(deny).toMatchObject({
+      evaluation: { decision: "DENY" },
+      status: "EVALUATED",
+    });
+    await expect(
+      service.isFraudCleared(harness.orders.paymentPending.id),
+    ).resolves.toEqual({
+      reasonCode: "FRAUD_DENIED",
+      status: "BLOCKED",
+    });
+  });
+
+  it("requires a new current review case after approved REVIEW facts change to REVIEW again", async () => {
+    const harness = fraudHarness();
+    const service = new FraudRiskService({
+      manualReviewAuthority: new TrustedFraudAuthority("operator:review"),
+      repository: harness.repository,
+    });
+    const first = await requireReview(
+      harness.service,
+      harness.orders.paymentPending.id,
+      "fraud-approved-then-review-open",
+    );
+    await service.resolveManualReview({
+      caseId: first.reviewCase.caseId,
+      correlationId: correlationId("fraud-approved-then-review-approve"),
+      expectedFactFingerprint: first.evaluation.factFingerprint,
+      resolution: "APPROVE",
+    });
+    harness.repository.addOrder({
+      ...harness.orders.paymentPending,
+      currency: currency("USD"),
+      paymentStatus: "CAPTURED",
+      status: "PAYMENT_CAPTURED",
+      updatedAt: new Date(now.getTime() + 5_000),
+    });
+    const second = await service.evaluateOrder({
+      correlationId: correlationId("fraud-approved-then-review-evaluate"),
+      orderId: harness.orders.paymentPending.id,
+    });
+
+    expect(second).toMatchObject({
+      evaluation: {
+        decision: "REVIEW",
+        reasonCodes: ["CURRENCY_UNSUPPORTED"],
+      },
+      reviewCase: { source: "FRAUD", status: "OPEN" },
+      status: "EVALUATED",
+    });
+    expect(
+      second.status === "EVALUATED" ? second.reviewCase?.caseId : null,
+    ).not.toBe(first.reviewCase.caseId);
+    await expect(
+      service.isFraudCleared(harness.orders.paymentPending.id),
+    ).resolves.toEqual({
+      reasonCode: "FRAUD_REVIEW_REQUIRED",
+      status: "BLOCKED",
+    });
+  });
+
+  it("keeps review resolution immutable across replay and conflicting replay", async () => {
+    const approvedHarness = fraudHarness();
+    const approveService = new FraudRiskService({
+      manualReviewAuthority: new TrustedFraudAuthority("operator:approve"),
+      repository: approvedHarness.repository,
+    });
+    const approved = await requireReview(
+      approvedHarness.service,
+      approvedHarness.orders.paymentPending.id,
+      "fraud-replay-approve-open",
+    );
+    await approveService.resolveManualReview({
+      caseId: approved.reviewCase.caseId,
+      correlationId: correlationId("fraud-replay-approve"),
+      expectedFactFingerprint: approved.evaluation.factFingerprint,
+      resolution: "APPROVE",
+    });
+    await expect(
+      approveService.resolveManualReview({
+        caseId: approved.reviewCase.caseId,
+        correlationId: correlationId("fraud-replay-approve-reject"),
+        expectedFactFingerprint: approved.evaluation.factFingerprint,
+        resolution: "REJECT",
+      }),
+    ).resolves.toMatchObject({
+      reviewCase: { resolution: "APPROVED", status: "APPROVED" },
+      status: "ALREADY_RESOLVED",
+    });
+
+    const rejectedHarness = fraudHarness();
+    const rejectService = new FraudRiskService({
+      manualReviewAuthority: new TrustedFraudAuthority("operator:reject"),
+      repository: rejectedHarness.repository,
+    });
+    const rejected = await requireReview(
+      rejectedHarness.service,
+      rejectedHarness.orders.paymentPending.id,
+      "fraud-replay-reject-open",
+    );
+    await rejectService.resolveManualReview({
+      caseId: rejected.reviewCase.caseId,
+      correlationId: correlationId("fraud-replay-reject"),
+      expectedFactFingerprint: rejected.evaluation.factFingerprint,
+      resolution: "REJECT",
+    });
+    await expect(
+      rejectService.resolveManualReview({
+        caseId: rejected.reviewCase.caseId,
+        correlationId: correlationId("fraud-replay-reject-approve"),
+        expectedFactFingerprint: rejected.evaluation.factFingerprint,
+        resolution: "APPROVE",
+      }),
+    ).resolves.toMatchObject({
+      reviewCase: { resolution: "REJECTED", status: "REJECTED" },
+      status: "ALREADY_RESOLVED",
+    });
+  });
+
+  it("keeps concurrent APPROVE versus REJECT to one durable resolution", async () => {
+    const harness = fraudHarness();
+    const service = new FraudRiskService({
+      manualReviewAuthority: new TrustedFraudAuthority("operator:race"),
+      repository: harness.repository,
+    });
+    const review = await requireReview(
+      harness.service,
+      harness.orders.paymentPending.id,
+      "fraud-resolution-race-open",
+    );
+
+    const results = await Promise.all([
+      service.resolveManualReview({
+        caseId: review.reviewCase.caseId,
+        correlationId: correlationId("fraud-resolution-race-approve"),
+        expectedFactFingerprint: review.evaluation.factFingerprint,
+        resolution: "APPROVE",
+      }),
+      service.resolveManualReview({
+        caseId: review.reviewCase.caseId,
+        correlationId: correlationId("fraud-resolution-race-reject"),
+        expectedFactFingerprint: review.evaluation.factFingerprint,
+        resolution: "REJECT",
+      }),
+    ]);
+    const finalStatuses = new Set(
+      results.map((result) =>
+        result.status === "DENIED"
+          ? result.status
+          : `${result.status}:${result.reviewCase.status}`,
+      ),
+    );
+
+    expect(
+      results.filter((result) => result.status === "RESOLVED"),
+    ).toHaveLength(1);
+    expect(finalStatuses.size).toBeGreaterThanOrEqual(1);
+    const caseState = await harness.repository.findFraudReviewCaseById(
+      review.reviewCase.caseId,
+    );
+    expect(
+      caseState?.status === "APPROVED" || caseState?.status === "REJECTED",
+    ).toBe(true);
+  });
+
+  it("keeps clearance guard fail-closed across the state matrix", async () => {
+    const harness = fraudHarness();
+
+    await expect(
+      harness.service.isFraudCleared(harness.orders.paymentPending.id),
+    ).resolves.toEqual({
+      reasonCode: "FRAUD_DECISION_MISSING",
+      status: "BLOCKED",
+    });
+    await harness.service.evaluateOrder({
+      correlationId: correlationId("fraud-matrix-open"),
+      orderId: harness.orders.paymentPending.id,
+    });
+    await expect(
+      harness.service.isFraudCleared(harness.orders.paymentPending.id),
+    ).resolves.toEqual({
+      reasonCode: "FRAUD_REVIEW_REQUIRED",
+      status: "BLOCKED",
+    });
+    await harness.service.evaluateOrder({
+      correlationId: correlationId("fraud-matrix-deny"),
+      orderId: harness.orders.failedPending.id,
+    });
+    await expect(
+      harness.service.isFraudCleared(harness.orders.failedPending.id),
+    ).resolves.toEqual({
+      reasonCode: "FRAUD_DENIED",
+      status: "BLOCKED",
+    });
+  });
+
+  it("canonicalizes and fingerprints only stable material facts and policy version", () => {
+    const facts = fraudFacts(harnessOrder());
+    const sameFactsDifferentPropertyOrder: FraudRiskFacts = {
+      orderId: facts.orderId,
+      customerId: facts.customerId ?? null,
+      customerVerificationState: facts.customerVerificationState ?? null,
+      checkoutEmailSnapshotPresent: facts.checkoutEmailSnapshotPresent,
+      orderAmountMinor: facts.orderAmountMinor,
+      currency: facts.currency,
+      orderStatus: facts.orderStatus,
+      paymentStatus: facts.paymentStatus,
+      orderRiskStatus: facts.orderRiskStatus,
+      createdAt: new Date(facts.createdAt.toISOString()),
+    };
+    const baseFingerprint = fraudRiskFactFingerprint(facts);
+
+    expect(fraudRiskFactFingerprint(sameFactsDifferentPropertyOrder)).toBe(
+      baseFingerprint,
+    );
+    expect(canonicalFraudRiskFacts(facts)).toEqual(
+      canonicalFraudRiskFacts(sameFactsDifferentPropertyOrder),
+    );
+    expect(fraudRiskFactFingerprint(facts, "KS09_POLICY_V2")).not.toBe(
+      baseFingerprint,
+    );
+
+    const materialMutations: readonly FraudRiskFacts[] = [
+      {
+        ...facts,
+        checkoutEmailSnapshotPresent: !facts.checkoutEmailSnapshotPresent,
+      },
+      { ...facts, currency: "USD" },
+      {
+        ...facts,
+        customerId: customerId("22222222-2222-4222-8222-222222222222"),
+      },
+      { ...facts, customerVerificationState: "UNVERIFIED" },
+      { ...facts, orderAmountMinor: facts.orderAmountMinor + 1n },
+      { ...facts, orderRiskStatus: "REVIEW_REQUIRED" },
+      { ...facts, orderStatus: "FAILED" },
+      { ...facts, paymentStatus: "PENDING" },
+      { ...facts, createdAt: new Date(facts.createdAt.getTime() + 1_000) },
+    ];
+    for (const mutation of materialMutations) {
+      expect(fraudRiskFactFingerprint(mutation)).not.toBe(baseFingerprint);
+    }
+  });
+
+  it("keeps rule precedence and reason projection deterministic independent of rule order", () => {
+    const facts = fraudFacts(harnessOrder());
+    const duplicateReview: FraudRiskRule = {
+      evaluate: () => ({
+        decision: "REVIEW",
+        reasonCode: "PAYMENT_NOT_CONFIRMED",
+        score: 30,
+      }),
+      id: "DUPLICATE_REVIEW",
+    };
+    const deny: FraudRiskRule = {
+      evaluate: () => ({
+        decision: "DENY",
+        reasonCode: "ORDER_STATE_INVALID",
+        score: 100,
+      }),
+      id: "DENY",
+    };
+    const review: FraudRiskRule = {
+      evaluate: () => ({
+        decision: "REVIEW",
+        reasonCode: "PAYMENT_NOT_CONFIRMED",
+        score: 70,
+      }),
+      id: "REVIEW",
+    };
+
+    for (const rules of [
+      [deny, review, duplicateReview],
+      [review, duplicateReview, deny],
+      [duplicateReview, deny, review],
+    ]) {
+      expect(evaluateFraudRiskFacts(facts, { rules })).toEqual({
+        decision: "DENY",
+        reasonCodes: ["ORDER_STATE_INVALID", "PAYMENT_NOT_CONFIRMED"],
+        riskScore: 100,
+      });
+    }
+  });
+
   it("ignores request-supplied fake risk fields because the order repository is authoritative", async () => {
     const harness = fraudHarness();
     const requestBody = {
@@ -356,6 +708,35 @@ describe("fraud risk and manual review foundation", () => {
     });
   });
 });
+
+const requireReview = async (
+  service: FraudRiskService,
+  requestedOrderId: ReturnType<typeof orderId>,
+  marker: string,
+) => {
+  const result = await service.evaluateOrder({
+    correlationId: correlationId(marker),
+    orderId: requestedOrderId,
+  });
+  if (result.status !== "EVALUATED" || !result.reviewCase) {
+    throw new Error("expected fraud review case");
+  }
+  return {
+    evaluation: result.evaluation,
+    reviewCase: result.reviewCase,
+  };
+};
+
+const harnessOrder = (): KeyCoreOrder =>
+  orderFixture("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", {
+    checkoutEmailNormalized: "buyer@example.test",
+    paymentStatus: "CAPTURED",
+    riskStatus: "NOT_EVALUATED",
+    status: "PAYMENT_CAPTURED",
+  });
+
+const fraudFacts = (order: KeyCoreOrder): FraudRiskFacts =>
+  riskFactsFromOrder(order, "VERIFIED");
 
 const fraudHarness = () => {
   const repository = new InMemoryFraudRiskRepository();
@@ -458,7 +839,7 @@ class CapturingAudit {
 }
 
 class ThrowingFraudRiskRepository extends InMemoryFraudRiskRepository {
-  public override async getCurrentEvaluation(): Promise<null> {
+  public override async loadFacts(): Promise<null> {
     throw new Error(leakageMarkers.join(" "));
   }
 }
