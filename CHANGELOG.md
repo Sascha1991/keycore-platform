@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added KS-09-03 dispute evidence foundation with provider-neutral structured
+  evidence snapshots, mandatory order/payment sections, explicit optional
+  absence and ambiguity states, deterministic fingerprints, PostgreSQL
+  migration 022, immutable finalized snapshots, exact-order-bound export,
+  fail-closed trusted authority gates and audit-safe metadata events while
+  leaving Stripe dispute submission, support tickets, supplier claim workflow,
+  production operator UI, provider mutations and product-key reveal out of
+  scope.
 - Added KS-09-02 fraud velocity limits with durable `PAYMENT_CONFIRMED`
   velocity events, pseudonymous checkout-email correlation, typed window and
   threshold policy, `KS09_POLICY_V2` fingerprints, fail-closed unavailable

@@ -19,6 +19,7 @@ export * from "./domain/identifiers.js";
 export * from "./domain/money.js";
 export * from "./domain/region.js";
 export * from "./domain/workflow.js";
+export * from "./disputes/dispute-evidence.js";
 export * from "./ports/core.js";
 export * from "./ports/supplier.js";
 export * from "./pricing/pricing-margin.js";

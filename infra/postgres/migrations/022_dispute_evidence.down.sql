@@ -1,0 +1,6 @@
+DROP TRIGGER IF EXISTS dispute_evidence_finalized_immutable ON dispute_evidence_snapshots;
+DROP FUNCTION IF EXISTS prevent_finalized_dispute_evidence_update();
+DROP INDEX IF EXISTS dispute_evidence_snapshot_order_created_idx;
+DROP INDEX IF EXISTS dispute_evidence_snapshot_fingerprint_idx;
+DROP INDEX IF EXISTS dispute_evidence_snapshot_version_idx;
+DROP TABLE IF EXISTS dispute_evidence_snapshots;
