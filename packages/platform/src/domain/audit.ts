@@ -32,6 +32,7 @@ export type PrefixAuditEventType =
   | `PROCUREMENT_${string}`
   | `REFUND_${string}`
   | `STOREFRONT_${string}`
+  | `SUPPLIER_CLAIM_${string}`
   | `SUPPORT_${string}`;
 
 export type AuditEventType =
@@ -250,7 +251,7 @@ export const validateAuditEventType = (eventType: string): AuditEventType => {
   }
 
   if (
-    /^(CATALOG|CUSTOMER|DISPUTE|FULFILLMENT|ORDER|PAYMENT|PRICING|PROCUREMENT|REFUND|STOREFRONT)_[A-Z0-9_]+$/u.test(
+    /^(CATALOG|CUSTOMER|DISPUTE|FULFILLMENT|ORDER|PAYMENT|PRICING|PROCUREMENT|REFUND|STOREFRONT|SUPPLIER_CLAIM)_[A-Z0-9_]+$/u.test(
       eventType,
     )
   ) {

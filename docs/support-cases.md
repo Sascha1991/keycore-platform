@@ -124,6 +124,14 @@ KS-09-04.
 Support links are not refund authority, supplier claim authority, fraud
 approval authority or key-delivery authority.
 
+## Supplier Claim Escalation
+
+KS-09-05 allows a trusted supplier-claim authority to reference an eligible,
+order-scoped support case. The claim service reads only the case ID, exact order,
+structured category and status. Customer messages and internal notes are not
+copied into the claim or a provider payload. A customer-created support case is
+therefore a report source, not authority to mutate supplier state.
+
 ## Persistence
 
 Migration 023 adds:

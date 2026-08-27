@@ -35,6 +35,11 @@ Build fraud review, support case, supplier claim, refund support, and dispute ev
 - Support access follows least privilege.
 - Dispute evidence excludes secrets.
 - Manual review outcomes are audited.
+- Supplier claims require trusted authority, exact-order authoritative
+  procurement evidence and must not reinterpret customer assertions as proven
+  supplier fault.
+- Supplier claim preparation must remain distinct from confirmed external
+  submission; unavailable or ambiguous supplier mutations fail closed.
 
 ## Required Tests
 

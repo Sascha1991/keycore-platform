@@ -109,6 +109,10 @@ order-bound reference metadata. It does not copy evidence sections, payment
 references, supplier payloads, Product Keys or customer-visible evidence into
 support messages.
 
+KS-09-05 may also reference a `FINALIZED` snapshot from a supplier claim for
+the exact same order. The supplier claim stores only the snapshot identifier;
+it does not copy evidence sections. Draft and cross-order snapshots fail closed.
+
 Not included:
 
 - Stripe Dispute API integration;
