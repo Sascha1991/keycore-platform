@@ -70,6 +70,7 @@ CREATE TABLE support_cases (
     )
     OR (
       status = 'CLOSED'
+      AND resolution_code IS NOT NULL
       AND closed_at IS NOT NULL
     )
     OR (
@@ -77,6 +78,16 @@ CREATE TABLE support_cases (
       AND resolution_code IS NULL
       AND resolved_at IS NULL
       AND closed_at IS NULL
+    )
+  ),
+  CONSTRAINT support_cases_timestamp_order_check CHECK (
+    created_at <= updated_at
+    AND (resolved_at IS NULL OR resolved_at >= created_at)
+    AND (closed_at IS NULL OR closed_at >= created_at)
+    AND (
+      resolved_at IS NULL
+      OR closed_at IS NULL
+      OR closed_at >= resolved_at
     )
   )
 );
@@ -137,6 +148,7 @@ CREATE TABLE support_case_events (
       'PRIORITY_CHANGED',
       'EVIDENCE_LINKED',
       'FRAUD_REVIEW_LINKED',
+      'FRAUD_EVALUATION_LINKED',
       'FULFILLMENT_LINKED',
       'CASE_RESOLVED',
       'CASE_CLOSED'
@@ -161,6 +173,9 @@ CREATE TABLE support_case_events (
     length(trim(actor_reference)) BETWEEN 1 AND 128
     AND actor_reference !~ '[[:cntrl:]]'
     AND actor_reference !~* '(product.?key|plaintext|api.?key|secret|token)'
+  ),
+  CONSTRAINT support_case_events_timestamp_check CHECK (
+    occurred_at >= '2026-01-01T00:00:00Z'::timestamptz
   )
 );
 
@@ -269,3 +284,92 @@ CREATE TRIGGER support_case_events_no_delete
 BEFORE DELETE ON support_case_events
 FOR EACH ROW
 EXECUTE FUNCTION prevent_support_case_event_mutation();
+
+CREATE FUNCTION prevent_support_message_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'Support messages are append-only';
+END;
+$$;
+
+CREATE TRIGGER support_messages_no_update
+BEFORE UPDATE ON support_messages
+FOR EACH ROW
+EXECUTE FUNCTION prevent_support_message_mutation();
+
+CREATE TRIGGER support_messages_no_delete
+BEFORE DELETE ON support_messages
+FOR EACH ROW
+EXECUTE FUNCTION prevent_support_message_mutation();
+
+CREATE FUNCTION validate_support_case_link_exact_order()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  case_order_id UUID;
+  target_order_id UUID;
+BEGIN
+  SELECT order_id INTO case_order_id
+  FROM support_cases
+  WHERE id = NEW.case_id;
+
+  IF case_order_id IS NULL THEN
+    RAISE EXCEPTION 'Support case link requires an order-scoped case';
+  END IF;
+
+  IF NEW.order_id IS DISTINCT FROM case_order_id THEN
+    RAISE EXCEPTION 'Support case link order must match support case order';
+  END IF;
+
+  IF NEW.link_type = 'DISPUTE_EVIDENCE' THEN
+    SELECT order_id INTO target_order_id
+    FROM dispute_evidence_snapshots
+    WHERE id = NEW.dispute_evidence_snapshot_id;
+  ELSIF NEW.link_type = 'FRAUD_REVIEW' THEN
+    SELECT order_id INTO target_order_id
+    FROM fraud_manual_review_cases
+    WHERE id = NEW.fraud_review_case_id;
+  ELSIF NEW.link_type = 'FRAUD_EVALUATION' THEN
+    SELECT order_id INTO target_order_id
+    FROM fraud_risk_evaluations
+    WHERE id = NEW.fraud_evaluation_id;
+  ELSIF NEW.link_type = 'FULFILLMENT' THEN
+    SELECT order_id INTO target_order_id
+    FROM fulfillment_operations
+    WHERE id = NEW.fulfillment_id;
+  END IF;
+
+  IF target_order_id IS NULL OR target_order_id IS DISTINCT FROM case_order_id THEN
+    RAISE EXCEPTION 'Support case link target order mismatch';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER support_case_links_exact_order
+BEFORE INSERT ON support_case_links
+FOR EACH ROW
+EXECUTE FUNCTION validate_support_case_link_exact_order();
+
+CREATE FUNCTION prevent_support_case_link_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'Support case links are append-only';
+END;
+$$;
+
+CREATE TRIGGER support_case_links_no_update
+BEFORE UPDATE ON support_case_links
+FOR EACH ROW
+EXECUTE FUNCTION prevent_support_case_link_mutation();
+
+CREATE TRIGGER support_case_links_no_delete
+BEFORE DELETE ON support_case_links
+FOR EACH ROW
+EXECUTE FUNCTION prevent_support_case_link_mutation();

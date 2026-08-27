@@ -1,3 +1,11 @@
+DROP TRIGGER IF EXISTS support_case_links_no_delete ON support_case_links;
+DROP TRIGGER IF EXISTS support_case_links_no_update ON support_case_links;
+DROP FUNCTION IF EXISTS prevent_support_case_link_mutation();
+DROP TRIGGER IF EXISTS support_case_links_exact_order ON support_case_links;
+DROP FUNCTION IF EXISTS validate_support_case_link_exact_order();
+DROP TRIGGER IF EXISTS support_messages_no_delete ON support_messages;
+DROP TRIGGER IF EXISTS support_messages_no_update ON support_messages;
+DROP FUNCTION IF EXISTS prevent_support_message_mutation();
 DROP TRIGGER IF EXISTS support_case_events_no_delete ON support_case_events;
 DROP TRIGGER IF EXISTS support_case_events_no_update ON support_case_events;
 DROP FUNCTION IF EXISTS prevent_support_case_event_mutation();

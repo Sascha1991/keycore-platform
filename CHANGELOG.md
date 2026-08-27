@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Hardened KS-09-04 before merge by adding runtime validation for support
+  categories, priorities, visibility, statuses, resolution codes, IDs,
+  correlation IDs and pagination, preventing operator-created false ownership
+  on unclaimed orders, narrowing customer support projections, making support
+  messages and links append-only, adding database exact-order link backstops
+  and auditing operator actions without message bodies.
 - Added KS-09-04 support case foundation with provider-neutral internal
   `SupportCase` records, authenticated customer-owned order support,
   account-only customer cases, fail-closed trusted operator authority,

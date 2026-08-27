@@ -97,6 +97,39 @@ describe.skipIf(!connectionString)("PostgresSupportCaseRepository", () => {
           [caseId],
         ),
       ).rejects.toThrow("Support case events are append-only");
+      await expect(
+        database.query(
+          "UPDATE support_cases SET source = 'OPERATOR' WHERE id = $1",
+          [caseId],
+        ),
+      ).rejects.toThrow("Support case ownership and source are immutable");
+      await expect(
+        database.query("UPDATE support_cases SET order_id = $2 WHERE id = $1", [
+          caseId,
+          fixture.orderB,
+        ]),
+      ).rejects.toThrow("Support case ownership and source are immutable");
+      await expect(
+        database.query(
+          "UPDATE support_messages SET body = 'changed' WHERE case_id = $1",
+          [caseId],
+        ),
+      ).rejects.toThrow("Support messages are append-only");
+      await expect(
+        database.query("DELETE FROM support_messages WHERE case_id = $1", [
+          caseId,
+        ]),
+      ).rejects.toThrow("Support messages are append-only");
+      await expect(
+        database.query(
+          `
+            UPDATE support_cases
+            SET status = 'CLOSED', closed_at = $2
+            WHERE id = $1
+          `,
+          [caseId, now],
+        ),
+      ).rejects.toThrow();
     });
   });
 
@@ -112,8 +145,8 @@ describe.skipIf(!connectionString)("PostgresSupportCaseRepository", () => {
         principal: principal(fixture.customerA),
       });
       const caseId = requireCreatedCaseId(created);
-      const version =
-        created.status === "CREATED" ? created.detail.case.recordVersion : 0;
+      const detail = await repository(database).findCaseById(caseId);
+      const version = detail?.case.recordVersion ?? 0;
 
       await expect(
         service.transitionCase({
@@ -164,6 +197,10 @@ describe.skipIf(!connectionString)("PostgresSupportCaseRepository", () => {
         database,
         fixture.orderB,
       );
+      const crossOrderDisputeId = await insertDisputeSnapshot(
+        database,
+        fixture.orderB,
+      );
 
       await expect(
         service.linkReference({
@@ -192,6 +229,60 @@ describe.skipIf(!connectionString)("PostgresSupportCaseRepository", () => {
         code: "RESOURCE_NOT_AVAILABLE",
         status: "FAILED",
       });
+      await expect(
+        database.query(
+          `
+            INSERT INTO support_case_links(
+              id, case_id, link_type, dispute_evidence_snapshot_id, order_id, created_at
+            )
+            VALUES ($1, $2, 'DISPUTE_EVIDENCE', $3, $4, $5)
+          `,
+          [randomUUID(), caseId, crossOrderDisputeId, fixture.orderA, now],
+        ),
+      ).rejects.toThrow("Support case link target order mismatch");
+      await expect(
+        database.query(
+          "UPDATE support_case_links SET order_id = $2 WHERE case_id = $1",
+          [caseId, fixture.orderB],
+        ),
+      ).rejects.toThrow("Support case links are append-only");
+      await expect(
+        database.query("DELETE FROM support_case_links WHERE case_id = $1", [
+          caseId,
+        ]),
+      ).rejects.toThrow("Support case links are append-only");
+    });
+  });
+
+  it("keeps customer detail SQL-filtered and customer projection free of internal state", async () => {
+    await withDatabase(async (database) => {
+      const fixture = await createSupportFixture(database);
+      const service = supportService(database, true);
+      const marker = "KEYRANO_KS0904_INTERNAL_NOTE_DO_NOT_LEAK";
+      const created = await service.createCustomerCase({
+        category: "ORDER_STATUS",
+        correlationId: correlationId("pg-support-projection"),
+        message: "Customer message",
+        orderId: fixture.orderA,
+        principal: principal(fixture.customerA),
+      });
+      const caseId = requireCreatedCaseId(created);
+
+      await service.addOperatorNote({
+        caseId,
+        correlationId: correlationId("pg-support-internal-marker"),
+        message: marker,
+        visibility: "INTERNAL",
+      });
+      const customerView = await service.getCustomerCase({
+        caseId,
+        principal: principal(fixture.customerA),
+      });
+
+      expect(JSON.stringify(customerView)).not.toContain(marker);
+      expect(JSON.stringify(customerView)).not.toContain("priority");
+      expect(JSON.stringify(customerView)).not.toContain("correlation");
+      expect(JSON.stringify(customerView)).not.toContain("recordVersion");
     });
   });
 });
@@ -223,6 +314,11 @@ const supportService = (
       new TestTransactionBoundary(database),
     ),
   });
+
+const repository = (
+  database: PostgresTestDatabase,
+): PostgresSupportCaseRepository =>
+  new PostgresSupportCaseRepository(new TestTransactionBoundary(database));
 
 class TestTransactionBoundary implements TransactionalQueryable {
   public constructor(private readonly database: PostgresTestDatabase) {}

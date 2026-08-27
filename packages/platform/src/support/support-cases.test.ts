@@ -44,10 +44,11 @@ describe("support case foundation", () => {
     ).toMatchObject({
       customerId: customerA,
       orderId: ownedOrder,
-      priority: "NORMAL",
-      source: "CUSTOMER",
       status: "OPEN",
     });
+    expect(JSON.stringify(created)).not.toContain("priority");
+    expect(JSON.stringify(created)).not.toContain("correlation");
+    expect(JSON.stringify(created)).not.toContain("recordVersion");
 
     await expect(
       harness.service.createCustomerCase({
@@ -96,6 +97,102 @@ describe("support case foundation", () => {
       code: "AUTHENTICATION_REQUIRED",
       status: "FAILED",
     });
+  });
+
+  it("never falls back to checkout email, WooCommerce id, billing email, or bare order knowledge", async () => {
+    const harness = supportHarness();
+
+    await expect(
+      harness.service.createCustomerCase({
+        billingEmail: "support-a@example.test",
+        category: "ORDER_STATUS",
+        checkoutEmail: "support-a@example.test",
+        correlationId: correlationId("email-bypass"),
+        message: "I know the email and order id",
+        orderId: otherOrder,
+        principal: principal(customerA),
+        wooCommerceCustomerId: "woo-123",
+      }),
+    ).resolves.toMatchObject({
+      code: "RESOURCE_NOT_AVAILABLE",
+      status: "FAILED",
+    });
+  });
+
+  it("validates runtime category, priority, visibility, status, resolution, ids, correlation and pagination", async () => {
+    const harness = supportHarness({ trustedOperator: true });
+    const created = await createOwnedCase(harness.service);
+    const caseId = requireCreatedCaseId(created);
+
+    await expect(
+      harness.service.createCustomerCase({
+        category: "WHATEVER",
+        correlationId: correlationId("bad-category"),
+        message: "bad category",
+        orderId: ownedOrder,
+        principal: principal(customerA),
+      } as unknown as Parameters<SupportCaseService["createCustomerCase"]>[0]),
+    ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "FAILED" });
+    await expect(
+      harness.service.createOperatorCase({
+        category: "OTHER",
+        correlationId: correlationId("bad-priority"),
+        message: "bad priority",
+        priority: "CRITICAL",
+      } as unknown as Parameters<SupportCaseService["createOperatorCase"]>[0]),
+    ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "FAILED" });
+    await expect(
+      harness.service.addOperatorNote({
+        caseId,
+        correlationId: correlationId("bad-visibility"),
+        message: "bad visibility",
+        visibility: "SECRET",
+      } as unknown as Parameters<SupportCaseService["addOperatorNote"]>[0]),
+    ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "FAILED" });
+    await expect(
+      harness.service.transitionCase({
+        caseId,
+        correlationId: correlationId("bad-status"),
+        expectedVersion: 1,
+        nextStatus: "REMOVED",
+      } as unknown as Parameters<SupportCaseService["transitionCase"]>[0]),
+    ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "FAILED" });
+    await expect(
+      harness.service.transitionCase({
+        caseId,
+        correlationId: correlationId("bad-resolution"),
+        expectedVersion: 1,
+        nextStatus: "RESOLVED",
+        resolutionCode: "REFUNDED",
+      } as unknown as Parameters<SupportCaseService["transitionCase"]>[0]),
+    ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "FAILED" });
+    await expect(
+      harness.service.getCustomerCase({
+        caseId: "not-a-uuid",
+        principal: principal(customerA),
+      }),
+    ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "FAILED" });
+    await expect(
+      harness.service.listCustomerCases({
+        limit: 0,
+        principal: principal(customerA),
+      }),
+    ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "FAILED" });
+    await expect(
+      harness.service.listCustomerCases({
+        cursor: "not valid base64!",
+        principal: principal(customerA),
+      }),
+    ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "FAILED" });
+    await expect(
+      harness.service.createCustomerCase({
+        category: "ORDER_STATUS",
+        correlationId: correlationId("bad\r\ncorrelation"),
+        message: "bad correlation",
+        orderId: ownedOrder,
+        principal: principal(customerA),
+      }),
+    ).resolves.toMatchObject({ code: "BAD_REQUEST", status: "FAILED" });
   });
 
   it("allows authenticated account-only cases without order and requires order for order categories", async () => {
@@ -191,8 +288,8 @@ describe("support case foundation", () => {
     const harness = supportHarness({ trustedOperator: true });
     const created = await createOwnedCase(harness.service);
     const caseId = requireCreatedCaseId(created);
-    const version =
-      created.status === "CREATED" ? created.detail.case.recordVersion : 0;
+    const version = requireSnapshot(harness.repository, caseId).case
+      .recordVersion;
 
     await expect(
       harness.service.transitionCase({
@@ -203,6 +300,17 @@ describe("support case foundation", () => {
       }),
     ).resolves.toMatchObject({
       code: "INVALID_TRANSITION",
+      status: "FAILED",
+    });
+    await expect(
+      harness.service.transitionCase({
+        caseId,
+        correlationId: correlationId("close-without-resolution"),
+        expectedVersion: version,
+        nextStatus: "CLOSED",
+      }),
+    ).resolves.toMatchObject({
+      code: "BAD_REQUEST",
       status: "FAILED",
     });
     await expect(
@@ -250,6 +358,58 @@ describe("support case foundation", () => {
     });
   });
 
+  it("prevents operator cases from fabricating ownership for unclaimed orders", async () => {
+    const harness = supportHarness({ trustedOperator: true });
+
+    await expect(
+      harness.service.createOperatorCase({
+        category: "OTHER",
+        correlationId: correlationId("unclaimed-with-customer"),
+        customerId: customerA,
+        message: "Do not bind this customer to an unclaimed order",
+        orderId: unclaimedOrder,
+      }),
+    ).resolves.toMatchObject({
+      code: "RESOURCE_NOT_AVAILABLE",
+      status: "FAILED",
+    });
+    await expect(
+      harness.service.createOperatorCase({
+        category: "OTHER",
+        correlationId: correlationId("unclaimed-no-customer"),
+        message: "Internal unclaimed order case",
+        orderId: unclaimedOrder,
+      }),
+    ).resolves.toMatchObject({
+      detail: { case: { customerId: null, orderId: unclaimedOrder } },
+      status: "OK",
+    });
+    await expect(
+      harness.service.createOperatorCase({
+        category: "OTHER",
+        correlationId: correlationId("owned-match"),
+        customerId: customerA,
+        message: "Owned order case",
+        orderId: ownedOrder,
+      }),
+    ).resolves.toMatchObject({
+      detail: { case: { customerId: customerA, orderId: ownedOrder } },
+      status: "OK",
+    });
+    await expect(
+      harness.service.createOperatorCase({
+        category: "OTHER",
+        correlationId: correlationId("owned-mismatch"),
+        customerId: customerB,
+        message: "Wrong owner",
+        orderId: ownedOrder,
+      }),
+    ).resolves.toMatchObject({
+      code: "RESOURCE_NOT_AVAILABLE",
+      status: "FAILED",
+    });
+  });
+
   it("links dispute, fraud, and fulfillment references only when the order matches exactly", async () => {
     const harness = supportHarness({ trustedOperator: true });
     harness.repository.addDisputeEvidence({
@@ -258,6 +418,10 @@ describe("support case foundation", () => {
     });
     harness.repository.addFraudReview({
       id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      orderId: ownedOrder,
+    });
+    harness.repository.addFraudEvaluation({
+      id: "99999999-9999-4999-8999-999999999999",
       orderId: ownedOrder,
     });
     harness.repository.addFulfillment({
@@ -278,6 +442,19 @@ describe("support case foundation", () => {
     await expect(
       harness.service.linkReference({
         caseId,
+        correlationId: correlationId("link-fraud-evaluation"),
+        linkType: "FRAUD_EVALUATION",
+        targetId: "99999999-9999-4999-8999-999999999999",
+      }),
+    ).resolves.toMatchObject({ status: "OK" });
+    expect(
+      harness.repository
+        .snapshot(caseId)
+        ?.events.map((event) => event.eventType),
+    ).toContain("FRAUD_EVALUATION_LINKED");
+    await expect(
+      harness.service.linkReference({
+        caseId,
         correlationId: correlationId("link-fraud"),
         linkType: "FRAUD_REVIEW",
         targetId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
@@ -294,6 +471,44 @@ describe("support case foundation", () => {
       code: "RESOURCE_NOT_AVAILABLE",
       status: "FAILED",
     });
+  });
+
+  it("audits operator actions safely and does not place message bodies in audit metadata", async () => {
+    const harness = supportHarness({ trustedOperator: true });
+    const marker = "KEYRANO_KS0904_MESSAGE_BODY_AUDIT_DO_NOT_LEAK";
+    const created = await createOwnedCase(harness.service);
+    const caseId = requireCreatedCaseId(created);
+    const version = requireSnapshot(harness.repository, caseId).case
+      .recordVersion;
+
+    await harness.service.addOperatorNote({
+      caseId,
+      correlationId: correlationId("audit-note"),
+      message: marker,
+      visibility: "INTERNAL",
+    });
+    await harness.service.changePriority({
+      caseId,
+      correlationId: correlationId("audit-priority"),
+      expectedVersion: version + 1,
+      priority: "HIGH",
+    });
+    await harness.service.transitionCase({
+      caseId,
+      correlationId: correlationId("audit-resolve"),
+      expectedVersion: version + 2,
+      nextStatus: "RESOLVED",
+      resolutionCode: "INFORMATION_PROVIDED",
+    });
+
+    expect(harness.audit.events.map((event) => event.eventType)).toEqual(
+      expect.arrayContaining([
+        "SUPPORT_MESSAGE_ADDED",
+        "SUPPORT_PRIORITY_CHANGED",
+        "SUPPORT_CASE_RESOLVED",
+      ]),
+    );
+    expect(JSON.stringify(harness.audit.events)).not.toContain(marker);
   });
 
   it("lists only owned support cases with bounded deterministic pagination", async () => {
@@ -384,6 +599,17 @@ const requireCreatedCaseId = (
     throw new Error("Expected support case to be created");
   }
   return result.detail.case.id;
+};
+
+const requireSnapshot = (
+  repository: InMemorySupportCaseRepository,
+  caseId: string,
+) => {
+  const snapshot = repository.snapshot(caseId);
+  if (!snapshot) {
+    throw new Error("Expected support case snapshot");
+  }
+  return snapshot;
 };
 
 const principal = (

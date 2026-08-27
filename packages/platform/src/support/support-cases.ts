@@ -54,6 +54,7 @@ export type SupportCaseEventType =
   | "PRIORITY_CHANGED"
   | "EVIDENCE_LINKED"
   | "FRAUD_REVIEW_LINKED"
+  | "FRAUD_EVALUATION_LINKED"
   | "FULFILLMENT_LINKED"
   | "CASE_RESOLVED"
   | "CASE_CLOSED";
@@ -118,6 +119,27 @@ export interface SupportCaseEvent {
   readonly occurredAt: Date;
 }
 
+export interface CustomerSupportCaseView {
+  readonly id: string;
+  readonly customerId: CustomerId | null;
+  readonly orderId: OrderId | null;
+  readonly category: SupportCaseCategory;
+  readonly status: SupportCaseStatus;
+  readonly resolutionCode: SupportCaseResolutionCode | null;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+  readonly resolvedAt: Date | null;
+  readonly closedAt: Date | null;
+}
+
+export interface CustomerSupportMessageView {
+  readonly id: string;
+  readonly caseId: string;
+  readonly authorType: SupportMessageAuthorType;
+  readonly body: string;
+  readonly createdAt: Date;
+}
+
 export interface SupportOrderReference {
   readonly orderId: OrderId;
   readonly customerId: CustomerId | null;
@@ -133,8 +155,8 @@ export interface SupportLinkedReference {
 }
 
 export interface CustomerSupportCaseDetail {
-  readonly case: SupportCase;
-  readonly messages: readonly SupportMessage[];
+  readonly case: CustomerSupportCaseView;
+  readonly messages: readonly CustomerSupportMessageView[];
 }
 
 export interface OperatorSupportCaseDetail {
@@ -145,6 +167,11 @@ export interface OperatorSupportCaseDetail {
 }
 
 export interface SupportCaseListPage {
+  readonly items: readonly CustomerSupportCaseView[];
+  readonly nextCursor: string | null;
+}
+
+export interface SupportCaseRepositoryListPage {
   readonly items: readonly SupportCase[];
   readonly nextCursor: string | null;
 }
@@ -172,7 +199,7 @@ export interface SupportCaseRepository {
     readonly customerId: CustomerId;
     readonly limit: number;
     readonly cursor: string | null;
-  }): Promise<SupportCaseListPage>;
+  }): Promise<SupportCaseRepositoryListPage>;
   addMessage(input: {
     readonly caseId: string;
     readonly customerId?: CustomerId;
@@ -263,8 +290,56 @@ export type OperatorSupportCaseResult =
 export const supportMessageMaxLength = 5_000;
 export const supportCaseDefaultPageSize = 20;
 export const supportCaseMaxPageSize = 100;
+const supportCorrelationIdMaxLength = 128;
+const supportCursorMaxLength = 512;
 
 const accountOnlyCategories = new Set<SupportCaseCategory>(["ACCOUNT_PROBLEM"]);
+const supportCaseCategories = new Set<SupportCaseCategory>([
+  "ACCOUNT_PROBLEM",
+  "ACTIVATION_PROBLEM",
+  "INVOICE_PROBLEM",
+  "KEY_NOT_AVAILABLE",
+  "KEY_REVEAL_PROBLEM",
+  "ORDER_STATUS",
+  "PAYMENT_PROBLEM",
+  "REFUND_REQUEST",
+  "SUPPLIER_PROBLEM",
+  "SUSPECTED_DUPLICATE_ORDER",
+  "OTHER",
+]);
+const supportCasePriorities = new Set<SupportCasePriority>([
+  "LOW",
+  "NORMAL",
+  "HIGH",
+  "URGENT",
+]);
+const supportMessageVisibilities = new Set<SupportMessageVisibility>([
+  "CUSTOMER_VISIBLE",
+  "INTERNAL",
+]);
+const supportCaseStatuses = new Set<SupportCaseStatus>([
+  "OPEN",
+  "IN_PROGRESS",
+  "WAITING_FOR_CUSTOMER",
+  "WAITING_FOR_INTERNAL",
+  "RESOLVED",
+  "CLOSED",
+]);
+const supportResolutionCodes = new Set<SupportCaseResolutionCode>([
+  "CUSTOMER_ACTION_REQUIRED",
+  "DUPLICATE_REQUEST",
+  "INFORMATION_PROVIDED",
+  "NO_PLATFORM_ERROR_FOUND",
+  "ORDER_COMPLETED",
+  "REFUND_REFERRED",
+  "SUPPLIER_REVIEW_REQUIRED",
+]);
+const supportLinkTypes = new Set<SupportCaseLinkType>([
+  "DISPUTE_EVIDENCE",
+  "FRAUD_REVIEW",
+  "FRAUD_EVALUATION",
+  "FULFILLMENT",
+]);
 const customerReplyStatuses = new Set<SupportCaseStatus>([
   "OPEN",
   "IN_PROGRESS",
@@ -343,7 +418,13 @@ export class SupportCaseService {
     if (!principal) {
       return { code: "AUTHENTICATION_REQUIRED", status: "FAILED" };
     }
-    if (containsForbiddenCustomerField(input)) {
+    if (
+      containsForbiddenCustomerField(input) ||
+      !isSupportCaseCategory(input.category) ||
+      !isSafeCorrelationId(input.correlationId) ||
+      (input.orderId !== undefined && !isUuid(input.orderId)) ||
+      !isSafeDate(this.now())
+    ) {
       return { code: "BAD_REQUEST", status: "FAILED" };
     }
     const message = normalizeMessageBody(input.message);
@@ -438,6 +519,9 @@ export class SupportCaseService {
     if (!principal) {
       return { code: "AUTHENTICATION_REQUIRED", status: "FAILED" };
     }
+    if (!isUuid(input.caseId)) {
+      return { code: "BAD_REQUEST", status: "FAILED" };
+    }
     const detail = await this.options.repository.findCustomerCaseById({
       caseId: input.caseId,
       customerId: principal.customerId,
@@ -456,12 +540,20 @@ export class SupportCaseService {
     if (!principal) {
       return { code: "AUTHENTICATION_REQUIRED", status: "FAILED" };
     }
+    const pageSize = parsePageSize(input.limit);
+    if (pageSize.status === "INVALID" || !isValidCursor(input.cursor ?? null)) {
+      return { code: "BAD_REQUEST", status: "FAILED" };
+    }
+    const page = await this.options.repository.listCustomerCases({
+      cursor: input.cursor ?? null,
+      customerId: principal.customerId,
+      limit: pageSize.limit,
+    });
     return {
-      page: await this.options.repository.listCustomerCases({
-        cursor: input.cursor ?? null,
-        customerId: principal.customerId,
-        limit: boundedPageSize(input.limit),
-      }),
+      page: {
+        items: page.items.map(toCustomerCaseView),
+        nextCursor: page.nextCursor,
+      },
       status: "LISTED",
     };
   }
@@ -477,7 +569,12 @@ export class SupportCaseService {
     if (!principal) {
       return { code: "AUTHENTICATION_REQUIRED", status: "FAILED" };
     }
-    if (containsForbiddenCustomerField(input)) {
+    if (
+      containsForbiddenCustomerField(input) ||
+      !isUuid(input.caseId) ||
+      !isSafeCorrelationId(input.correlationId) ||
+      !isSafeDate(this.now())
+    ) {
       return { code: "BAD_REQUEST", status: "FAILED" };
     }
     const body = normalizeMessageBody(input.message);
@@ -532,11 +629,29 @@ export class SupportCaseService {
     readonly message: string;
     readonly correlationId: CorrelationId;
   }): Promise<OperatorSupportCaseResult> {
+    if (
+      !isSupportCaseCategory(input.category) ||
+      !isSafeCorrelationId(input.correlationId) ||
+      (input.priority !== undefined &&
+        !isSupportCasePriority(input.priority)) ||
+      (input.orderId !== undefined &&
+        input.orderId !== null &&
+        !isUuid(input.orderId)) ||
+      (input.customerId !== undefined &&
+        input.customerId !== null &&
+        !isUuid(input.customerId)) ||
+      !isSafeDate(this.now())
+    ) {
+      return { code: "BAD_REQUEST", status: "FAILED" };
+    }
     const authorization = await this.authority.authorize({
       action: "CREATE_CASE",
       correlationId: input.correlationId,
     });
     if (authorization.status !== "AUTHORIZED") {
+      return { code: "UNTRUSTED_AUTHORITY", status: "FAILED" };
+    }
+    if (!isSafeActorReference(authorization.operatorReference)) {
       return { code: "UNTRUSTED_AUTHORITY", status: "FAILED" };
     }
     const body = normalizeMessageBody(input.message);
@@ -556,6 +671,9 @@ export class SupportCaseService {
     ) {
       return { code: "RESOURCE_NOT_AVAILABLE", status: "FAILED" };
     }
+    if (input.customerId && order && !order.customerId) {
+      return { code: "RESOURCE_NOT_AVAILABLE", status: "FAILED" };
+    }
     if (input.customerId) {
       const customer = await this.options.repository.findCustomerById(
         input.customerId,
@@ -568,7 +686,7 @@ export class SupportCaseService {
     const supportCase = makeSupportCase({
       category: input.category,
       correlationId: input.correlationId,
-      customerId: input.customerId ?? order?.customerId ?? null,
+      customerId: order ? order.customerId : (input.customerId ?? null),
       orderId: order?.orderId ?? null,
       priority: input.priority ?? "NORMAL",
       source: "OPERATOR",
@@ -592,6 +710,22 @@ export class SupportCaseService {
       }),
       supportCase,
     });
+    await this.audit({
+      actor: { id: authorization.operatorReference, type: "ADMIN" },
+      correlationId: input.correlationId,
+      entity: { id: supportCase.id, type: "SupportCase" },
+      eventType: "SUPPORT_CASE_CREATED",
+      metadata: {
+        caseId: supportCase.id,
+        category: supportCase.category,
+        customerId: supportCase.customerId,
+        orderId: supportCase.orderId,
+        source: supportCase.source,
+        status: supportCase.status,
+      },
+      outcome: "SUCCEEDED",
+      reasonCode: "CREATED",
+    });
     return { detail, status: "OK" };
   }
 
@@ -601,12 +735,23 @@ export class SupportCaseService {
     readonly visibility: SupportMessageVisibility;
     readonly correlationId: CorrelationId;
   }): Promise<OperatorSupportCaseResult> {
+    if (
+      !isUuid(input.caseId) ||
+      !isSafeCorrelationId(input.correlationId) ||
+      !isSupportMessageVisibility(input.visibility) ||
+      !isSafeDate(this.now())
+    ) {
+      return { code: "BAD_REQUEST", status: "FAILED" };
+    }
     const authorization = await this.authority.authorize({
       action: "ADD_NOTE",
       caseId: input.caseId,
       correlationId: input.correlationId,
     });
     if (authorization.status !== "AUTHORIZED") {
+      return { code: "UNTRUSTED_AUTHORITY", status: "FAILED" };
+    }
+    if (!isSafeActorReference(authorization.operatorReference)) {
       return { code: "UNTRUSTED_AUTHORITY", status: "FAILED" };
     }
     const body = normalizeMessageBody(input.message);
@@ -641,7 +786,84 @@ export class SupportCaseService {
     if (added.status !== "ADDED") {
       return { code: added.status, status: "FAILED" };
     }
+    await this.audit({
+      actor: { id: authorization.operatorReference, type: "ADMIN" },
+      correlationId: input.correlationId,
+      entity: { id: input.caseId, type: "SupportCase" },
+      eventType: "SUPPORT_MESSAGE_ADDED",
+      metadata: {
+        authorType: "OPERATOR",
+        caseId: input.caseId,
+        visibility: input.visibility,
+      },
+      outcome: "SUCCEEDED",
+      reasonCode: "MESSAGE_ADDED",
+    });
     return { detail: added.detail, status: "OK" };
+  }
+
+  public async changePriority(input: {
+    readonly caseId: string;
+    readonly expectedVersion: number;
+    readonly priority: SupportCasePriority;
+    readonly correlationId: CorrelationId;
+  }): Promise<OperatorSupportCaseResult> {
+    if (
+      !isUuid(input.caseId) ||
+      !isSafeCorrelationId(input.correlationId) ||
+      !isSupportCasePriority(input.priority) ||
+      !isSafeExpectedVersion(input.expectedVersion) ||
+      !isSafeDate(this.now())
+    ) {
+      return { code: "BAD_REQUEST", status: "FAILED" };
+    }
+    const authorization = await this.authority.authorize({
+      action: "CHANGE_PRIORITY",
+      caseId: input.caseId,
+      correlationId: input.correlationId,
+    });
+    if (authorization.status !== "AUTHORIZED") {
+      return { code: "UNTRUSTED_AUTHORITY", status: "FAILED" };
+    }
+    if (!isSafeActorReference(authorization.operatorReference)) {
+      return { code: "UNTRUSTED_AUTHORITY", status: "FAILED" };
+    }
+    const current = await this.options.repository.findCaseById(input.caseId);
+    if (!current) {
+      return { code: "RESOURCE_NOT_AVAILABLE", status: "FAILED" };
+    }
+    const now = this.now();
+    const updated = await this.options.repository.updatePriority({
+      caseId: input.caseId,
+      event: makeSupportEvent({
+        actorReference: authorization.operatorReference,
+        actorType: "OPERATOR",
+        caseId: input.caseId,
+        eventType: "PRIORITY_CHANGED",
+        fromPriority: current.case.priority,
+        now,
+        toPriority: input.priority,
+      }),
+      expectedVersion: input.expectedVersion,
+      now,
+      priority: input.priority,
+    });
+    if (updated.status !== "UPDATED") {
+      return { code: updated.status, status: "FAILED" };
+    }
+    await this.audit({
+      actor: { id: authorization.operatorReference, type: "ADMIN" },
+      correlationId: input.correlationId,
+      entity: { id: input.caseId, type: "SupportCase" },
+      eventType: "SUPPORT_PRIORITY_CHANGED",
+      metadata: {
+        caseId: input.caseId,
+        priority: input.priority,
+      },
+      outcome: "SUCCEEDED",
+      reasonCode: "PRIORITY_CHANGED",
+    });
+    return { detail: updated.detail, status: "OK" };
   }
 
   public async transitionCase(input: {
@@ -651,12 +873,27 @@ export class SupportCaseService {
     readonly resolutionCode?: SupportCaseResolutionCode | null;
     readonly correlationId: CorrelationId;
   }): Promise<OperatorSupportCaseResult> {
+    if (
+      !isUuid(input.caseId) ||
+      !isSafeCorrelationId(input.correlationId) ||
+      !isSupportCaseStatus(input.nextStatus) ||
+      !isSafeExpectedVersion(input.expectedVersion) ||
+      (input.resolutionCode !== undefined &&
+        input.resolutionCode !== null &&
+        !isSupportResolutionCode(input.resolutionCode)) ||
+      !isSafeDate(this.now())
+    ) {
+      return { code: "BAD_REQUEST", status: "FAILED" };
+    }
     const authorization = await this.authority.authorize({
       action: "CHANGE_STATUS",
       caseId: input.caseId,
       correlationId: input.correlationId,
     });
     if (authorization.status !== "AUTHORIZED") {
+      return { code: "UNTRUSTED_AUTHORITY", status: "FAILED" };
+    }
+    if (!isSafeActorReference(authorization.operatorReference)) {
       return { code: "UNTRUSTED_AUTHORITY", status: "FAILED" };
     }
     const current = await this.options.repository.findCaseById(input.caseId);
@@ -666,7 +903,9 @@ export class SupportCaseService {
     if (!transitionGraph.get(current.case.status)?.includes(input.nextStatus)) {
       return { code: "INVALID_TRANSITION", status: "FAILED" };
     }
-    const requiresResolution = input.nextStatus === "RESOLVED";
+    const requiresResolution =
+      input.nextStatus === "RESOLVED" ||
+      (input.nextStatus === "CLOSED" && !current.case.resolutionCode);
     if (requiresResolution && !input.resolutionCode) {
       return { code: "BAD_REQUEST", status: "FAILED" };
     }
@@ -696,9 +935,27 @@ export class SupportCaseService {
       now,
       resolutionCode: nextResolutionCode,
     });
-    return updated.status === "UPDATED"
-      ? { detail: updated.detail, status: "OK" }
-      : { code: updated.status, status: "FAILED" };
+    if (updated.status !== "UPDATED") {
+      return { code: updated.status, status: "FAILED" };
+    }
+    await this.audit({
+      actor: { id: authorization.operatorReference, type: "ADMIN" },
+      correlationId: input.correlationId,
+      entity: { id: input.caseId, type: "SupportCase" },
+      eventType:
+        input.nextStatus === "RESOLVED"
+          ? "SUPPORT_CASE_RESOLVED"
+          : input.nextStatus === "CLOSED"
+            ? "SUPPORT_CASE_CLOSED"
+            : "SUPPORT_STATUS_CHANGED",
+      metadata: {
+        caseId: input.caseId,
+        status: input.nextStatus,
+      },
+      outcome: "SUCCEEDED",
+      reasonCode: input.nextStatus,
+    });
+    return { detail: updated.detail, status: "OK" };
   }
 
   public async linkReference(input: {
@@ -707,12 +964,24 @@ export class SupportCaseService {
     readonly targetId: string;
     readonly correlationId: CorrelationId;
   }): Promise<OperatorSupportCaseResult> {
+    if (
+      !isUuid(input.caseId) ||
+      !isUuid(input.targetId) ||
+      !isSupportCaseLinkType(input.linkType) ||
+      !isSafeCorrelationId(input.correlationId) ||
+      !isSafeDate(this.now())
+    ) {
+      return { code: "BAD_REQUEST", status: "FAILED" };
+    }
     const authorization = await this.authority.authorize({
       action: "LINK_REFERENCE",
       caseId: input.caseId,
       correlationId: input.correlationId,
     });
     if (authorization.status !== "AUTHORIZED") {
+      return { code: "UNTRUSTED_AUTHORITY", status: "FAILED" };
+    }
+    if (!isSafeActorReference(authorization.operatorReference)) {
       return { code: "UNTRUSTED_AUTHORITY", status: "FAILED" };
     }
     const detail = await this.options.repository.findCaseById(input.caseId);
@@ -748,9 +1017,22 @@ export class SupportCaseService {
         targetId: input.targetId,
       },
     });
-    return linked.status === "LINKED"
-      ? { detail: linked.detail, status: "OK" }
-      : { code: linked.status, status: "FAILED" };
+    if (linked.status !== "LINKED") {
+      return { code: linked.status, status: "FAILED" };
+    }
+    await this.audit({
+      actor: { id: authorization.operatorReference, type: "ADMIN" },
+      correlationId: input.correlationId,
+      entity: { id: input.caseId, type: "SupportCase" },
+      eventType: "SUPPORT_REFERENCE_LINKED",
+      metadata: {
+        caseId: input.caseId,
+        linkType: input.linkType,
+      },
+      outcome: "SUCCEEDED",
+      reasonCode: "REFERENCE_LINKED",
+    });
+    return { detail: linked.detail, status: "OK" };
   }
 
   private now(): Date {
@@ -763,12 +1045,16 @@ export class SupportCaseService {
     if (!this.options.audit) {
       return;
     }
-    await this.options.audit.append({
-      ...event,
-      environment: this.options.environment ?? "LOCAL",
-      timestampUtc: this.now(),
-      uuid: randomUUID(),
-    });
+    try {
+      await this.options.audit.append({
+        ...event,
+        environment: this.options.environment ?? "LOCAL",
+        timestampUtc: this.now(),
+        uuid: randomUUID(),
+      });
+    } catch {
+      // Support state is durable even if best-effort audit is unavailable.
+    }
   }
 }
 
@@ -792,6 +1078,61 @@ export const normalizeMessageBody = (body: string): string | null => {
   }
   return normalized;
 };
+
+const isUuid = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+    value,
+  );
+
+const isSafeDate = (value: Date): boolean =>
+  value instanceof Date && Number.isFinite(value.getTime());
+
+const isSafeCorrelationId = (value: unknown): value is CorrelationId =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= supportCorrelationIdMaxLength &&
+  value.trim() === value &&
+  !/[\u0000-\u001F\u007F\r]/u.test(value);
+
+const isSafeActorReference = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= 128 &&
+  value.trim() === value &&
+  !/[\u0000-\u001F\u007F\r]/u.test(value) &&
+  !/(product.?key|plaintext|api.?key|secret|token)/iu.test(value);
+
+const isSafeExpectedVersion = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+const isSupportCaseCategory = (value: unknown): value is SupportCaseCategory =>
+  typeof value === "string" &&
+  supportCaseCategories.has(value as SupportCaseCategory);
+
+const isSupportCasePriority = (value: unknown): value is SupportCasePriority =>
+  typeof value === "string" &&
+  supportCasePriorities.has(value as SupportCasePriority);
+
+const isSupportMessageVisibility = (
+  value: unknown,
+): value is SupportMessageVisibility =>
+  typeof value === "string" &&
+  supportMessageVisibilities.has(value as SupportMessageVisibility);
+
+const isSupportCaseStatus = (value: unknown): value is SupportCaseStatus =>
+  typeof value === "string" &&
+  supportCaseStatuses.has(value as SupportCaseStatus);
+
+const isSupportResolutionCode = (
+  value: unknown,
+): value is SupportCaseResolutionCode =>
+  typeof value === "string" &&
+  supportResolutionCodes.has(value as SupportCaseResolutionCode);
+
+const isSupportCaseLinkType = (value: unknown): value is SupportCaseLinkType =>
+  typeof value === "string" &&
+  supportLinkTypes.has(value as SupportCaseLinkType);
 
 const containsForbiddenCustomerField = (
   input: Record<string, unknown>,
@@ -871,18 +1212,62 @@ export const makeSupportEvent = (input: {
 export const toCustomerDetail = (
   detail: OperatorSupportCaseDetail,
 ): CustomerSupportCaseDetail => ({
-  case: detail.case,
-  messages: detail.messages.filter(
-    (message) => message.visibility === "CUSTOMER_VISIBLE",
-  ),
+  case: toCustomerCaseView(detail.case),
+  messages: detail.messages
+    .filter((message) => message.visibility === "CUSTOMER_VISIBLE")
+    .map(toCustomerMessageView),
 });
 
-export const boundedPageSize = (limit?: number): number => {
-  if (!Number.isInteger(limit) || !limit) {
-    return supportCaseDefaultPageSize;
+export const parsePageSize = (
+  limit?: number,
+):
+  | { readonly status: "VALID"; readonly limit: number }
+  | { readonly status: "INVALID" } => {
+  if (limit === undefined) {
+    return { limit: supportCaseDefaultPageSize, status: "VALID" };
   }
-  return Math.min(Math.max(limit, 1), supportCaseMaxPageSize);
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    return { status: "INVALID" };
+  }
+  return { limit: Math.min(limit, supportCaseMaxPageSize), status: "VALID" };
 };
+
+export const boundedPageSize = (limit?: number): number => {
+  const parsed = parsePageSize(limit);
+  return parsed.status === "VALID" ? parsed.limit : supportCaseDefaultPageSize;
+};
+
+const isValidCursor = (cursor: string | null): boolean =>
+  cursor === null ||
+  (typeof cursor === "string" &&
+    cursor.length > 0 &&
+    cursor.length <= supportCursorMaxLength &&
+    /^[A-Za-z0-9_-]+$/u.test(cursor));
+
+const toCustomerCaseView = (
+  supportCase: SupportCase,
+): CustomerSupportCaseView => ({
+  category: supportCase.category,
+  closedAt: supportCase.closedAt,
+  createdAt: supportCase.createdAt,
+  customerId: supportCase.customerId,
+  id: supportCase.id,
+  orderId: supportCase.orderId,
+  resolutionCode: supportCase.resolutionCode,
+  resolvedAt: supportCase.resolvedAt,
+  status: supportCase.status,
+  updatedAt: supportCase.updatedAt,
+});
+
+const toCustomerMessageView = (
+  message: SupportMessage,
+): CustomerSupportMessageView => ({
+  authorType: message.authorType,
+  body: message.body,
+  caseId: message.caseId,
+  createdAt: message.createdAt,
+  id: message.id,
+});
 
 const findReference = (
   repository: SupportCaseRepository,
@@ -908,5 +1293,7 @@ const linkEventType = (linkType: SupportCaseLinkType): SupportCaseEventType => {
   if (linkType === "FULFILLMENT") {
     return "FULFILLMENT_LINKED";
   }
-  return "FRAUD_REVIEW_LINKED";
+  return linkType === "FRAUD_EVALUATION"
+    ? "FRAUD_EVALUATION_LINKED"
+    : "FRAUD_REVIEW_LINKED";
 };

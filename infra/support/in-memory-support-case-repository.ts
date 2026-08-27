@@ -4,7 +4,7 @@ import type {
   SupportCase,
   SupportCaseEvent,
   SupportCaseLink,
-  SupportCaseListPage,
+  SupportCaseRepositoryListPage,
   SupportCaseRepository,
   SupportCustomerReference,
   SupportLinkedReference,
@@ -106,7 +106,7 @@ export class InMemorySupportCaseRepository implements SupportCaseRepository {
     readonly customerId: CustomerId;
     readonly limit: number;
     readonly cursor: string | null;
-  }): Promise<SupportCaseListPage> {
+  }): Promise<SupportCaseRepositoryListPage> {
     const startAfter = input.cursor ?? "";
     const items = [...this.cases.values()]
       .filter(
@@ -207,12 +207,41 @@ export class InMemorySupportCaseRepository implements SupportCaseRepository {
     };
   }
 
-  public async updatePriority(): Promise<
+  public async updatePriority(input: {
+    readonly caseId: string;
+    readonly expectedVersion: number;
+    readonly priority: SupportCase["priority"];
+    readonly now: Date;
+    readonly event: SupportCaseEvent;
+  }): Promise<
     | { readonly status: "UPDATED"; readonly detail: OperatorSupportCaseDetail }
     | { readonly status: "RESOURCE_NOT_AVAILABLE" }
     | { readonly status: "STALE_VERSION" }
   > {
-    return { status: "RESOURCE_NOT_AVAILABLE" };
+    const supportCase = this.cases.get(input.caseId);
+    if (!supportCase) {
+      return { status: "RESOURCE_NOT_AVAILABLE" };
+    }
+    if (
+      supportCase.recordVersion !== input.expectedVersion ||
+      input.event.fromPriority !== supportCase.priority
+    ) {
+      return { status: "STALE_VERSION" };
+    }
+    this.cases.set(input.caseId, {
+      ...supportCase,
+      priority: input.priority,
+      recordVersion: supportCase.recordVersion + 1,
+      updatedAt: input.now,
+    });
+    this.events.set(input.caseId, [
+      ...(this.events.get(input.caseId) ?? []),
+      input.event,
+    ]);
+    return {
+      detail: requireDetail(this.detail(input.caseId)),
+      status: "UPDATED",
+    };
   }
 
   public async findDisputeEvidence(

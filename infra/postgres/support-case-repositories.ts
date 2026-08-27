@@ -10,7 +10,7 @@ import type {
   SupportCase,
   SupportCaseEvent,
   SupportCaseLink,
-  SupportCaseListPage,
+  SupportCaseRepositoryListPage,
   SupportCaseRepository,
   SupportCustomerReference,
   SupportLinkedReference,
@@ -156,7 +156,7 @@ export class PostgresSupportCaseRepository implements SupportCaseRepository {
     readonly customerId: CustomerId;
     readonly limit: number;
     readonly cursor: string | null;
-  }): Promise<SupportCaseListPage> {
+  }): Promise<SupportCaseRepositoryListPage> {
     const values: unknown[] = [input.customerId];
     const cursor = decodeCursor(input.cursor);
     const cursorPredicate = cursor
@@ -207,6 +207,9 @@ export class PostgresSupportCaseRepository implements SupportCaseRepository {
       if (!input.allowedStatuses.includes(loaded.status)) {
         return { status: "CLOSED_TO_REPLIES" };
       }
+      if (input.event.fromStatus && input.event.fromStatus !== loaded.status) {
+        return { status: "CLOSED_TO_REPLIES" };
+      }
       await insertMessage(client, input.message);
       await insertEvent(client, input.event);
       await client.query(
@@ -244,6 +247,9 @@ export class PostgresSupportCaseRepository implements SupportCaseRepository {
       if (loaded.recordVersion !== input.expectedVersion) {
         return { status: "STALE_VERSION" };
       }
+      if (input.event.fromStatus !== loaded.status) {
+        return { status: "STALE_VERSION" };
+      }
       await client.query(
         `
           UPDATE support_cases
@@ -265,12 +271,44 @@ export class PostgresSupportCaseRepository implements SupportCaseRepository {
     });
   }
 
-  public async updatePriority(): Promise<
+  public async updatePriority(input: {
+    readonly caseId: string;
+    readonly expectedVersion: number;
+    readonly priority: SupportCase["priority"];
+    readonly now: Date;
+    readonly event: SupportCaseEvent;
+  }): Promise<
     | { readonly status: "UPDATED"; readonly detail: OperatorSupportCaseDetail }
     | { readonly status: "RESOURCE_NOT_AVAILABLE" }
     | { readonly status: "STALE_VERSION" }
   > {
-    return { status: "RESOURCE_NOT_AVAILABLE" };
+    return this.db.transaction(async (client) => {
+      const loaded = await lockCase(client, input.caseId);
+      if (!loaded) {
+        return { status: "RESOURCE_NOT_AVAILABLE" };
+      }
+      if (
+        loaded.recordVersion !== input.expectedVersion ||
+        input.event.fromPriority !== loaded.priority
+      ) {
+        return { status: "STALE_VERSION" };
+      }
+      await client.query(
+        `
+          UPDATE support_cases
+          SET priority = $2,
+              updated_at = $3,
+              record_version = record_version + 1
+          WHERE id = $1
+        `,
+        [input.caseId, input.priority, input.now],
+      );
+      await insertEvent(client, input.event);
+      return {
+        detail: requiredDetail(await loadDetail(client, input.caseId)),
+        status: "UPDATED",
+      };
+    });
   }
 
   public async findDisputeEvidence(
@@ -343,6 +381,9 @@ export class PostgresSupportCaseRepository implements SupportCaseRepository {
     sql: string,
     id: string,
   ): Promise<SupportLinkedReference | null> {
+    if (!isUuid(id)) {
+      return null;
+    }
     const result = await this.db.query<IdOrderRow>(sql, [id]);
     return result.rows[0]
       ? { id: result.rows[0].id, orderId: orderId(result.rows[0].order_id) }
@@ -530,12 +571,16 @@ const loadDetail = async (
   if (!supportCase) {
     return null;
   }
+  const messageVisibilityPredicate = ownerCustomerId
+    ? "AND visibility = 'CUSTOMER_VISIBLE'"
+    : "";
   const [messages, events, links] = await Promise.all([
     client.query<MessageRow>(
       `
         SELECT id::text, case_id::text, author_type, visibility, body, created_at
         FROM support_messages
         WHERE case_id = $1
+          ${messageVisibilityPredicate}
         ORDER BY created_at ASC, id ASC
       `,
       [caseId],
@@ -672,3 +717,9 @@ const isUniqueViolation = (error: unknown): boolean =>
   error !== null &&
   "code" in error &&
   (error as { readonly code?: unknown }).code === "23505";
+
+const isUuid = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+    value,
+  );

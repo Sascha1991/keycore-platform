@@ -56,6 +56,12 @@ Customers may:
 Customers may not set status, priority, internal visibility, resolution codes,
 operator references, evidence links, fraud links or fulfillment links.
 
+Customer projections are explicit DTOs. They expose only safe case fields:
+case ID, customer ID, order ID, category, status, resolution code and
+timestamps. They do not expose internal priority, source, correlation ID or
+record version. Customer detail loads only `CUSTOMER_VISIBLE` messages at the
+repository SQL boundary and filters visibility again in application code.
+
 ## Operator Boundary
 
 Operator actions require `SupportOperatorAuthorityPort`. The default production
@@ -65,6 +71,13 @@ status fields are not trusted.
 Trusted operators may create internal cases, add internal notes, change status,
 set priority and link safe references. KS-09-04 does not provide production
 operator authentication or UI.
+
+If an operator provides an unclaimed `orderId`, the case may be order-scoped
+with `customerId = NULL`. The operator cannot attach an arbitrary customer to
+that unclaimed order. If the order already has an authoritative customer, a
+mismatching request customer is rejected and the support case uses the
+authoritative order customer. Support cases do not repair, fabricate or imply
+order ownership.
 
 ## Messages
 
@@ -79,6 +92,9 @@ operator authentication or UI.
 Customers cannot create internal notes or impersonate operators. Internal notes
 are excluded from customer projections and included only in operator
 projections. Message bodies are not copied into audit metadata.
+
+Support messages are append-only in PostgreSQL. KS-09-04 has no correction or
+redaction workflow, so direct update and delete attempts are rejected.
 
 KS-09-04 does not promise to redact arbitrary secrets deliberately typed by a
 customer into a customer-visible message. It does ensure generated DTOs,
@@ -101,6 +117,10 @@ Trusted operators may link:
 Every link is exact-order bound: the referenced record must belong to the same
 order as the support case. Cross-order links fail closed.
 
+PostgreSQL repeats the exact-order validation in a `BEFORE INSERT` trigger and
+support links are append-only. Link retargeting and unlinking are not part of
+KS-09-04.
+
 Support links are not refund authority, supplier claim authority, fraud
 approval authority or key-delivery authority.
 
@@ -118,8 +138,13 @@ PostgreSQL enforces:
 - customer/order/source immutability on support cases;
 - bounded safe message text;
 - customer messages as customer-visible only;
+- append-only support messages;
 - append-only support events;
+- append-only support links;
+- exact-order link validation against the selected target table;
 - typed status, priority, category, source and resolution values;
+- `CLOSED`/`RESOLVED` cases with structured resolution codes;
+- chronological timestamp consistency;
 - deterministic customer-list indexes;
 - unique reference links per case and target.
 
