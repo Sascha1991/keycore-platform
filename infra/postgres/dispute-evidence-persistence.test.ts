@@ -181,6 +181,7 @@ const insertDisputeFixture = async (
   const customerId = randomUUID();
   const orderIdValue = randomUUID() as OrderId;
   const paymentId = randomUUID();
+  const checkoutEmail = `dispute-${orderIdValue}@example.test`;
   await database.query(
     "INSERT INTO products(id, product_type, title, platform) VALUES ($1, 'DIGITAL_KEY', 'Dispute Fixture', 'PC')",
     [productId],
@@ -213,9 +214,9 @@ const insertDisputeFixture = async (
         id, email_normalized, email_verification_state, record_version,
         created_at, updated_at
       )
-      VALUES ($1, 'dispute-customer@example.test', 'VERIFIED', 1, $2, $2)
+      VALUES ($1, $2, 'VERIFIED', 1, $3, $3)
     `,
-    [customerId, now],
+    [customerId, checkoutEmail, now],
   );
   await database.query(
     `
@@ -226,15 +227,16 @@ const insertDisputeFixture = async (
         record_version, idempotency_key, idempotency_fingerprint, correlation_id,
         created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, 'dispute-customer@example.test', 2999, 'EUR', 1,
+      VALUES ($1, $2, $3, $4, $5, 2999, 'EUR', 1,
         'COMPLETED', 'CAPTURED', 'SUCCEEDED', 'SUCCEEDED', 'APPROVED',
-        'NOT_REQUESTED', 1, $5, $6, 'pg-dispute-order', $7, $7)
+        'NOT_REQUESTED', 1, $6, $7, 'pg-dispute-order', $8, $8)
     `,
     [
       orderIdValue,
       productId,
       priceLockId,
       customerId,
+      checkoutEmail,
       `order-${orderIdValue}`,
       `fingerprint-${orderIdValue}`,
       now,
