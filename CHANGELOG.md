@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added KS-10-02 Phase-10 gap closure with field-specific operational logging
+  allowlists and nested-data omission tests, validated critical runbook owners
+  and recovery/fallback metadata, PostgreSQL-backed checkout and precise global
+  commerce deny gates in migration 026, and deterministic manifest plus
+  synthetic isolated PostgreSQL restore-drill validation. Category pause and a
+  negative-margin order metric remain deferred until their required
+  authoritative persisted facts exist.
+
 - Added consolidated KS-10-01 monitoring, backups and emergency-controls
   foundation with allowlisted aggregate metrics and structured telemetry,
   role-aware liveness/readiness, runbook-linked alert definitions, authorized

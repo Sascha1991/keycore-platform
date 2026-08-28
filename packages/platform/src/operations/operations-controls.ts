@@ -5,6 +5,8 @@ import { correlationId } from "../domain/identifiers.js";
 import type { AuditEventPort } from "../ports/core.js";
 
 export const operationsCapabilities = [
+  "GLOBAL_COMMERCE_MUTATIONS",
+  "CHECKOUT_CREATE",
   "PROCUREMENT_CREATE",
   "SUPPLIER_KEY_RETRIEVAL",
   "CUSTOMER_KEY_DELIVERY",
@@ -151,6 +153,20 @@ export class OperationsControlService implements OperationsControlGate {
     capability: OperationsCapability,
   ): Promise<OperationsControlGateResult> {
     try {
+      if (capability !== "GLOBAL_COMMERCE_MUTATIONS") {
+        const global = await this.repository.findControl(
+          "GLOBAL_COMMERCE_MUTATIONS",
+        );
+        if (!isValidControl(global, "GLOBAL_COMMERCE_MUTATIONS")) {
+          return unavailable();
+        }
+        if (global.state === "PAUSED") {
+          return {
+            reasonCode: "OPERATIONS_CONTROL_PAUSED",
+            status: "DENIED",
+          };
+        }
+      }
       const control = await this.repository.findControl(capability);
       if (!isValidControl(control, capability)) {
         return unavailable();

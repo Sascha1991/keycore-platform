@@ -135,8 +135,18 @@ backup/isolated-restore validation and incident runbooks. Production exporters,
 dashboards, alert delivery, authority/UI, backup storage/scheduling and restore
 drill approval remain production-readiness integration work.
 
-With KS-10-01, the repository-defined Phase 10 foundation is complete. The next
-repository task is KS-11-01 validation; it has not been started.
+KS-10-02 closes the remaining historical Phase-10 repository gaps with
+field-specific logging allowlists, validated critical-runbook ownership and
+fallback coverage, a real checkout deny gate, a precise global-commerce deny
+gate, migration 026 and a deterministic synthetic PostgreSQL restore drill.
+Category pause and a negative-margin order metric remain intentionally absent
+until authoritative category and historical commercial snapshots exist.
+
+With KS-10-01 and KS-10-02, Phase 10 is closed at the foundation/repository
+level. Production exporters, dashboards, paging, operations UI/authority,
+backup storage/scheduling and an approved production restore drill remain Phase
+12 integration and human-approval work. The next task after KS-10-02 merge is
+KS-11-01 validation; it has not been started.
 
 ## Phase 11 – Staging and Acceptance
 
