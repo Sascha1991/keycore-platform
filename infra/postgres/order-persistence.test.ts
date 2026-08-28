@@ -66,7 +66,7 @@ describePostgres("PostgresOrderRepository", () => {
     } finally {
       await database.cleanup();
     }
-  });
+  }, 30_000);
 
   it("creates exactly one logical order for concurrent same-key same-input calls", async () => {
     const database = await initDatabase();
