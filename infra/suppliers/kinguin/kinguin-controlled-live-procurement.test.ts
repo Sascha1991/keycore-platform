@@ -13,7 +13,12 @@ import {
   type AuditEvent,
   type NormalizedSupplierOffer,
   type NormalizedSupplierProduct,
+  type OperationsControlGate,
 } from "../../../packages/platform/src/contracts.js";
+
+const allowOperationsControl = {
+  evaluate: async () => ({ status: "ALLOWED" as const }),
+};
 import { parseCandidateListArgs } from "../../../scripts/kinguin-list-live-test-candidates.js";
 import { SupplierError } from "../../../packages/platform/src/suppliers/errors.js";
 import {
@@ -525,6 +530,39 @@ describe("controlled Kinguin live procurement", () => {
     await expectExecuteBlock({
       changedProduct: productFixture({ regionalLimitations: "CIS" }),
       reasonCode: "GERMANY_INELIGIBLE",
+    });
+  });
+
+  it("blocks controlled live purchase before claim and POST when operations are paused", async () => {
+    const repository = new InMemoryControlledProcurementApprovalRepository();
+    const mutationTransport = new FakeTransport();
+    const service = serviceFixture({
+      mutationTransport,
+      operationsControlGate: {
+        evaluate: async () => ({
+          reasonCode: "OPERATIONS_CONTROL_PAUSED",
+          status: "DENIED",
+        }),
+      },
+      repository,
+    });
+    const prepared = await service.prepare(prepareInput());
+    await expect(
+      service.execute({
+        approvalId: prepared.approvalId,
+        correlationId: correlationId("operations-paused"),
+        executionToken: prepared.oneTimeExecutionToken,
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "OPERATIONS_CONTROL_PAUSED",
+      status: "BLOCKED",
+    });
+    expect(mutationTransport.requests).toHaveLength(0);
+    await expect(
+      repository.findById(prepared.approvalId),
+    ).resolves.toMatchObject({
+      dispatchState: "NOT_DISPATCHED",
+      status: "APPROVED",
     });
   });
 
@@ -1114,6 +1152,7 @@ const serviceFixture = (
     readonly allowOrderLookup?: boolean;
     readonly mutationTransport?: KinguinHttpTransport;
     readonly offerIndex?: InMemoryKinguinOfferProductIndex;
+    readonly operationsControlGate?: OperationsControlGate;
     readonly product?: KinguinProduct;
     readonly repository?: ControlledProcurementApprovalRepository;
     readonly transport?: FakeTransport;
@@ -1152,6 +1191,8 @@ const serviceFixture = (
     config: options.config ?? controlledLiveConfigFromEnv(env),
     offerIndex,
     orderClient,
+    operationsControlGate:
+      options.operationsControlGate ?? allowOperationsControl,
     ...(options.audit ? { audit: options.audit } : {}),
     readOnlySupplier: new KinguinSupplier(readOnlyClient, offerIndex),
     repository:

@@ -39,6 +39,10 @@ Create operational visibility, backup/restore procedures, dead-letter queues, ru
 - Backups contain encrypted key payloads only.
 - Restore verifies external master-key handling.
 
+Implemented by the KS-10-01 provider-neutral foundation. Production monitoring,
+alert delivery, backup scheduling/storage, operations authority/UI and the
+`SECURITY-READINESS` human gate remain intentionally unconnected and pending.
+
 ## Required Tests
 
 - Backup/restore tests.

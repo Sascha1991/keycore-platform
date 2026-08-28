@@ -27,6 +27,7 @@ export type PrefixAuditEventType =
   | `FULFILLMENT_${string}`
   | `FRAUD_${string}`
   | `ORDER_${string}`
+  | `OPERATIONS_${string}`
   | `PAYMENT_${string}`
   | `PRICING_${string}`
   | `PROCUREMENT_${string}`

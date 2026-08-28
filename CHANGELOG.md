@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added consolidated KS-10-01 monitoring, backups and emergency-controls
+  foundation with allowlisted aggregate metrics and structured telemetry,
+  role-aware liveness/readiness, runbook-linked alert definitions, authorized
+  payload-free dead-letter handling, PostgreSQL-backed deny-only controls for
+  procurement/key retrieval/customer delivery/supplier claims, migration 025,
+  encrypted-only backup/isolated-restore validation and incident runbooks while
+  leaving production exporters, dashboards, alert delivery, operations UI,
+  backup storage/scheduling and Security Readiness approval unconnected.
+
 - Added KS-09-05 supplier claim workflow foundation with provider-neutral
   structured claims, fail-closed trusted authority and submission ports,
   authoritative supplier derivation, exact-order support/procurement/

@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
+const allowOperations = {
+  evaluate: async () => ({ status: "ALLOWED" as const }),
+};
+
+import type { OperationsControlGate } from "../operations/operations-controls.js";
+
 import {
   correlationId,
   supplierId,
@@ -325,6 +331,39 @@ describe("secure key fulfillment service", () => {
       status: "DELIVERY_PENDING",
       supplierId: "kinguin",
     });
+  });
+
+  it("blocks paused supplier retrieval before capability consumption or supplier call", async () => {
+    const keyRetrieval = new StaticKeyRetrieval([retrievedKey()]);
+    const harness = serviceHarness({
+      keyRetrieval,
+      operationsControlGate: {
+        evaluate: async () => ({
+          reasonCode: "OPERATIONS_CONTROL_PAUSED",
+          status: "DENIED",
+        }),
+      },
+    });
+    const prepared = await harness.service.prepareControlledRetrieval({
+      controlledProcurementApprovalId: "approval-confirmed",
+      correlationId: correlationId("prepare-paused"),
+    });
+    await expect(
+      harness.service.executeControlledRetrieval({
+        correlationId: correlationId("execute-paused"),
+        executionToken: prepared.oneTimeExecutionToken ?? "",
+        fulfillmentApprovalId: prepared.fulfillmentApprovalId ?? "",
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "OPERATIONS_CONTROL_PAUSED",
+      status: "BLOCKED",
+    });
+    expect(keyRetrieval.calls).toHaveLength(0);
+    const operation = await harness.repository.findById(
+      prepared.fulfillmentApprovalId ?? "",
+    );
+    expect(operation).toMatchObject({ retrievalState: "NOT_STARTED" });
+    expect(operation?.encryptedSecretId ?? null).toBeNull();
   });
 
   it("prevents duplicate retrieval after encrypted secret exists", async () => {
@@ -691,6 +730,7 @@ const serviceHarness = (
       readonly calls: readonly unknown[];
     };
     readonly now?: () => Date;
+    readonly operationsControlGate?: OperationsControlGate;
     readonly repository?: InMemoryFulfillmentRepository;
   } = {},
 ) => {
@@ -709,6 +749,7 @@ const serviceHarness = (
       environment: "CI",
       keyManagementProvider,
       keyRetrieval,
+      operationsControlGate: options.operationsControlGate ?? allowOperations,
       now: options.now ?? (() => now),
       procurementEvidence: new StaticEvidence(evidence),
       repository: repo,

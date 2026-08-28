@@ -1272,6 +1272,9 @@ const transportHarness = async (
       fulfillmentRepository,
       keyManagementProvider: keyAccessKeyProvider,
       now: () => now,
+      operationsControlGate: {
+        evaluate: async () => ({ status: "ALLOWED" as const }),
+      },
       orderAuthorization: new PersistedCustomerOrderAuthorizationPort({
         audit,
         environment: "CI",

@@ -17,11 +17,13 @@ import {
   correlationId,
   currency,
   supplierId,
+  evaluateHighRiskOperation,
   type AuditEvent,
   type AuditEventPort,
   type CorrelationId,
   type Money,
   type NormalizedSupplierOffer,
+  type OperationsControlGate,
   type SupplierOfferId,
   type SupplierProductId,
 } from "../../../packages/platform/src/contracts.js";
@@ -425,6 +427,7 @@ export class ControlledLiveProcurementService {
       readonly orderClient?: KinguinHttpClient;
       readonly audit?: AuditEventPort;
       readonly environment?: AuditEvent["environment"];
+      readonly operationsControlGate?: OperationsControlGate;
       readonly now?: () => Date;
     },
   ) {
@@ -664,6 +667,13 @@ export class ControlledLiveProcurementService {
     const verified = await this.verifyApprovalPreflight(approval);
     if (verified.status !== "READY") {
       return blocked(approval.approvalId, verified.reasonCode, approval);
+    }
+    const operations = await evaluateHighRiskOperation(
+      this.options.operationsControlGate,
+      "PROCUREMENT_CREATE",
+    );
+    if (operations.status === "DENIED") {
+      return blocked(approval.approvalId, operations.reasonCode, approval);
     }
     const claim = await this.options.repository.claim({
       approvalId: approval.approvalId,
@@ -1316,6 +1326,7 @@ export const createControlledLiveServiceFromEnv = (input: {
   readonly mutationTransport?: KinguinHttpTransport;
   readonly readOnlyTransport?: KinguinHttpTransport;
   readonly mode: "READ_ONLY" | "CONTROLLED_MUTATION";
+  readonly operationsControlGate?: OperationsControlGate;
 }): ControlledLiveProcurementService => {
   const config =
     input.mode === "CONTROLLED_MUTATION"
@@ -1357,6 +1368,9 @@ export const createControlledLiveServiceFromEnv = (input: {
     offerIndex,
     readOnlySupplier: new KinguinSupplier(readOnlyClient, offerIndex),
     repository: input.repository,
+    ...(input.operationsControlGate
+      ? { operationsControlGate: input.operationsControlGate }
+      : {}),
     ...(orderClient ? { orderClient } : {}),
     ...(orderGuard ? { orderTransport: orderGuard } : {}),
   });

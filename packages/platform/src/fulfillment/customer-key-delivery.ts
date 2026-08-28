@@ -7,6 +7,10 @@ import type {
   OrderId,
 } from "../domain/identifiers.js";
 import type { AuditEventPort } from "../ports/core.js";
+import {
+  evaluateHighRiskOperation,
+  type OperationsControlGate,
+} from "../operations/operations-controls.js";
 import type { SafePayload } from "../queue/job.js";
 import type { KeyManagementProvider } from "../vault/crypto.js";
 import {
@@ -51,7 +55,9 @@ export type CustomerKeyDeliveryReasonCode =
   | "FULFILLMENT_DELIVERY_OUTCOME_UNKNOWN"
   | "FULFILLMENT_DELIVERY_LOCAL_PERSISTENCE_FAILED"
   | "FULFILLMENT_DELIVERY_LOCAL_UNKNOWN"
-  | "FULFILLMENT_LIVE_DELIVERY_DISABLED";
+  | "FULFILLMENT_LIVE_DELIVERY_DISABLED"
+  | "OPERATIONS_CONTROL_PAUSED"
+  | "OPERATIONS_CONTROL_UNAVAILABLE";
 
 export interface CustomerDeliveryAuthorization {
   readonly customerId: CustomerId;
@@ -216,6 +222,7 @@ export interface CustomerKeyDeliveryServiceOptions {
   readonly deliveryLeaseStaleAfterMs: number;
   readonly allowLiveCustomerKeyDelivery?: boolean;
   readonly protectedFulfillmentIds?: readonly string[];
+  readonly operationsControlGate?: OperationsControlGate;
   readonly audit?: AuditEventPort;
   readonly environment?: AuditEvent["environment"];
   readonly now?: () => Date;
@@ -367,6 +374,13 @@ export class CustomerKeyDeliveryService {
         reasonCode: "FULFILLMENT_LIVE_DELIVERY_DISABLED",
         status: "BLOCKED",
       };
+    }
+    const operations = await evaluateHighRiskOperation(
+      this.options.operationsControlGate,
+      "CUSTOMER_KEY_DELIVERY",
+    );
+    if (operations.status === "DENIED") {
+      return { reasonCode: operations.reasonCode, status: "BLOCKED" };
     }
     const authorization = customerDeliveryAuthorization({
       customerId: input.customerId,

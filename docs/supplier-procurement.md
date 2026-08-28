@@ -1,5 +1,13 @@
 # Supplier Procurement Orchestration
 
+## Operations Control
+
+KS-10-01 evaluates `PROCUREMENT_CREATE` immediately before a new execution
+lease and supplier dispatch. Paused, missing or unavailable control state makes
+zero purchase calls and leaves the operation truthfully `READY` and
+`NOT_DISPATCHED`. Read-only reconciliation of an already dispatched or
+ambiguous purchase remains available.
+
 KS-07-03 adds the supplier-neutral procurement execution boundary. PostgreSQL remains the durable source of truth. Redis and queues may deliver work later, but they do not prove supplier state.
 
 ## Eligibility Gates

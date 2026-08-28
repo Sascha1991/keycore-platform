@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+const allowOperations = {
+  evaluate: async () => ({ status: "ALLOWED" as const }),
+};
+
 import { InMemoryProcurementOperationRepository } from "../../../../infra/procurement/in-memory-procurement-repository.js";
 import {
   correlationId,
@@ -21,6 +25,7 @@ import type {
 } from "../orders/order-orchestration.js";
 import type { PriceLockService } from "../pricing/price-locks.js";
 import type { PricingService } from "../pricing/pricing-margin.js";
+import type { OperationsControlGate } from "../operations/operations-controls.js";
 import type { SupplierRegistry } from "../suppliers/registry.js";
 import type {
   SupplierRoutingCandidate,
@@ -93,6 +98,31 @@ describe("SupplierProcurementService", () => {
       status: "BLOCKED",
     });
     expect(harness.supplier.calls).toBe(0);
+  });
+
+  it("blocks paused or unavailable procurement before lease and supplier dispatch", async () => {
+    for (const reasonCode of [
+      "OPERATIONS_CONTROL_PAUSED",
+      "OPERATIONS_CONTROL_UNAVAILABLE",
+    ] as const) {
+      const harness = createHarness({
+        operationsControlGate: {
+          evaluate: async () => ({ reasonCode, status: "DENIED" }),
+        },
+      });
+      await expect(
+        harness.service.startProcurement({
+          correlationId: corr,
+          orderId: harness.order.id,
+        }),
+      ).resolves.toMatchObject({ reasonCode, status: "BLOCKED" });
+      expect(harness.supplier.calls).toBe(0);
+      await expect(
+        harness.repository.listByOrder(harness.order.id),
+      ).resolves.toMatchObject([
+        { dispatchState: "NOT_DISPATCHED", status: "READY" },
+      ]);
+    }
   });
 
   it("dry run validates and creates a would-be operation without supplier mutation", async () => {
@@ -442,6 +472,7 @@ const createHarness = (
     readonly executionMode?: "DISABLED" | "DRY_RUN" | "FAKE_SUPPLIER_ONLY";
     readonly supplierBehavior?: SupplierBehavior;
     readonly order?: KeyCoreOrder;
+    readonly operationsControlGate?: OperationsControlGate;
     readonly repository?: InMemoryProcurementOperationRepository;
     readonly shiftedNowMs?: number;
   } = {},
@@ -455,6 +486,7 @@ const createHarness = (
   const service = new SupplierProcurementService({
     executionLeaseStaleAfterMs: 60_000,
     executionMode: options.executionMode ?? "FAKE_SUPPLIER_ONLY",
+    operationsControlGate: options.operationsControlGate ?? allowOperations,
     now: () => new Date(now.getTime() + (options.shiftedNowMs ?? 0)),
     orders: orders as unknown as OrderOrchestrationService,
     priceLocks: {

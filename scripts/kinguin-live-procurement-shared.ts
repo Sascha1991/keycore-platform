@@ -6,7 +6,9 @@ import {
   PostgresTransactionBoundary,
 } from "../infra/postgres/client.js";
 import { PostgresControlledProcurementApprovalRepository } from "../infra/postgres/controlled-procurement-repositories.js";
+import { PostgresOperationsControlRepository } from "../infra/postgres/operations-control-repositories.js";
 import { createControlledLiveServiceFromEnv } from "../infra/suppliers/kinguin/kinguin-controlled-live-procurement.js";
+import { OperationsControlService } from "../packages/platform/src/operations/operations-controls.js";
 
 export const loadLocalEnv = (): Readonly<
   Record<string, string | undefined>
@@ -42,12 +44,15 @@ export const serviceFromEnv = async (
     throw new Error("KEYCORE_DATABASE_URL_REQUIRED");
   }
   const pool = createPostgresPool({ connectionString });
-  const repository = new PostgresControlledProcurementApprovalRepository(
-    new PostgresTransactionBoundary(pool),
+  const db = new PostgresTransactionBoundary(pool);
+  const repository = new PostgresControlledProcurementApprovalRepository(db);
+  const operationsControlGate = new OperationsControlService(
+    new PostgresOperationsControlRepository(db),
   );
   const service = createControlledLiveServiceFromEnv({
     env,
     mode,
+    operationsControlGate,
     repository,
   });
   return { pool, service };

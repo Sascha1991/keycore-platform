@@ -127,6 +127,17 @@ retention and operational controls remain future production/integration work.
 
 Dashboards, alerts, health checks, dead-letter queues, backup/restore, runbooks and emergency controls.
 
+KS-10-01 consolidates the Phase 10 operational foundation: safe aggregate
+metrics and dashboard specification, omission-first structured telemetry,
+role-aware health/readiness, runbook-linked alert definitions, payload-free
+dead-letter handling, durable PostgreSQL emergency controls, encrypted-only
+backup/isolated-restore validation and incident runbooks. Production exporters,
+dashboards, alert delivery, authority/UI, backup storage/scheduling and restore
+drill approval remain production-readiness integration work.
+
+With KS-10-01, the repository-defined Phase 10 foundation is complete. The next
+repository task is KS-11-01 validation; it has not been started.
+
 ## Phase 11 – Staging and Acceptance
 
 Load, security, recovery and end-to-end testing with synthetic and sandbox transactions.
