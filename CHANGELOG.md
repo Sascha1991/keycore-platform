@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added KS-11-02 deterministic E2E acceptance coverage for 15 critical
+  customer/order scenarios, a real-PostgreSQL coherence journey, omission-first
+  JSON/Markdown evidence and release-blocking CI artifact archival. The suite
+  uses synthetic payment, authority, mail and supplier-neutral outcomes with no
+  production side effects; KS-11-03 through KS-11-07 remain open.
+
 - Hardened KS-11-01 staging origin isolation so the four current KeyRaNo
   production storefront origins are classified as production and only the
   canonical staging origin plus isolated CI fixture are accepted; arbitrary
