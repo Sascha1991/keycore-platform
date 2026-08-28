@@ -104,6 +104,50 @@ export interface OperationalLogSink {
   write(record: Readonly<Record<OperationalLogField, string | number>>): void;
 }
 
+const operationalLogValueAllowlists = {
+  component: new Set([
+    "BACKUP_RESTORE",
+    "CATALOG",
+    "DELIVERY",
+    "FULFILLMENT",
+    "OPERATIONS",
+    "ORDERS",
+    "PAYMENTS",
+    "PROCUREMENT",
+    "QUEUE",
+    "SUPPLIER_CLAIM",
+  ]),
+  event: new Set([
+    "BACKUP_VALIDATED",
+    "CONTROL_CHANGED",
+    "DELIVERY_BLOCKED",
+    "DLQ_REPLAY",
+    "HEALTH_CHECK",
+    "OPERATION_BLOCKED",
+    "RESTORE_VALIDATED",
+  ]),
+  operation: new Set([
+    "BACKUP_VALIDATION",
+    "CHECKOUT_CREATE",
+    "CUSTOMER_KEY_DELIVERY",
+    "DLQ_REPLAY",
+    "PROCUREMENT_CREATE",
+    "RESTORE_VALIDATION",
+    "SUPPLIER_CLAIM_SUBMISSION",
+    "SUPPLIER_KEY_RETRIEVAL",
+  ]),
+  reasonCode: new Set([
+    "BACKUP_INTEGRITY_FAILED",
+    "BACKUP_UNSAFE",
+    "OPERATIONS_CONTROL_PAUSED",
+    "OPERATIONS_CONTROL_UNAVAILABLE",
+    "RECONCILIATION_REQUIRED",
+    "RESTORE_INTEGRITY_FAILED",
+    "RESTORE_TARGET_UNSAFE",
+  ]),
+  result: new Set(["ALLOWED", "DEGRADED", "DENIED", "FAILED", "SUCCEEDED"]),
+} as const;
+
 export class SafeOperationalLogger {
   public constructor(private readonly sink: OperationalLogSink) {}
 
@@ -117,7 +161,10 @@ export class SafeOperationalLogger {
       "result",
     ] as const) {
       const value = input[field];
-      if (typeof value === "string" && safeLogValue(value))
+      if (
+        typeof value === "string" &&
+        operationalLogValueAllowlists[field].has(value)
+      )
         record[field] = value;
     }
     if (
@@ -140,9 +187,6 @@ export class SafeOperationalLogger {
     );
   }
 }
-
-const safeLogValue = (value: string): boolean =>
-  value.length >= 1 && value.length <= 128 && /^[A-Z0-9_.:-]+$/u.test(value);
 
 export type DependencyHealth = "HEALTHY" | "DEGRADED" | "UNAVAILABLE";
 export type ReadinessRole =
@@ -341,3 +385,92 @@ export const evaluateOperationalAlerts = (
         metric.value >= definition.threshold,
     ),
   );
+
+export type OperationalOwnerRole =
+  "ENGINEERING" | "FINANCE_OPERATIONS" | "OPERATIONS" | "SECURITY";
+
+export interface OperationalRunbookDefinition {
+  readonly id: string;
+  readonly ownerRole: OperationalOwnerRole;
+  readonly recoveryProcedure: string;
+  readonly rollbackOrSafeFallback: string;
+}
+
+export const operationalRunbookDefinitions: readonly OperationalRunbookDefinition[] =
+  [
+    {
+      id: "RB-SUPPLIER-OUTAGE",
+      ownerRole: "OPERATIONS",
+      recoveryProcedure: "RECONCILE_AND_VERIFY_PROVIDER_RECOVERY",
+      rollbackOrSafeFallback: "NO_AUTOMATIC_ROLLBACK_RECONCILE_FIRST",
+    },
+    {
+      id: "RB-ORDER-STUCK",
+      ownerRole: "OPERATIONS",
+      recoveryProcedure: "RESTORE_DEPENDENCY_AND_REPLAY_IDEMPOTENT_WORK",
+      rollbackOrSafeFallback: "PRESERVE_ORDER_TRUTH_AND_ESCALATE",
+    },
+    {
+      id: "RB-KEY-RETRIEVAL",
+      ownerRole: "SECURITY",
+      recoveryProcedure: "RECONCILE_AND_VERIFY_ENCRYPTED_STATE",
+      rollbackOrSafeFallback: "NO_BULK_DECRYPTION_OR_BLIND_RETRIEVAL",
+    },
+    {
+      id: "RB-QUEUE-BACKLOG",
+      ownerRole: "ENGINEERING",
+      recoveryProcedure: "RESTORE_DEPENDENCIES_AND_BOUNDED_REPLAY",
+      rollbackOrSafeFallback: "PRESERVE_DURABLE_OUTBOX_TRUTH",
+    },
+    {
+      id: "RB-DEAD-LETTER",
+      ownerRole: "OPERATIONS",
+      recoveryProcedure: "AUTHORIZED_BOUNDED_IDEMPOTENT_REPLAY",
+      rollbackOrSafeFallback: "AMBIGUOUS_WORK_RECONCILES_FIRST",
+    },
+    {
+      id: "RB-CATALOG-SYNC",
+      ownerRole: "OPERATIONS",
+      recoveryProcedure: "RESTORE_READ_ONLY_IMPORT_AND_REVALIDATE",
+      rollbackOrSafeFallback: "KEEP_UNCERTAIN_OFFERS_UNPUBLISHED",
+    },
+    {
+      id: "RB-FRAUD-REVIEW",
+      ownerRole: "FINANCE_OPERATIONS",
+      recoveryProcedure: "RESTORE_REVIEW_CAPACITY_AND_VERIFY_CURRENT_FACTS",
+      rollbackOrSafeFallback: "KEEP_UNCLEARED_ORDERS_BLOCKED",
+    },
+    {
+      id: "RB-SUPPLIER-CLAIM",
+      ownerRole: "OPERATIONS",
+      recoveryProcedure: "RECONCILE_EXISTING_SUBMISSION",
+      rollbackOrSafeFallback: "NO_AUTOMATIC_ROLLBACK_RECONCILE_FIRST",
+    },
+    {
+      id: "RB-BACKUP-RESTORE",
+      ownerRole: "ENGINEERING",
+      recoveryProcedure: "RESTORE_ONLY_TO_ISOLATED_TARGET_AND_VALIDATE",
+      rollbackOrSafeFallback: "ABANDON_DISPOSABLE_TARGET_ON_FAILURE",
+    },
+  ] as const;
+
+export const validateOperationalRunbookCoverage = (
+  alerts: readonly OperationalAlertDefinition[] = operationalAlertDefinitions,
+  runbooks: readonly OperationalRunbookDefinition[] = operationalRunbookDefinitions,
+): readonly string[] => {
+  const issues: string[] = [];
+  const byId = new Map(runbooks.map((runbook) => [runbook.id, runbook]));
+  for (const alert of alerts.filter((item) => item.severity === "CRITICAL")) {
+    const runbook = byId.get(alert.runbook);
+    if (!runbook) {
+      issues.push(`${alert.code}:RUNBOOK_MISSING`);
+      continue;
+    }
+    if (!runbook.ownerRole) issues.push(`${alert.code}:OWNER_ROLE_MISSING`);
+    if (!runbook.recoveryProcedure)
+      issues.push(`${alert.code}:RECOVERY_MISSING`);
+    if (!runbook.rollbackOrSafeFallback)
+      issues.push(`${alert.code}:ROLLBACK_OR_FALLBACK_MISSING`);
+  }
+  return issues;
+};

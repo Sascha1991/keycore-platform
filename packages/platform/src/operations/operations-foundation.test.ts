@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { BackupRestoreValidationService } from "./backup-restore.js";
+import {
+  BackupRestoreValidationService,
+  SyntheticRestoreDrillService,
+  createBackupInspection,
+  type IsolatedRestoreTarget,
+  type RestoreInspection,
+} from "./backup-restore.js";
 import {
   DeadLetterService,
   type DeadLetterItem,
@@ -11,6 +17,9 @@ import {
   OperationalMetricsService,
   SafeOperationalLogger,
   evaluateOperationalAlerts,
+  operationalAlertDefinitions,
+  operationalRunbookDefinitions,
+  validateOperationalRunbookCoverage,
   type OperationalMetric,
 } from "./observability.js";
 import {
@@ -53,6 +62,14 @@ describe("operations controls", () => {
     });
     await expect(
       unavailable.evaluate("CUSTOMER_KEY_DELIVERY"),
+    ).resolves.toEqual({
+      reasonCode: "OPERATIONS_CONTROL_UNAVAILABLE",
+      status: "DENIED",
+    });
+    await expect(
+      new OperationsControlService(new MemoryControlRepository()).evaluate(
+        "UNKNOWN_CAPABILITY" as never,
+      ),
     ).resolves.toEqual({
       reasonCode: "OPERATIONS_CONTROL_UNAVAILABLE",
       status: "DENIED",
@@ -102,6 +119,39 @@ describe("operations controls", () => {
         status: "ALLOWED",
       });
     }
+  });
+
+  it("applies a durable global pause to high-risk mutations without granting authority", async () => {
+    const repository = new MemoryControlRepository();
+    const service = new OperationsControlService(repository, {
+      authority: {
+        authorize: async () => ({
+          actorReference: "operations-test-authority",
+          status: "AUTHORIZED",
+        }),
+      },
+      now: () => now,
+    });
+    await expect(
+      service.changeControl({
+        ...changeInput("PAUSED", 1, "global-pause"),
+        capability: "GLOBAL_COMMERCE_MUTATIONS",
+      }),
+    ).resolves.toMatchObject({ status: "UPDATED" });
+    for (const capability of operationsCapabilities.filter(
+      (value) => value !== "GLOBAL_COMMERCE_MUTATIONS",
+    )) {
+      await expect(service.evaluate(capability)).resolves.toEqual({
+        reasonCode: "OPERATIONS_CONTROL_PAUSED",
+        status: "DENIED",
+      });
+    }
+    await expect(
+      service.evaluate("UNKNOWN_CAPABILITY" as never),
+    ).resolves.toEqual({
+      reasonCode: "OPERATIONS_CONTROL_PAUSED",
+      status: "DENIED",
+    });
   });
 });
 
@@ -174,6 +224,64 @@ describe("safe operational observability", () => {
     const output = JSON.stringify(write.mock.calls);
     expect(output).toContain("corr-safe-1001");
     for (const marker of markers) expect(output).not.toContain(marker);
+  });
+
+  it("omits nested sensitive data and rejects secret-shaped values in allowed fields", () => {
+    const write = vi.fn();
+    const logger = new SafeOperationalLogger({ write });
+    logger.write({
+      component: "OPERATIONS",
+      correlationId: "invalid correlation with spaces",
+      event: markers[0],
+      operation: "CHECKOUT_CREATE",
+      reasonCode: markers[8],
+      request: {
+        authorization: markers[9],
+        body: {
+          cookie: markers[10],
+          csrfToken: "KEYRANO_KS1002_CSRF_DO_NOT_LEAK",
+          email: "customer@example.test",
+          ipAddress: "192.0.2.10",
+          ["pass" + "word"]: "KEYRANO_KS1002_PASSWORD_DO_NOT_LEAK",
+          providerPayload: { productKey: markers[0] },
+        },
+      },
+      result: "DENIED",
+    });
+    expect(write).toHaveBeenCalledWith({
+      component: "OPERATIONS",
+      operation: "CHECKOUT_CREATE",
+      result: "DENIED",
+    });
+  });
+
+  it("requires every critical alert to have owned recovery and rollback guidance", () => {
+    expect(validateOperationalRunbookCoverage()).toEqual([]);
+    expect(
+      validateOperationalRunbookCoverage(operationalAlertDefinitions, [
+        ...operationalRunbookDefinitions.filter(
+          (runbook) => runbook.id !== "RB-ORDER-STUCK",
+        ),
+      ]),
+    ).toContain("PAID_ORDER_STUCK:RUNBOOK_MISSING");
+    expect(
+      validateOperationalRunbookCoverage(operationalAlertDefinitions, [
+        ...operationalRunbookDefinitions.filter(
+          (runbook) => runbook.id !== "RB-BACKUP-RESTORE",
+        ),
+        {
+          id: "RB-BACKUP-RESTORE",
+          ownerRole: "ENGINEERING",
+          recoveryProcedure: "",
+          rollbackOrSafeFallback: "",
+        },
+      ]),
+    ).toEqual(
+      expect.arrayContaining([
+        "BACKUP_STALE:RECOVERY_MISSING",
+        "BACKUP_STALE:ROLLBACK_OR_FALLBACK_MISSING",
+      ]),
+    );
   });
 
   it("distinguishes liveness, read readiness and mutation readiness without raw errors", async () => {
@@ -290,39 +398,127 @@ describe("dead-letter and backup safety", () => {
 
   it("validates encrypted-only backup and isolated restore metadata without a master key", () => {
     const service = new BackupRestoreValidationService();
-    const backup = {
+    const backup = createBackupInspection({
       backupId: "synthetic-backup-1001",
+      contentSha256: "a".repeat(64),
       createdAt: now,
       embeddedDatabaseCredentials: 0,
       embeddedMasterKeys: 0,
+      encryptedFulfillmentDigestSha256: "d".repeat(64),
       encryptedFulfillmentRecords: 3,
-      integrityVerified: true,
+      migrationIdentity: "026-phase-10-gap-closure",
       operationsControlEvents: 6,
-      operationsControlRows: 4,
+      operationsControlDigestSha256: "e".repeat(64),
+      operationsControlRows: 6,
       plaintextProductKeyFields: 0,
-      schemaVersion: "025",
-    };
+      schemaVersion: "026",
+    });
     expect(service.validateBackup(backup)).toMatchObject({ status: "VALID" });
     expect(
       service.validateRestore({
         backup,
-        encryptedFulfillmentRecords: 3,
-        externalMasterKeyAvailable: false,
-        operationsControlEvents: 6,
-        operationsControlRows: 4,
-        restoredSchemaVersion: "025",
+        restore: restoreInspection(),
       }),
     ).toEqual({
       reasonCode: "RESTORE_VALIDATED_EXTERNAL_KEY_SEPARATE",
       status: "VALID",
     });
     expect(
-      service.validateBackup({ ...backup, plaintextProductKeyFields: 1 }),
+      service.validateBackup({ ...backup, manifestSha256: "b".repeat(64) }),
+    ).toEqual({
+      reasonCode: "BACKUP_INTEGRITY_FAILED",
+      status: "FAILED",
+    });
+    expect(
+      service.validateBackup({
+        ...backup,
+        calculatedContentSha256: "f".repeat(64),
+      }),
+    ).toEqual({
+      reasonCode: "BACKUP_INTEGRITY_FAILED",
+      status: "FAILED",
+    });
+    expect(
+      service.validateBackup(
+        createBackupInspection({
+          ...backup,
+          plaintextProductKeyFields: 1,
+        }),
+      ),
     ).toEqual({
       reasonCode: "BACKUP_UNSAFE",
       status: "FAILED",
     });
+    expect(
+      service.validateRestore({
+        backup,
+        restore: {
+          ...restoreInspection(),
+          target: {
+            disposable: true,
+            identifier: "production",
+            kind: "ISOLATED_SCHEMA",
+          },
+        },
+      }),
+    ).toEqual({ reasonCode: "RESTORE_TARGET_UNSAFE", status: "FAILED" });
   });
+
+  it("runs only a synthetic disposable restore drill and always cleans up", async () => {
+    const target: IsolatedRestoreTarget = {
+      disposable: true,
+      identifier: "keycore_restore_1002abcd",
+      kind: "ISOLATED_SCHEMA",
+    };
+    const backup = createBackupInspection({
+      backupId: "synthetic-drill-1002",
+      contentSha256: "c".repeat(64),
+      createdAt: now,
+      embeddedDatabaseCredentials: 0,
+      embeddedMasterKeys: 0,
+      encryptedFulfillmentDigestSha256: "d".repeat(64),
+      encryptedFulfillmentRecords: 1,
+      migrationIdentity: "026-phase-10-gap-closure",
+      operationsControlEvents: 6,
+      operationsControlDigestSha256: "e".repeat(64),
+      operationsControlRows: 6,
+      plaintextProductKeyFields: 0,
+      schemaVersion: "026",
+    });
+    const cleanup = vi.fn(async () => undefined);
+    const service = new SyntheticRestoreDrillService({
+      cleanup,
+      createSyntheticBackup: async () => backup,
+      restoreToIsolatedTarget: async ({ target: restoreTarget }) => ({
+        ...restoreInspection(),
+        encryptedFulfillmentRecords: 1,
+        target: restoreTarget,
+      }),
+    });
+    await expect(service.run(target)).resolves.toMatchObject({
+      status: "VALID",
+    });
+    expect(cleanup).toHaveBeenCalledWith(target);
+  });
+});
+
+const restoreInspection = (): RestoreInspection => ({
+  embeddedDatabaseCredentials: 0,
+  embeddedMasterKeys: 0,
+  encryptedFulfillmentDigestSha256: "d".repeat(64),
+  encryptedFulfillmentRecords: 3,
+  externalMasterKeyAvailable: false,
+  operationsControlEvents: 6,
+  operationsControlDigestSha256: "e".repeat(64),
+  operationsControlRows: 6,
+  plaintextProductKeyFields: 0,
+  restoredMigrationIdentity: "026-phase-10-gap-closure",
+  restoredSchemaVersion: "026",
+  target: {
+    disposable: true,
+    identifier: "keycore_restore_1002abcd",
+    kind: "ISOLATED_SCHEMA",
+  },
 });
 
 const changeInput = (

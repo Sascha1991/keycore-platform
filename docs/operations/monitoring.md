@@ -1,6 +1,7 @@
 # Operations Monitoring
 
-KS-10-01 defines provider-neutral operational telemetry. No production
+KS-10-01 and the KS-10-02 gap closure define provider-neutral operational
+telemetry. No production
 Prometheus/OpenTelemetry exporter, dashboard backend or alert-delivery service
 is connected. The contracts are testable in process and can be wired later
 without changing business services.
@@ -18,8 +19,12 @@ orders still awaiting procurement after 15 minutes, procurement backlog and
 ambiguity, fulfillment and delivery backlog, fraud review, support cases,
 supplier claims, outbox, reconciliation and dead letters. Mail metrics are not
 invented because no production mail transport exists. Negative-margin outcomes
-remain enforced and audited by pricing; no aggregate operational fact source
-exists yet, so no fabricated margin metric is emitted.
+remain blocked by pricing, but no negative-margin order metric is emitted.
+Persisted price snapshots, locks and orders do not retain the complete
+historical acquisition cost, fee, tax and FX amounts required to prove realized
+order margin. Recomputing from mutable catalog offers would fabricate truth. A
+future boundary must persist an immutable order-bound commercial snapshot
+before `NEGATIVE_MARGIN_ORDER_COUNT` can be authoritative.
 
 ## Dashboard Specification
 
@@ -42,12 +47,15 @@ starting values, not an approved production SLO.
 
 ## Logging and Redaction
 
-`SafeOperationalLogger` constructs output from an allowlist: component, event,
-operation, result, reason code, validated correlation ID and duration. It never
-serializes an input object or exception. This omission-first design protects
+`SafeOperationalLogger` constructs output from field-specific value allowlists
+for component, event, operation, result and reason code plus a validated
+correlation ID and non-negative duration. Unknown values are omitted even when
+placed in an otherwise allowed field. It never serializes an input object,
+nested data, exception or stack. This omission-first design protects
 Product Keys, encrypted material, tokens, credentials, headers, cookies,
-provider payloads and customer/support prose. Regex-based redaction is not the
-primary boundary.
+provider/webhook payloads, SQL, email/IP/address/device data and
+customer/support prose. Correlation IDs are context only, never authorization
+evidence. Regex-based redaction is not the primary boundary.
 
 ## Health and Readiness
 
@@ -69,3 +77,5 @@ fraud review backlog, ambiguous supplier claims, stale catalog sync, stale
 backup and failed restore validation. Every definition has a threshold,
 severity, safe summary and runbook ID in
 [`incident-runbooks.md`](./runbooks/incident-runbooks.md).
+Critical coverage is validated against a code-owned registry requiring an
+owner role, recovery procedure and rollback or safe-fallback strategy.

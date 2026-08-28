@@ -11,6 +11,10 @@ import type {
 import type { AuditEventPort } from "../ports/core.js";
 import type { PriceLock, PriceLockService } from "../pricing/price-locks.js";
 import type { SafePayload } from "../queue/job.js";
+import {
+  evaluateHighRiskOperation,
+  type OperationsControlGate,
+} from "../operations/operations-controls.js";
 
 export type OrderStatus =
   | "CREATED"
@@ -77,6 +81,7 @@ export const orderReasonCodes = [
   "EXTERNAL_EVENT_CONFLICT",
   "EXTERNAL_EVENT_DEDUPLICATED",
   "MANUAL_REVIEW_REQUIRED",
+  "OPERATIONS_CONTROL_BLOCKED",
 ] as const;
 
 export type OrderReasonCode = (typeof orderReasonCodes)[number];
@@ -217,6 +222,7 @@ export interface OrderOrchestrationServiceOptions {
   readonly audit?: AuditEventPort;
   readonly environment?: AuditEvent["environment"];
   readonly now?: () => Date;
+  readonly operationsControlGate?: OperationsControlGate;
 }
 
 export class OrderOrchestrationService {
@@ -281,6 +287,17 @@ export class OrderOrchestrationService {
     }
     if (mismatch) {
       return { reasonCode: mismatch, status: "BLOCKED" };
+    }
+
+    const operations = await evaluateHighRiskOperation(
+      this.options.operationsControlGate,
+      "CHECKOUT_CREATE",
+    );
+    if (operations.status === "DENIED") {
+      return {
+        reasonCode: "OPERATIONS_CONTROL_BLOCKED",
+        status: "BLOCKED",
+      };
     }
 
     const validation = await this.options.priceLocks.validatePriceLock(

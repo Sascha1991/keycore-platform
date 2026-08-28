@@ -1,9 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { QueryResult, QueryResultRow } from "pg";
 import { describe, expect, it } from "vitest";
 
 import { OperationsControlService } from "../../packages/platform/src/operations/operations-controls.js";
+import {
+  SyntheticRestoreDrillService,
+  createBackupInspection,
+  type RestoreInspection,
+} from "../../packages/platform/src/operations/backup-restore.js";
 import type { Queryable, TransactionalQueryable } from "./client.js";
 import { PostgresOperationsControlRepository } from "./operations-control-repositories.js";
 import { PostgresOperationalMetricFacts } from "./operational-metrics.js";
@@ -15,9 +20,9 @@ const now = new Date("2026-08-28T12:00:00.000Z");
 describe.skipIf(!connectionString)("operations persistence", () => {
   it("seeds all controls and durable initialization history", async () => {
     await withDatabase(async (database) => {
-      await expect(count(database, "operations_controls")).resolves.toBe("4");
+      await expect(count(database, "operations_controls")).resolves.toBe("6");
       await expect(count(database, "operations_control_events")).resolves.toBe(
-        "4",
+        "6",
       );
       const invalid = database.query(
         "UPDATE operations_controls SET state = 'ENABLED', reason_code = 'MAINTENANCE' WHERE capability = 'PROCUREMENT_CREATE'",
@@ -46,8 +51,32 @@ describe.skipIf(!connectionString)("operations persistence", () => {
         recreated.changeControl(change("ENABLED", 1, "resume-stale", null)),
       ).resolves.toEqual({ code: "STALE_VERSION", status: "FAILED" });
       await expect(count(database, "operations_control_events")).resolves.toBe(
-        "5",
+        "7",
       );
+    });
+  });
+
+  it("persists a global pause and denies checkout without consulting Redis", async () => {
+    await withDatabase(async (database) => {
+      const controls = service(database);
+      await expect(
+        controls.changeControl({
+          ...change("PAUSED", 1, "global-pause"),
+          capability: "GLOBAL_COMMERCE_MUTATIONS",
+        }),
+      ).resolves.toMatchObject({ status: "UPDATED" });
+
+      const afterRestart = service(database);
+      await expect(afterRestart.evaluate("CHECKOUT_CREATE")).resolves.toEqual({
+        reasonCode: "OPERATIONS_CONTROL_PAUSED",
+        status: "DENIED",
+      });
+      await expect(
+        afterRestart.evaluate("PROCUREMENT_CREATE"),
+      ).resolves.toEqual({
+        reasonCode: "OPERATIONS_CONTROL_PAUSED",
+        status: "DENIED",
+      });
     });
   });
 
@@ -86,7 +115,166 @@ describe.skipIf(!connectionString)("operations persistence", () => {
       ).rejects.toThrow();
     });
   });
+
+  it("runs a synthetic encrypted restore drill between disposable isolated schemas", async () => {
+    const source = await PostgresTestDatabase.initialize({
+      connectionString,
+      schemaName: `operations_source_${randomUUID().replaceAll("-", "")}`,
+    });
+    const target = await PostgresTestDatabase.initialize({
+      connectionString,
+      schemaName: `keycore_restore_${randomUUID().replaceAll("-", "")}`,
+    });
+    const restoreTarget = {
+      disposable: true,
+      identifier: target.schemaName,
+      kind: "ISOLATED_SCHEMA",
+    } as const;
+    try {
+      await pauseGlobal(source, "synthetic-drill-pause");
+      await insertSyntheticEncryptedFulfillment(source);
+      const backupState = await inspectRestoreState(source);
+      const backup = createBackupInspection({
+        backupId: "synthetic-postgres-drill-1002",
+        contentSha256: backupState.contentDigest,
+        createdAt: now,
+        embeddedDatabaseCredentials: 0,
+        embeddedMasterKeys: 0,
+        encryptedFulfillmentDigestSha256: backupState.fulfillmentDigest,
+        encryptedFulfillmentRecords: backupState.fulfillmentRecords,
+        migrationIdentity: backupState.migrationIdentity,
+        operationsControlDigestSha256: backupState.controlDigest,
+        operationsControlEvents: backupState.controlEvents,
+        operationsControlRows: backupState.controlRows,
+        plaintextProductKeyFields: 0,
+        schemaVersion: backupState.schemaVersion,
+      });
+      const drill = new SyntheticRestoreDrillService({
+        cleanup: async () => target.cleanup(),
+        createSyntheticBackup: async () => backup,
+        restoreToIsolatedTarget: async () => {
+          await pauseGlobal(target, "synthetic-drill-pause");
+          await insertSyntheticEncryptedFulfillment(target);
+          const restored = await inspectRestoreState(target);
+          return {
+            embeddedDatabaseCredentials: 0,
+            embeddedMasterKeys: 0,
+            encryptedFulfillmentDigestSha256: restored.fulfillmentDigest,
+            encryptedFulfillmentRecords: restored.fulfillmentRecords,
+            externalMasterKeyAvailable: false,
+            operationsControlDigestSha256: restored.controlDigest,
+            operationsControlEvents: restored.controlEvents,
+            operationsControlRows: restored.controlRows,
+            plaintextProductKeyFields: 0,
+            restoredMigrationIdentity: restored.migrationIdentity,
+            restoredSchemaVersion: restored.schemaVersion,
+            target: restoreTarget,
+          } satisfies RestoreInspection;
+        },
+      });
+
+      await expect(drill.run(restoreTarget)).resolves.toEqual({
+        reasonCode: "RESTORE_VALIDATED_EXTERNAL_KEY_SEPARATE",
+        status: "VALID",
+      });
+    } finally {
+      await source.cleanup();
+      await target.cleanup().catch(() => undefined);
+    }
+  }, 15_000);
 });
+
+const pauseGlobal = async (
+  database: PostgresTestDatabase,
+  operationId: string,
+): Promise<void> => {
+  const result = await service(database).changeControl({
+    ...change("PAUSED", 1, operationId),
+    capability: "GLOBAL_COMMERCE_MUTATIONS",
+  });
+  if (result.status !== "UPDATED") throw new Error("Synthetic pause failed");
+};
+
+const insertSyntheticEncryptedFulfillment = async (
+  database: PostgresTestDatabase,
+): Promise<void> => {
+  const fulfillmentId = "00000000-0000-4000-8000-000000100201";
+  const secretId = "00000000-0000-4000-8000-000000100202";
+  await database.query(
+    `INSERT INTO fulfillment_operations(
+       id, supplier_id, external_supplier_order_id, expected_quantity, status,
+       retrieval_state, delivery_state, record_version, correlation_id,
+       created_at, updated_at, retrieved_at
+     ) VALUES ($1, 'SYNTHETIC', 'synthetic-order-1002', 1, 'RETRIEVED',
+       'RETRIEVED', 'PENDING', 1, 'corr-synthetic-restore', $2, $2, $2)`,
+    [fulfillmentId, now],
+  );
+  await database.query(
+    `INSERT INTO fulfillment_secrets(
+       id, fulfillment_id, ciphertext, encryption_nonce, encryption_tag,
+       wrapped_data_encryption_key, encryption_key_id, encryption_version,
+       encryption_algorithm, created_at
+     ) VALUES ($1, $2, decode('01020304', 'hex'), decode($3, 'hex'),
+       decode($4, 'hex'), decode('05060708', 'hex'), 'synthetic-kms-v1', 1,
+       'AES-256-GCM-v1', $5)`,
+    [secretId, fulfillmentId, "11".repeat(12), "22".repeat(16), now],
+  );
+  await database.query(
+    "UPDATE fulfillment_operations SET encrypted_secret_id = $2 WHERE id = $1",
+    [fulfillmentId, secretId],
+  );
+};
+
+const inspectRestoreState = async (database: PostgresTestDatabase) => {
+  const migrations = await database.query<{
+    readonly version: string;
+    readonly name: string;
+  }>(
+    "SELECT version, name FROM keycore_migrations ORDER BY version DESC LIMIT 1",
+  );
+  const controls = await database.query(
+    `SELECT capability, state, reason_code, record_version
+       FROM operations_controls ORDER BY capability`,
+  );
+  const events = await database.query(
+    `SELECT capability, event_type, from_state, to_state, reason_code,
+            actor_reference, operation_id, correlation_id
+       FROM operations_control_events ORDER BY capability, operation_id`,
+  );
+  const fulfillment = await database.query(
+    `SELECT f.id::text, f.status, f.retrieval_state, f.delivery_state,
+            encode(s.ciphertext, 'hex') AS ciphertext,
+            encode(s.encryption_nonce, 'hex') AS nonce,
+            encode(s.encryption_tag, 'hex') AS tag,
+            encode(s.wrapped_data_encryption_key, 'hex') AS wrapped_dek,
+            s.encryption_key_id, s.encryption_version, s.encryption_algorithm
+       FROM fulfillment_operations f
+       JOIN fulfillment_secrets s ON s.id = f.encrypted_secret_id
+      ORDER BY f.id`,
+  );
+  const migration = migrations.rows[0];
+  if (!migration) throw new Error("Synthetic migration identity unavailable");
+  const controlDigest = digest([controls.rows, events.rows]);
+  const fulfillmentDigest = digest(fulfillment.rows);
+  return {
+    contentDigest: digest([
+      migration.version,
+      migration.name,
+      controlDigest,
+      fulfillmentDigest,
+    ]),
+    controlDigest,
+    controlEvents: events.rowCount ?? 0,
+    controlRows: controls.rowCount ?? 0,
+    fulfillmentDigest,
+    fulfillmentRecords: fulfillment.rowCount ?? 0,
+    migrationIdentity: `${migration.version}-${migration.name}`,
+    schemaVersion: migration.version,
+  };
+};
+
+const digest = (value: unknown): string =>
+  createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 const service = (database: PostgresTestDatabase): OperationsControlService =>
   new OperationsControlService(

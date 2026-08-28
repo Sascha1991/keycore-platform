@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   InMemoryPriceLockRepository,
@@ -15,6 +15,7 @@ import {
   type ProductId,
 } from "../domain/identifiers.js";
 import type { AuditEventPort } from "../ports/core.js";
+import type { OperationsControlGate } from "../operations/operations-controls.js";
 import { PriceLockService } from "../pricing/price-locks.js";
 import {
   createPricingPolicy,
@@ -65,6 +66,33 @@ describe("OrderOrchestrationService", () => {
     await expect(
       harness.orderRepository.listHistory(required(created.order).id),
     ).resolves.toHaveLength(1);
+  });
+
+  it("fails closed before checkout acceptance when operations controls deny", async () => {
+    const evaluate = vi.fn(async () => ({
+      reasonCode: "OPERATIONS_CONTROL_PAUSED" as const,
+      status: "DENIED" as const,
+    }));
+    const harness = await createHarness({
+      operationsControlGate: { evaluate },
+    });
+
+    await expect(
+      harness.orders.createOrder({
+        correlationId,
+        idempotencyKey: "checkout-paused",
+        priceLockId: harness.lock.id,
+        productId: productA,
+        quantity: 1,
+      }),
+    ).resolves.toEqual({
+      reasonCode: "OPERATIONS_CONTROL_BLOCKED",
+      status: "BLOCKED",
+    });
+    expect(evaluate).toHaveBeenCalledWith("CHECKOUT_CREATE");
+    await expect(
+      harness.orderRepository.findByIdempotencyKey("checkout-paused"),
+    ).resolves.toBeNull();
   });
 
   it("rejects customer amount override, wrong product, wrong currency and unsupported quantity", async () => {
@@ -412,7 +440,10 @@ describe("OrderOrchestrationService", () => {
 });
 
 const createHarness = async (
-  options: { readonly audit?: AuditEventPort } = {},
+  options: {
+    readonly audit?: AuditEventPort;
+    readonly operationsControlGate?: OperationsControlGate;
+  } = {},
 ) => {
   const now = new Date("2026-08-15T00:00:00.000Z");
   const policy = createPricingPolicy({
@@ -458,6 +489,9 @@ const createHarness = async (
     orders: new OrderOrchestrationService({
       ...(options.audit ? { audit: options.audit } : {}),
       now: () => now,
+      operationsControlGate: options.operationsControlGate ?? {
+        evaluate: async () => ({ status: "ALLOWED" }),
+      },
       priceLocks,
       repository: orderRepository,
     }),

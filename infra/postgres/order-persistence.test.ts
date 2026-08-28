@@ -724,6 +724,9 @@ const withOrderClient = async <TResult>(
     return await action(
       new OrderOrchestrationService({
         now: () => new Date("2026-08-15T00:00:30.000Z"),
+        operationsControlGate: {
+          evaluate: async () => ({ status: "ALLOWED" }),
+        },
         priceLocks,
         repository: new PostgresOrderRepository(boundary),
       }),

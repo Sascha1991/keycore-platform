@@ -568,6 +568,7 @@ const createHarness = async (
   const orderRepository = new InMemoryOrderRepository();
   const orders = new OrderOrchestrationService({
     now: () => currentNow,
+    operationsControlGate: { evaluate: async () => ({ status: "ALLOWED" }) },
     priceLocks,
     repository: orderRepository,
   });
