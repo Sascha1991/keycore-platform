@@ -452,11 +452,23 @@ const classifyOrigin = (raw: string | undefined): ResourceClassification => {
     if (url.protocol !== "https:" || url.username || url.password) {
       return "INVALID";
     }
-    return url.hostname === "key-planet.de" ||
-      url.hostname.endsWith(".key-planet.de")
-      ? "PRODUCTION"
-      : "STAGING";
+    const origin = url.origin.toLowerCase();
+    if (productionStorefrontOrigins.has(origin)) return "PRODUCTION";
+    if (url.pathname !== "/" || url.search || url.hash) return "INVALID";
+    return approvedStagingOrigins.has(origin) ? "STAGING" : "INVALID";
   } catch {
     return "INVALID";
   }
 };
+
+const productionStorefrontOrigins = new Set([
+  "https://keyrano.de",
+  "https://www.keyrano.de",
+  "https://keyrano.com",
+  "https://www.keyrano.com",
+]);
+
+const approvedStagingOrigins = new Set([
+  "https://staging.keyrano.de",
+  "https://staging.example.invalid",
+]);

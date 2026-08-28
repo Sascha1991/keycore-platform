@@ -23,8 +23,9 @@ Staging requires all of the following before readiness becomes `READY`:
 - rejection of the known Kinguin production endpoint and all controlled live
   Kinguin flags;
 - captured mail with unrestricted external delivery disabled;
-- an HTTPS non-production public origin, Secure cookies, CSRF enabled and debug
-  disabled;
+- the explicitly approved `https://staging.keyrano.de` public origin (or the
+  isolated `https://staging.example.invalid` CI fixture), Secure cookies, CSRF
+  enabled and debug disabled;
 - production Operations Control authority disabled; and
 - PostgreSQL reachable with exactly the repository migrations through `026`.
 
@@ -37,6 +38,11 @@ substitute for cloud IAM and network isolation.
 
 Preflight output contains only status, deployment identity and stable reason
 codes. URLs, credentials and configuration objects are never returned.
+
+Origin classification is exact and auditable. `keyrano.de`, `www.keyrano.de`,
+`keyrano.com` and `www.keyrano.com` are production. Arbitrary HTTPS hosts and
+other KeyRaNo subdomains are not automatically trusted. Origins containing URL
+credentials, paths, queries or fragments are invalid.
 
 ## Components
 

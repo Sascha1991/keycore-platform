@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Hardened KS-11-01 staging origin isolation so the four current KeyRaNo
+  production storefront origins are classified as production and only the
+  canonical staging origin plus isolated CI fixture are accepted; arbitrary
+  HTTPS hosts and URL credentials remain fail-closed.
+
 - Added KS-11-01 isolated repeatable staging foundation with explicit STAGING
   identity, omission-first safety preflight, role-aware readiness, pinned
   WordPress/PostgreSQL/Redis/Mailpit Compose scaffold, migrations-through-026

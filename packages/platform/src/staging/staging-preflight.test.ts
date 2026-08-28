@@ -121,6 +121,61 @@ describe("staging preflight", () => {
     );
   });
 
+  it.each([
+    "https://keyrano.de",
+    "https://www.keyrano.de",
+    "https://keyrano.com",
+    "https://www.keyrano.com",
+  ])(
+    "classifies the current production storefront origin %s as production",
+    (origin) => {
+      const environment = {
+        ...safeEnvironment(),
+        KEYCORE_STAGING_PUBLIC_ORIGIN: origin,
+      };
+
+      expect(
+        loadStagingPreflightConfiguration(environment).transport.origin,
+      ).toBe("PRODUCTION");
+      const report = verify(environment);
+      expect(report.status).toBe("UNREADY");
+      expect(reasonCodes(report)).toContain("STAGING_ORIGIN_UNSAFE");
+    },
+  );
+
+  it("accepts only the canonical real staging origin and isolated CI origin", () => {
+    for (const origin of [
+      "https://staging.keyrano.de",
+      "https://staging.example.invalid",
+    ]) {
+      const environment = {
+        ...safeEnvironment(),
+        KEYCORE_STAGING_PUBLIC_ORIGIN: origin,
+      };
+      expect(
+        loadStagingPreflightConfiguration(environment).transport.origin,
+      ).toBe("STAGING");
+      expect(verify(environment).status).toBe("READY");
+    }
+  });
+
+  it.each([
+    "https://shop.example.com",
+    "https://preview.keyrano.de",
+    "https://user:password@staging.keyrano.de",
+    "https://staging.keyrano.de/path",
+  ])("rejects unapproved or malformed HTTPS origin %s", (origin) => {
+    const environment = {
+      ...safeEnvironment(),
+      KEYCORE_STAGING_PUBLIC_ORIGIN: origin,
+    };
+
+    expect(
+      loadStagingPreflightConfiguration(environment).transport.origin,
+    ).toBe("INVALID");
+    expect(reasonCodes(verify(environment))).toContain("STAGING_ORIGIN_UNSAFE");
+  });
+
   it("fails closed on missing or mismatched migration state", () => {
     const config = loadStagingPreflightConfiguration(safeEnvironment());
     expect(reasonCodes(new StagingPreflightService().verify(config))).toContain(
