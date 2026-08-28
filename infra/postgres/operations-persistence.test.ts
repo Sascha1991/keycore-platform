@@ -15,7 +15,7 @@ import { PostgresOperationalMetricFacts } from "./operational-metrics.js";
 import { PostgresTestDatabase, quoteIdentifier } from "./test-database.js";
 
 const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
-const now = new Date("2026-08-28T12:00:00.000Z");
+const now = new Date("2099-08-28T12:00:00.000Z");
 
 describe.skipIf(!connectionString)("operations persistence", () => {
   it("seeds all controls and durable initialization history", async () => {
