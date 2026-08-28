@@ -385,6 +385,9 @@ const service = (
     authority: new TrustedAuthority(),
     environment: "CI",
     now: () => now,
+    operationsControlGate: {
+      evaluate: async () => ({ status: "ALLOWED" as const }),
+    },
     repository,
   });
 

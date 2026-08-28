@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
+const allowOperations = {
+  evaluate: async () => ({ status: "ALLOWED" as const }),
+};
+
+import type { OperationsControlGate } from "../operations/operations-controls.js";
+
 import { InMemorySupplierClaimRepository } from "../../../../infra/claims/in-memory-supplier-claim-repository.js";
 import {
   SupplierClaimService,
@@ -438,6 +444,38 @@ describe("SupplierClaimService", () => {
     expect(ambiguousPort.calls).toBe(1);
   });
 
+  it("keeps submission PREPARED and makes no adapter call while operations are paused", async () => {
+    const submissionPort = new FakeSubmissionPort("CONFIRMED");
+    const fixture = setup({
+      operationsControlGate: {
+        evaluate: async () => ({
+          reasonCode: "OPERATIONS_CONTROL_PAUSED",
+          status: "DENIED",
+        }),
+      },
+      submissionPort,
+    });
+    const claimId = createdId(
+      await fixture.service.createClaim(validCreate(fixture)),
+    );
+    await toReady(fixture.service, claimId);
+    await fixture.service.prepareSubmission({
+      claimId,
+      correlationId: correlationId("prepare-paused"),
+    });
+    await expect(
+      fixture.service.executeSubmission({
+        claimId,
+        correlationId: correlationId("submit-paused"),
+        expectedSubmissionVersion: 1,
+      }),
+    ).resolves.toEqual({ code: "OPERATIONS_CONTROL_PAUSED", status: "FAILED" });
+    expect(submissionPort.calls).toBe(0);
+    await expect(fixture.repository.findClaim(claimId)).resolves.toMatchObject({
+      submission: { status: "PREPARED" },
+    });
+  });
+
   it("classifies malformed trusted-adapter output as ambiguous", async () => {
     const fixture = setup({ submissionPort: new MalformedSubmissionPort() });
     const claimId = createdId(
@@ -530,6 +568,7 @@ const setup = (
     readonly authority?: SupplierClaimAuthorityPort;
     readonly audit?: AuditEventPort;
     readonly submissionPort?: SupplierClaimSubmissionPort;
+    readonly operationsControlGate?: OperationsControlGate;
   } = {},
 ) => {
   const repository = new InMemorySupplierClaimRepository();
@@ -576,6 +615,7 @@ const setup = (
     ...(input.submissionPort ? { submissionPort: input.submissionPort } : {}),
     environment: "CI",
     now: () => now,
+    operationsControlGate: input.operationsControlGate ?? allowOperations,
     repository,
   });
   return {

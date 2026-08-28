@@ -3,6 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AuditEvent } from "../domain/audit.js";
 import type { CorrelationId, OrderId } from "../domain/identifiers.js";
 import type { AuditEventPort } from "../ports/core.js";
+import {
+  evaluateHighRiskOperation,
+  type OperationsControlGate,
+} from "../operations/operations-controls.js";
 
 export type SupplierClaimCategory =
   | "KEY_NOT_WORKING"
@@ -54,6 +58,8 @@ export type SupplierClaimFailureCode =
   | "RESOURCE_NOT_AVAILABLE"
   | "STALE_VERSION"
   | "SUBMISSION_UNAVAILABLE"
+  | "OPERATIONS_CONTROL_PAUSED"
+  | "OPERATIONS_CONTROL_UNAVAILABLE"
   | "UNTRUSTED_AUTHORITY";
 
 export interface SupplierClaim {
@@ -387,6 +393,7 @@ export class SupplierClaimService {
       readonly repository: SupplierClaimRepository;
       readonly authority?: SupplierClaimAuthorityPort;
       readonly submissionPort?: SupplierClaimSubmissionPort;
+      readonly operationsControlGate?: OperationsControlGate;
       readonly audit?: AuditEventPort;
       readonly environment?: AuditEvent["environment"];
       readonly now?: () => Date;
@@ -823,6 +830,11 @@ export class SupplierClaimService {
       return failed("SUBMISSION_UNAVAILABLE");
     }
     if (!submissionAvailable) return failed("SUBMISSION_UNAVAILABLE");
+    const operations = await evaluateHighRiskOperation(
+      this.options.operationsControlGate,
+      "SUPPLIER_CLAIM_SUBMISSION",
+    );
+    if (operations.status === "DENIED") return failed(operations.reasonCode);
     const now = this.now();
     const acquired = await this.options.repository.acquireSubmission({
       claimId: input.claimId,

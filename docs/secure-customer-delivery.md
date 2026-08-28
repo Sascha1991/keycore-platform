@@ -1,5 +1,12 @@
 # Secure Customer Key Delivery
 
+## Operations Control
+
+KS-10-01 evaluates `CUSTOMER_KEY_DELIVERY` before claiming a delivery attempt
+or consuming its one-time capability. Denial occurs before decryption, delivery
+and `deliveredAt` persistence. An otherwise valid unexpired capability can be
+retried after trusted resume.
+
 KS-07-05 adds the secure customer key delivery foundation after KS-07-04
 retrieval. It does not add production email, a customer HTTP endpoint or a full
 customer identity system.

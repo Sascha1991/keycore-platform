@@ -4,6 +4,7 @@ import {
 } from "../infra/postgres/client.js";
 import { PostgresControlledProcurementApprovalRepository } from "../infra/postgres/controlled-procurement-repositories.js";
 import { PostgresFulfillmentRepository } from "../infra/postgres/fulfillment-repositories.js";
+import { PostgresOperationsControlRepository } from "../infra/postgres/operations-control-repositories.js";
 import { ControlledProcurementFulfillmentEvidence } from "../infra/fulfillment/controlled-procurement-evidence.js";
 import {
   fulfillmentConfigFromEnv,
@@ -23,6 +24,7 @@ import {
 } from "../infra/suppliers/kinguin/kinguin-supplier.js";
 import {
   type CorrelationId,
+  OperationsControlService,
   SecureKeyFulfillmentService,
   type SupplierId,
   type SupplierKeyRetrievalPort,
@@ -57,6 +59,9 @@ export const fulfillmentServiceFromEnv = async (
   const db = new PostgresTransactionBoundary(pool);
   const approvals = new PostgresControlledProcurementApprovalRepository(db);
   const repository = new PostgresFulfillmentRepository(db);
+  const operationsControlGate = new OperationsControlService(
+    new PostgresOperationsControlRepository(db),
+  );
   const keyRetrieval =
     mode === "EXECUTE"
       ? kinguinKeyRetrievalFromEnv(env, fulfillmentConfig.keyRetrievalTimeoutMs)
@@ -68,6 +73,7 @@ export const fulfillmentServiceFromEnv = async (
     controlledKeyRetrievalMode: fulfillmentConfig.controlledKeyRetrievalMode,
     keyManagementProvider: fulfillmentConfig.keyManagementProvider,
     keyRetrieval,
+    operationsControlGate,
     procurementEvidence: new ControlledProcurementFulfillmentEvidence(
       approvals,
     ),

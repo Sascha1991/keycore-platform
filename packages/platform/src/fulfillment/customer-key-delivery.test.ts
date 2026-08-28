@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
+const allowOperations = {
+  evaluate: async () => ({ status: "ALLOWED" as const }),
+};
+
+import type { OperationsControlGate } from "../operations/operations-controls.js";
+
 import {
   correlationId,
   customerId,
@@ -204,6 +210,39 @@ describe("customer key delivery foundation", () => {
     expect(serialized).not.toContain(markerSecret);
     expect(serialized).not.toMatch(/ciphertext|nonce|tag|wrapped|capability/i);
     validateSafePayload(harness.deliveryRepository.outbox[0]?.payload ?? {});
+  });
+
+  it("does not consume capability, decrypt or deliver while operations are paused", async () => {
+    const harness = await serviceHarness({
+      operationsControlGate: {
+        evaluate: async () => ({
+          reasonCode: "OPERATIONS_CONTROL_PAUSED",
+          status: "DENIED",
+        }),
+      },
+    });
+    const prepared = await prepare(harness);
+    await expect(
+      harness.service.executeDelivery({
+        capability: prepared.oneTimeCapability ?? "",
+        channel: "FAKE",
+        correlationId: correlationId("delivery-paused"),
+        customerId: harness.customerId,
+        deliveryApprovalId: prepared.deliveryApprovalId ?? "",
+        fulfillmentId: harness.fulfillment.id,
+        orderId: harness.orderId,
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "OPERATIONS_CONTROL_PAUSED",
+      status: "BLOCKED",
+    });
+    expect(harness.deliveryPort.calls).toHaveLength(0);
+    expect(harness.keyManagementProvider.unwraps).toBe(0);
+    await expect(
+      harness.deliveryRepository.findLatestAttemptByFulfillmentId(
+        harness.fulfillment.id,
+      ),
+    ).resolves.toBeNull();
   });
 
   it("already delivered status does not decrypt or redeliver", async () => {
@@ -530,6 +569,7 @@ const serviceHarness = async (
     readonly executeNow?: () => Date;
     readonly fulfillmentId?: string;
     readonly protectedFulfillmentIds?: readonly string[];
+    readonly operationsControlGate?: OperationsControlGate;
   } = {},
 ) => {
   const fulfillmentRepository = new InMemoryFulfillmentRepository();
@@ -571,6 +611,7 @@ const serviceHarness = async (
     fulfillmentRepository,
     orderAuthorization:
       options.authorization ?? new StaticOrderAuthorization(true),
+    operationsControlGate: options.operationsControlGate ?? allowOperations,
     protectedFulfillmentIds: options.protectedFulfillmentIds ?? [],
     ...(options.audit ? { audit: options.audit } : {}),
   };

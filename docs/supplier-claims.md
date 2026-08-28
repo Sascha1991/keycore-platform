@@ -1,5 +1,12 @@
 # Supplier Claim Workflow Foundation
 
+## Operations Control
+
+KS-10-01 evaluates `SUPPLIER_CLAIM_SUBMISSION` after safe availability checks
+but before `PREPARED` becomes `DISPATCHING`. Denial makes zero submission calls
+and preserves the prepared operation. An `ENABLED` control does not make the
+default unavailable production submission adapter available.
+
 KS-09-05 adds a provider-neutral internal `SupplierClaim` workflow for
 escalating a structured supplier-related problem. A claim records that a
 trusted KeyCore actor requested supplier review. It does not prove supplier

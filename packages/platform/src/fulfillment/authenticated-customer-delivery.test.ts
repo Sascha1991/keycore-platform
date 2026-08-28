@@ -461,6 +461,9 @@ const deliveryHarness = async (
     environment: "CI",
     fulfillmentRepository,
     keyManagementProvider: keyProvider,
+    operationsControlGate: {
+      evaluate: async () => ({ status: "ALLOWED" as const }),
+    },
     orderAuthorization: new PersistedCustomerOrderAuthorizationPort({
       principalProvider,
       repository: identityRepository,

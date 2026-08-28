@@ -1,5 +1,11 @@
 # Secure Key Fulfillment
 
+## Operations Control
+
+KS-10-01 evaluates `SUPPLIER_KEY_RETRIEVAL` before retrieval lease, KMS access
+and supplier request. Denial does not consume the one-time execution token,
+produce plaintext or modify an existing encrypted secret.
+
 KS-07-04 establishes the supplier-agnostic secure key retrieval and
 fulfillment foundation. Product keys are secrets and are handled at least as
 carefully as credentials.

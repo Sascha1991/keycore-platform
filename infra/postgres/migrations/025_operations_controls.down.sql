@@ -1,0 +1,10 @@
+DROP INDEX IF EXISTS dead_letter_state_idx;
+DROP TABLE IF EXISTS dead_letter_items;
+DROP TRIGGER IF EXISTS operations_controls_identity_immutable ON operations_controls;
+DROP FUNCTION IF EXISTS prevent_operations_control_identity_change();
+DROP TRIGGER IF EXISTS operations_control_events_no_delete ON operations_control_events;
+DROP TRIGGER IF EXISTS operations_control_events_no_update ON operations_control_events;
+DROP FUNCTION IF EXISTS prevent_operations_control_event_mutation();
+DROP INDEX IF EXISTS operations_control_events_capability_idx;
+DROP TABLE IF EXISTS operations_control_events;
+DROP TABLE IF EXISTS operations_controls;

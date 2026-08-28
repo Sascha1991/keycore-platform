@@ -13,6 +13,10 @@ import type {
   SupplierId,
 } from "../domain/identifiers.js";
 import type { AuditEventPort } from "../ports/core.js";
+import {
+  evaluateHighRiskOperation,
+  type OperationsControlGate,
+} from "../operations/operations-controls.js";
 import { SupplierError } from "../suppliers/errors.js";
 import type { KeyManagementProvider } from "../vault/crypto.js";
 
@@ -70,6 +74,8 @@ export type FulfillmentReasonCode =
   | "FULFILLMENT_KEY_MANAGEMENT_FAILED"
   | "FULFILLMENT_LOCAL_PERSISTENCE_FAILED"
   | "FULFILLMENT_LOCAL_UNKNOWN"
+  | "OPERATIONS_CONTROL_PAUSED"
+  | "OPERATIONS_CONTROL_UNAVAILABLE"
   | "OPTIMISTIC_CONCURRENCY_CONFLICT";
 
 export interface FulfillmentOperation {
@@ -231,6 +237,7 @@ export interface FulfillmentServiceOptions {
     "DISABLED" | "CONTROLLED_VERIFICATION_ONE_TIME";
   readonly retrievalLeaseStaleAfterMs: number;
   readonly approvalTtlMs: number;
+  readonly operationsControlGate?: OperationsControlGate;
   readonly audit?: AuditEventPort;
   readonly environment?: AuditEvent["environment"];
   readonly now?: () => Date;
@@ -460,6 +467,13 @@ export class SecureKeyFulfillmentService {
         reasonCode: "FULFILLMENT_RETRIEVAL_DISABLED",
         status: "BLOCKED",
       };
+    }
+    const operations = await evaluateHighRiskOperation(
+      this.options.operationsControlGate,
+      "SUPPLIER_KEY_RETRIEVAL",
+    );
+    if (operations.status === "DENIED") {
+      return { reasonCode: operations.reasonCode, status: "BLOCKED" };
     }
     await this.options.keyManagementProvider.activeMasterKeyVersion();
     const now = this.now();

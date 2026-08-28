@@ -18,6 +18,10 @@ import type {
   KeyCoreOrder,
   OrderOrchestrationService,
 } from "../orders/order-orchestration.js";
+import {
+  evaluateHighRiskOperation,
+  type OperationsControlGate,
+} from "../operations/operations-controls.js";
 import type { PriceLockService } from "../pricing/price-locks.js";
 import type { PricingService } from "../pricing/pricing-margin.js";
 import type { SafePayload } from "../queue/job.js";
@@ -65,6 +69,8 @@ export const procurementReasonCodes = [
   "SUPPLIER_NETWORK_AMBIGUOUS",
   "SUPPLIER_AUTHENTICATION_FAILED",
   "SUPPLIER_RATE_LIMITED",
+  "OPERATIONS_CONTROL_PAUSED",
+  "OPERATIONS_CONTROL_UNAVAILABLE",
   "OPTIMISTIC_CONCURRENCY_CONFLICT",
 ] as const;
 
@@ -172,6 +178,7 @@ export interface ProcurementServiceOptions {
   readonly routingPolicy: SupplierRoutingPolicy;
   readonly executionMode: ProcurementExecutionMode;
   readonly executionLeaseStaleAfterMs: number;
+  readonly operationsControlGate?: OperationsControlGate;
   readonly audit?: AuditEventPort;
   readonly environment?: AuditEvent["environment"];
   readonly now?: () => Date;
@@ -301,6 +308,13 @@ export class SupplierProcurementService {
   ): Promise<ProcurementResult> {
     if (this.options.executionMode !== "FAKE_SUPPLIER_ONLY") {
       return { reasonCode: "PROCUREMENT_DISABLED", status: "BLOCKED" };
+    }
+    const operations = await evaluateHighRiskOperation(
+      this.options.operationsControlGate,
+      "PROCUREMENT_CREATE",
+    );
+    if (operations.status === "DENIED") {
+      return { reasonCode: operations.reasonCode, status: "BLOCKED" };
     }
     const token = randomUUID();
     const now = this.now();

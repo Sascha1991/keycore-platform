@@ -552,6 +552,9 @@ const keyAccessHarness = async (
     environment: "CI" as const,
     fulfillmentRepository,
     keyManagementProvider: keyProvider,
+    operationsControlGate: {
+      evaluate: async () => ({ status: "ALLOWED" as const }),
+    },
     orderAuthorization: new PersistedCustomerOrderAuthorizationPort({
       audit,
       environment: "CI",
