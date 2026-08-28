@@ -67,3 +67,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose -f infra/docker/compose.yaml config
+      - run: docker compose --env-file infra/docker/staging.env.example -f infra/docker/compose.staging.yaml config

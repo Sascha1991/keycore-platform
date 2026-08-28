@@ -26,7 +26,11 @@ Critical business rules are release-blocking. A release cannot proceed while req
 | Auditable safe events                 | event schema                     | event persistence              | supplier event mapping            | refund/dispute path     | secret-free audit scan       |
 | Supplier behavior outside core        | port contract                    | adapter boundary               | all adapters                      | catalog/procurement     | dependency boundary scan     |
 | Partial outage safety                 | state guards                     | outage simulations             | supplier outage fixtures          | degraded checkout       | fail-closed mutation tests   |
+| Staging production isolation          | preflight configuration guards   | clean migrations and seed      | mock/sandbox only                 | deferred to KS-11-02    | secret-free fail-closed scan |
 
 ## Release Rule
 
 Each implementation task must list the applicable rows from this matrix. Missing tests must be recorded as release blockers unless the affected behavior is outside the task scope and unchanged.
+
+Detailed Phase-11 status and reconciliation with the consolidated validation
+task are maintained in `docs/phase-11-acceptance-matrix.md`.

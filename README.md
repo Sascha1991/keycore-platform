@@ -38,6 +38,8 @@ Open `START_HERE.md` first.
 - `docs/00-project-overview.md`
 - `docs/dependency-matrix.md`
 - `docs/acceptance-test-matrix.md`
+- `docs/staging-deployment.md`
+- `docs/phase-11-acceptance-matrix.md`
 - `docs/specification-review-v1.0.md`
 - `docs/specification-review-v1.0.2.md`
 - `decisions/architecture-decisions/`

@@ -1,0 +1,115 @@
+name: keycore-${KEYCORE_DEPLOYMENT_ID:?KEYCORE_DEPLOYMENT_ID is required}
+
+services:
+  wordpress:
+    image: wordpress:7.0.3-php8.3-apache
+    depends_on:
+      wordpress-db:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_NAME: keycore_staging_wp
+      WORDPRESS_DB_USER: keycore_staging_wp
+      WORDPRESS_DB_PASSWORD: ${KEYCORE_STAGING_WORDPRESS_DB_PASSWORD:?staging WordPress DB password is required}
+      WORDPRESS_DEBUG: "0"
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_ENVIRONMENT_TYPE', 'staging');
+        define('DISALLOW_FILE_EDIT', true);
+        define('FORCE_SSL_ADMIN', true);
+    ports:
+      - "127.0.0.1:${KEYCORE_STAGING_WORDPRESS_PORT:-18080}:80"
+    volumes:
+      - wordpress-data:/var/www/html
+      - ../../apps/wordpress/keycore-platform:/var/www/html/wp-content/plugins/keycore-platform:ro
+
+  wordpress-db:
+    image: mariadb:11.8.8
+    environment:
+      MARIADB_DATABASE: keycore_staging_wp
+      MARIADB_USER: keycore_staging_wp
+      MARIADB_PASSWORD: ${KEYCORE_STAGING_WORDPRESS_DB_PASSWORD:?staging WordPress DB password is required}
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - wordpress-db-data:/var/lib/mysql
+
+  postgres:
+    image: postgres:16.10-alpine
+    environment:
+      POSTGRES_DB: keycore_staging
+      POSTGRES_USER: keycore_staging
+      POSTGRES_PASSWORD: ${KEYCORE_STAGING_POSTGRES_PASSWORD:?staging PostgreSQL password is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycore_staging -d keycore_staging"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "127.0.0.1:${KEYCORE_STAGING_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.4-alpine
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$$KEYCORE_STAGING_REDIS_PASSWORD"
+    environment:
+      KEYCORE_STAGING_REDIS_PASSWORD: ${KEYCORE_STAGING_REDIS_PASSWORD:?staging Redis password is required}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "REDISCLI_AUTH=$$KEYCORE_STAGING_REDIS_PASSWORD redis-cli ping",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "127.0.0.1:${KEYCORE_STAGING_REDIS_PORT:-16379}:6379"
+    volumes:
+      - redis-data:/data
+
+  mail:
+    image: axllent/mailpit:v1.21.8
+    ports:
+      - "127.0.0.1:${KEYCORE_STAGING_MAIL_UI_PORT:-18025}:8025"
+      - "127.0.0.1:${KEYCORE_STAGING_MAIL_SMTP_PORT:-11025}:1025"
+
+  wordpress-bootstrap:
+    image: wordpress:cli-2.12.0-php8.3
+    profiles: ["bootstrap"]
+    depends_on:
+      wordpress:
+        condition: service_started
+      wordpress-db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_NAME: keycore_staging_wp
+      WORDPRESS_DB_USER: keycore_staging_wp
+      WORDPRESS_DB_PASSWORD: ${KEYCORE_STAGING_WORDPRESS_DB_PASSWORD:?staging WordPress DB password is required}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        until wp core is-installed --path=/var/www/html >/dev/null 2>&1; do sleep 2; done;
+        wp plugin install woocommerce --version=11.0.0 --activate --path=/var/www/html;
+        wp plugin activate keycore-platform --path=/var/www/html
+    volumes:
+      - wordpress-data:/var/www/html
+      - ../../apps/wordpress/keycore-platform:/var/www/html/wp-content/plugins/keycore-platform:ro
+
+volumes:
+  wordpress-data:
+  wordpress-db-data:
+  postgres-data:
+  redis-data:
