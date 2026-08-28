@@ -145,13 +145,28 @@ until authoritative category and historical commercial snapshots exist.
 With KS-10-01 and KS-10-02, Phase 10 is closed at the foundation/repository
 level. Production exporters, dashboards, paging, operations UI/authority,
 backup storage/scheduling and an approved production restore drill remain Phase
-12 integration and human-approval work. The next task after KS-10-02 merge is
-KS-11-01 validation; it has not been started.
+12 integration and human-approval work. The next work after KS-10-02 is the
+detailed Phase-11 acceptance sequence. The repository's consolidated KS-11-01
+validation task remains an umbrella and is not treated as one completed
+detailed task.
 
 ## Phase 11 – Staging and Acceptance
 
 Load, security, recovery and end-to-end testing with synthetic and sandbox transactions.
 
+Phase 11 is tracked in `docs/phase-11-acceptance-matrix.md` as seven distinct
+checkpoints. KS-11-01 adds only the isolated, repeatable staging foundation and
+is pending merge. KS-11-02 E2E acceptance, KS-11-03 catalog scale, KS-11-04
+order concurrency, KS-11-05 security assessment, KS-11-06 recovery exercise
+and KS-11-07 owner UAT remain not started. Phase 11 is not complete and
+`SECURITY-READINESS` remains unapproved.
+
 ## Phase 12 – Production Readiness
 
 Legal and tax configuration gates, production credentials, controlled rollout, go-live checklist and post-launch review.
+
+For Phases 11 and 12, consolidated repository tasks do not supersede detailed
+approved acceptance tasks. Every criterion must be evidenced, explicitly
+deferred to a named task for a valid dependency reason, or superseded by a
+documented stronger implementation. Human approvals are never inferred from
+code or tests.

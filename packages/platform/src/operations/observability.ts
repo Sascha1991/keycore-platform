@@ -190,10 +190,15 @@ export class SafeOperationalLogger {
 
 export type DependencyHealth = "HEALTHY" | "DEGRADED" | "UNAVAILABLE";
 export type ReadinessRole =
-  "READ_ONLY" | "DURABLE_MUTATION" | "EXTERNAL_MUTATION" | "QUEUE_WORKER";
+  | "READ_ONLY"
+  | "DURABLE_MUTATION"
+  | "EXTERNAL_MUTATION"
+  | "QUEUE_WORKER"
+  | "STAGING_DEPLOYMENT";
 
 export interface HealthProbe {
-  readonly dependency: "POSTGRESQL" | "REDIS" | "SUPPLIER" | "PAYMENT";
+  readonly dependency:
+    "POSTGRESQL" | "REDIS" | "SUPPLIER" | "PAYMENT" | "STAGING_CONFIGURATION";
   check(): Promise<DependencyHealth>;
 }
 
@@ -223,13 +228,17 @@ export class OperationalHealthService {
     const readiness =
       postgres !== "HEALTHY"
         ? "UNREADY"
-        : role === "QUEUE_WORKER" && dependencies.REDIS !== "HEALTHY"
+        : role === "STAGING_DEPLOYMENT" &&
+            (dependencies.STAGING_CONFIGURATION !== "HEALTHY" ||
+              dependencies.REDIS !== "HEALTHY")
           ? "UNREADY"
-          : role === "EXTERNAL_MUTATION" && externalUnavailable
+          : role === "QUEUE_WORKER" && dependencies.REDIS !== "HEALTHY"
             ? "UNREADY"
-            : Object.values(dependencies).some((state) => state !== "HEALTHY")
-              ? "DEGRADED"
-              : "READY";
+            : role === "EXTERNAL_MUTATION" && externalUnavailable
+              ? "UNREADY"
+              : Object.values(dependencies).some((state) => state !== "HEALTHY")
+                ? "DEGRADED"
+                : "READY";
     return {
       dependencies: Object.freeze(dependencies),
       liveness: "ALIVE",

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added KS-11-01 isolated repeatable staging foundation with explicit STAGING
+  identity, omission-first safety preflight, role-aware readiness, pinned
+  WordPress/PostgreSQL/Redis/Mailpit Compose scaffold, migrations-through-026
+  verification and a small idempotent synthetic catalog seed. Preserved the
+  consolidated Phase-11 validation task as an umbrella while KS-11-02 through
+  KS-11-07 remain not started and `SECURITY-READINESS` remains unapproved.
+
 - Added KS-10-02 Phase-10 gap closure with field-specific operational logging
   allowlists and nested-data omission tests, validated critical runbook owners
   and recovery/fallback metadata, PostgreSQL-backed checkout and precise global
