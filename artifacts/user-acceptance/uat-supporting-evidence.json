@@ -1,0 +1,11 @@
+{
+  "scope": "KS-11-07",
+  "automatedEvidenceIsHumanAcceptance": false,
+  "sources": [
+    { "id": "EVIDENCE-01", "task": "KS-11-02", "path": "docs/implementation-reports/KS-11-02.md", "supports": ["UAT-002", "UAT-003", "UAT-004", "UAT-007", "UAT-008", "UAT-009", "UAT-010", "UAT-011", "UAT-013", "UAT-014", "UAT-018"] },
+    { "id": "EVIDENCE-02", "task": "KS-11-03", "path": "docs/implementation-reports/KS-11-03.md", "supports": ["UAT-001", "UAT-018"] },
+    { "id": "EVIDENCE-03", "task": "KS-11-04", "path": "docs/implementation-reports/KS-11-04.md", "supports": ["UAT-002", "UAT-004", "UAT-007", "UAT-009", "UAT-013", "UAT-018"] },
+    { "id": "EVIDENCE-04", "task": "KS-11-05", "path": "docs/implementation-reports/KS-11-05.md", "supports": ["UAT-002", "UAT-004", "UAT-005", "UAT-006", "UAT-010", "UAT-011", "UAT-012", "UAT-014", "UAT-015", "UAT-016", "UAT-017", "UAT-018"] },
+    { "id": "EVIDENCE-05", "task": "KS-11-06", "path": "docs/implementation-reports/KS-11-06.md", "supports": ["UAT-007", "UAT-008", "UAT-017", "UAT-018"] }
+  ]
+}

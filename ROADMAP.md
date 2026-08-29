@@ -155,11 +155,11 @@ detailed task.
 Load, security, recovery and end-to-end testing with synthetic and sandbox transactions.
 
 Phase 11 is tracked in `docs/phase-11-acceptance-matrix.md` as seven distinct
-checkpoints. KS-11-01 staging, KS-11-02 deterministic E2E acceptance, KS-11-03
-catalog scale validation, KS-11-04 order concurrency validation and KS-11-05
-security assessment are complete and merged. KS-11-06 implements the recovery
-exercise and is pending review and merge. KS-11-07 owner UAT remains not
-started. Phase 11 is not complete and `SECURITY-READINESS` remains unapproved.
+checkpoints. KS-11-01 through KS-11-06 are complete and merged. KS-11-07 has a
+prepared, machine-validated UAT package, but the repository has no composed
+KeyCore browser surface and human review remains pending. Phase 11 is not
+complete and `SECURITY-READINESS` remains unapproved. Automated evidence and PR
+merge cannot satisfy either human gate.
 
 ## Phase 12 – Production Readiness
 

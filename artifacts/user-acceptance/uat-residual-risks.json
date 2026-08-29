@@ -1,0 +1,10 @@
+{
+  "scope": "KS-11-07",
+  "risks": [
+    { "id": "UAT-RISK-001", "classification": "BLOCKING_UAT", "scenarios": ["UAT-001", "UAT-002", "UAT-003", "UAT-007", "UAT-009", "UAT-018"], "missingBoundary": "KeyCore-backed storefront and checkout browser transport", "target": "PHASE_12_END_TO_END_STOREFRONT_INTEGRATION", "releaseImpact": "Human purchase journeys cannot be accepted." },
+    { "id": "UAT-RISK-002", "classification": "BLOCKING_UAT", "scenarios": ["UAT-004", "UAT-005", "UAT-006", "UAT-012", "UAT-015", "UAT-016", "UAT-018"], "missingBoundary": "Authenticated WooCommerce account, identity, claim, secure reveal, history, and invoice transport", "target": "PHASE_12_ACCOUNT_TRANSPORT", "releaseImpact": "Human ownership and secure account journeys cannot be accepted." },
+    { "id": "UAT-RISK-003", "classification": "BLOCKING_UAT", "scenarios": ["UAT-008", "UAT-010", "UAT-011", "UAT-013", "UAT-014", "UAT-017"], "missingBoundary": "Authorized operator, fraud, refund, support, and emergency-control interfaces", "target": "PHASE_12_OPERATIONS_AND_SUPPORT_UI", "releaseImpact": "Human operator workflows and customer-facing degraded states cannot be accepted." },
+    { "id": "UAT-RISK-004", "classification": "DEFERRED_TO_PHASE_12", "scenarios": ["UAT-002", "UAT-009", "UAT-013", "UAT-018"], "missingBoundary": "Approved production payment, tax, and invoice configuration", "target": "PHASE_12_PRODUCTION_APPROVALS", "releaseImpact": "Production commerce remains prohibited even after synthetic UAT." },
+    { "id": "UAT-RISK-005", "classification": "DEFERRED_TO_PHASE_12", "scenarios": ["UAT-006", "UAT-007", "UAT-018"], "missingBoundary": "Production KMS, mail delivery, observability, and infrastructure", "target": "PHASE_12_PRODUCTION_INFRASTRUCTURE", "releaseImpact": "Production key delivery and operations readiness remain prohibited." }
+  ]
+}

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added KS-11-07's deterministic UAT preparation package with UAT-001 through
+  UAT-018, an honest browser-surface readiness inventory, practical human
+  checklist, safe test/evidence guidance, explicit residual risks and a
+  release-blocking read-only validator. No scenario is marked passed, human UAT
+  and Phase 11 remain incomplete, and human and `SECURITY-READINESS` approvals
+  remain not approved.
+
 - Hardened concurrent guest-order claims so a mismatched contender holding the
   claim row cannot cause all verified matching contenders to fail through
   `SKIP LOCKED`. Contenders retain independent transactions, exactly one

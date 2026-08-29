@@ -5,19 +5,21 @@ The repository's consolidated
 remains the umbrella validation requirement. It is reconciled across the seven
 detailed acceptance tasks below and does not make any detailed task disappear.
 
-| Task     | Acceptance checkpoint       | Status                                | Umbrella coverage                                                     |
-| -------- | --------------------------- | ------------------------------------- | --------------------------------------------------------------------- |
-| KS-11-01 | Staging deployment          | Complete and merged                   | Safe environment needed by every umbrella validation area             |
-| KS-11-02 | End-to-end acceptance suite | Complete and merged                   | E2E sandbox checkout, fulfillment, refund, support and evidence       |
-| KS-11-03 | Catalog scale test          | Complete and merged                   | Load/performance with at least 50,000 synthetic products and offers   |
-| KS-11-04 | Order concurrency test      | Complete and merged                   | Concurrent replay and duplicate-mutation prevention                   |
-| KS-11-05 | Security assessment         | Complete and merged                   | Static, dependency, authorization and key-exposure assessment         |
-| KS-11-06 | Recovery exercise           | Implemented, pending review and merge | Supplier outage, Redis loss, database restore and runbook evidence    |
-| KS-11-07 | User acceptance review      | Not started                           | Storefront, account, mail, invoice, admin workflow and owner approval |
+| Task     | Acceptance checkpoint       | Status                             | Umbrella coverage                                                     |
+| -------- | --------------------------- | ---------------------------------- | --------------------------------------------------------------------- |
+| KS-11-01 | Staging deployment          | Complete and merged                | Safe environment needed by every umbrella validation area             |
+| KS-11-02 | End-to-end acceptance suite | Complete and merged                | E2E sandbox checkout, fulfillment, refund, support and evidence       |
+| KS-11-03 | Catalog scale test          | Complete and merged                | Load/performance with at least 50,000 synthetic products and offers   |
+| KS-11-04 | Order concurrency test      | Complete and merged                | Concurrent replay and duplicate-mutation prevention                   |
+| KS-11-05 | Security assessment         | Complete and merged                | Static, dependency, authorization and key-exposure assessment         |
+| KS-11-06 | Recovery exercise           | Complete and merged                | Supplier outage, Redis loss, database restore and runbook evidence    |
+| KS-11-07 | User acceptance review      | UAT prepared; human review pending | Storefront, account, mail, invoice, admin workflow and owner approval |
 
-Phase 11 is not complete and `SECURITY-READINESS` is not approved. Security assessment and recovery exercise must finish
-before final UAT acceptance. KS-11-07 requires explicit owner approval and
-cannot be completed by an agent.
+Phase 11 is not complete and `SECURITY-READINESS` is not approved. The current
+repository has no composed KeyCore browser surface, so all 18 human scenarios
+are initially non-executable at the current UI boundary. KS-11-07 human
+acceptance requires explicit product-owner evidence and cannot be completed by
+an agent or CI.
 
 ## Remaining Phases Rule
 

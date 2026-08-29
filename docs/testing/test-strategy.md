@@ -17,8 +17,11 @@ KeyCore uses layered release-blocking checks:
    evidence;
 8. `npm run recovery:exercise` executes KS-11-06's REC-001 through REC-018
    native PostgreSQL backup, isolated restore, Redis-loss and application
-   continuity exercise; and
-9. KS-11-07 separately covers human UAT.
+   continuity exercise;
+9. `npm run uat:validate` validates the deterministic KS-11-07 scenario,
+   readiness, result, residual-risk, evidence and human-approval package; and
+10. KS-11-07 human reviewers separately execute actual UAT after the required
+    browser surfaces exist.
 
 `npm run check` is the repository quality gate. `npm run e2e:acceptance` is the
 focused acceptance command and emits safe CI evidence. Tests use injected clocks,
@@ -56,3 +59,10 @@ scenario is absent or skipped.
 The current E2E boundary is application and persistence level. Browser/storefront
 coverage must not be claimed until a real storefront transport exists and owner
 UAT is completed under KS-11-07.
+
+The UAT validator parses the five checked-in JSON artifacts. It asserts exact
+UAT-001 through UAT-018 coverage, safe statuses and references, reasons for every
+blocked/non-executable scenario, no initial human pass/reviewer/timestamp,
+`NOT_APPROVED` human and security gates, and absence of secret-shaped material.
+It is read-only and deterministic: it creates no evidence and can never mark a
+scenario or approval complete.

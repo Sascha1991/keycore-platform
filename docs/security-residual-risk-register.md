@@ -10,10 +10,14 @@
 | RR-006 | WooCommerce production transport            | DEFERRED_TO_PHASE_12       | ENGINEERING          | Current adapter is not a deployed production edge                                          |
 | RR-007 | Infrastructure WAF and edge limiting        | DEFERRED_TO_PHASE_12       | SECURITY_OPERATIONS  | Infrastructure is outside the repository boundary                                          |
 | RR-008 | Repository recovery and outage proof        | ACCEPTED_FOR_CURRENT_PHASE | OPERATIONS           | KS-11-06 validates native isolated database recovery; production recovery remains Phase 12 |
-| RR-009 | Customer/operator UX acceptance             | DEFERRED_TO_KS-11-07       | PROJECT_OWNER        | Human UAT cannot be inferred from automation                                               |
+| RR-009 | Customer/operator UX acceptance             | BLOCKING_UAT               | PROJECT_OWNER        | KS-11-07 is prepared, but no composed browser or operator surface exists for human UAT     |
 | RR-010 | Mutable CI action references                | DEFERRED_TO_PHASE_12       | ENGINEERING_SECURITY | Minimal permissions reduce but do not remove upstream tag risk                             |
 | RR-011 | Synthetic-only assessment                   | ACCEPTED_FOR_CURRENT_PHASE | SECURITY             | Phase 11 prohibits production data, credentials and mutations                              |
 
 No item is classified `BLOCKING_FINDING` in the implemented assessment. This
 register does not approve `SECURITY-READINESS`; it records the current technical
 scope and named follow-up ownership.
+
+KS-11-07 details the three blocking UI groups and Phase-12 production boundaries
+in `artifacts/user-acceptance/uat-residual-risks.json`. No item is accepted by an
+agent: human UAT, Phase 11 and `SECURITY-READINESS` remain incomplete.
