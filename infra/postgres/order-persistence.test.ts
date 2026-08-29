@@ -139,7 +139,7 @@ describePostgres("PostgresOrderRepository", () => {
         readonly outbox_count: string;
       }>(`
         SELECT
-          (SELECT count(*)::text FROM order_state_history) AS history_count,
+          (SELECT count(*)::text FROM order_transition_history) AS history_count,
           (SELECT count(*)::text FROM outbox_events WHERE event_type = 'order.created') AS outbox_count
       `);
       expect(businessEffects.rows[0]).toEqual({
