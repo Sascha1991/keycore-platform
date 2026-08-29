@@ -29,6 +29,7 @@
     "vitest.config.ts",
     "vitest.e2e.config.ts",
     "vitest.order-concurrency.config.ts",
+    "vitest.recovery-exercise.config.ts",
     "vitest.security-assessment.config.ts"
   ]
 }

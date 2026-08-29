@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added KS-11-06 release-blocking recovery validation with guarded ephemeral
+  source and restore databases, native PostgreSQL custom-format backup/restore,
+  REC-001 through REC-018 evidence, restored-state invariant audit, Redis-loss
+  rebuilding and repository-level application continuity. Raw backups remain
+  CI-local and are deleted; production restore, KMS recovery and RTO/RPO remain
+  unapproved Phase-12 boundaries. KS-11-07 remains not started and
+  `SECURITY-READINESS` remains unapproved.
+
 - Added KS-11-05 release-blocking security assessment coverage for
   authentication, authorization, guest claims, Product Key confidentiality,
   payment, procurement, fulfillment, delivery, fraud, support, supplier claims,

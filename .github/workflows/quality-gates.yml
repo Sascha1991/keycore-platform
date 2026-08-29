@@ -47,6 +47,11 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
+      - name: Install PostgreSQL recovery client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+          pg_dump --version
       - run: npm run check
       - name: Run KS-11-02 acceptance suite
         run: npm run e2e:acceptance
@@ -90,6 +95,18 @@ jobs:
         with:
           name: ks-11-05-security-assessment-evidence
           path: artifacts/security-assessment/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Run KS-11-06 recovery exercise
+        id: recovery_exercise
+        run: npm run recovery:exercise
+        timeout-minutes: 15
+      - name: Archive safe KS-11-06 recovery exercise evidence
+        if: always() && steps.recovery_exercise.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ks-11-06-recovery-exercise-evidence
+          path: artifacts/recovery-exercise/
           if-no-files-found: error
           retention-days: 14
 

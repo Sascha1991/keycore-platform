@@ -20,6 +20,7 @@
     "catalog:scale": "vitest run --config vitest.catalog-scale.config.ts",
     "e2e:acceptance": "vitest run --config vitest.e2e.config.ts",
     "order:concurrency": "vitest run --config vitest.order-concurrency.config.ts",
+    "recovery:exercise": "vitest run --config vitest.recovery-exercise.config.ts",
     "security:assessment": "vitest run --config vitest.security-assessment.config.ts",
     "db:migrate": "node --import tsx infra/postgres/migrate.ts up",
     "db:rollback": "node --import tsx infra/postgres/migrate.ts down",

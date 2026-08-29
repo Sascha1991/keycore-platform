@@ -11,8 +11,8 @@ detailed acceptance tasks below and does not make any detailed task disappear.
 | KS-11-02 | End-to-end acceptance suite | Complete and merged                   | E2E sandbox checkout, fulfillment, refund, support and evidence       |
 | KS-11-03 | Catalog scale test          | Complete and merged                   | Load/performance with at least 50,000 synthetic products and offers   |
 | KS-11-04 | Order concurrency test      | Complete and merged                   | Concurrent replay and duplicate-mutation prevention                   |
-| KS-11-05 | Security assessment         | Implemented, pending review and merge | Static, dependency, authorization and key-exposure assessment         |
-| KS-11-06 | Recovery exercise           | Not started                           | Supplier outage, Redis loss, database restore and runbook evidence    |
+| KS-11-05 | Security assessment         | Complete and merged                   | Static, dependency, authorization and key-exposure assessment         |
+| KS-11-06 | Recovery exercise           | Implemented, pending review and merge | Supplier outage, Redis loss, database restore and runbook evidence    |
 | KS-11-07 | User acceptance review      | Not started                           | Storefront, account, mail, invoice, admin workflow and owner approval |
 
 Phase 11 is not complete and `SECURITY-READINESS` is not approved. Security assessment and recovery exercise must finish
