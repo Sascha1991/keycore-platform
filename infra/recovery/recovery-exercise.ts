@@ -503,7 +503,7 @@ const exerciseGuestClaimRecovery = async (db: Queryable): Promise<void> => {
       WHERE order_id='${ids.ambiguousOrder}' AND email_normalized_snapshot='wrong@example.test' AND consumed_at IS NULL`,
   );
   const unverified = await db.query(
-    `UPDATE guest_order_claim_challenges c SET consumed_at=now(), record_version=record_version+1
+    `UPDATE guest_order_claim_challenges c SET consumed_at=now(), record_version=c.record_version+1
       FROM keycore_customers customer
       WHERE c.order_id='${ids.ambiguousOrder}' AND customer.id='${ids.wrongOwner}'
         AND customer.email_verification_state='VERIFIED' AND c.consumed_at IS NULL`,
@@ -722,14 +722,11 @@ const postRestoreInvariantAudit = async (
       WHERE (status='COMPLETED' AND (procurement_status<>'SUCCEEDED' OR fulfillment_status<>'SUCCEEDED'))
          OR (status='REFUNDED' AND refund_status<>'SUCCEEDED')`,
   } as const;
-  return Object.fromEntries(
-    await Promise.all(
-      Object.entries(queries).map(async ([name, sql]) => [
-        name,
-        await scalar(db, sql),
-      ]),
-    ),
-  );
+  const counts: Record<string, number> = {};
+  for (const [name, sql] of Object.entries(queries)) {
+    counts[name] = await scalar(db, sql);
+  }
+  return counts;
 };
 
 const safeRowCounts = async (
@@ -748,14 +745,11 @@ const safeRowCounts = async (
     "supplier_claims",
     "support_cases",
   ] as const;
-  return Object.fromEntries(
-    await Promise.all(
-      tables.map(async (table) => [
-        table,
-        await scalar(db, `SELECT count(*) FROM ${table}`),
-      ]),
-    ),
-  );
+  const counts: Record<string, number> = {};
+  for (const table of tables) {
+    counts[table] = await scalar(db, `SELECT count(*) FROM ${table}`);
+  }
+  return counts;
 };
 
 const scalar = async (db: Queryable, sql: string): Promise<number> => {
