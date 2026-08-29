@@ -47,6 +47,10 @@ An existing supplier-product mapping keeps its internal ProductId during
 refresh. Region evidence, decisions and price snapshots are appended only when
 their source snapshot changes, so exact replay does not create snapshot rows.
 Missing full-sync products/offers are soft-deactivated after all pages complete.
+Migration 027 adds the measured missing composite index for region-evidence
+snapshot identity `(offer_id, source_evidence_version, captured_at)`. Without
+that index, the page-level replay check scanned the growing evidence table and
+made catalog persistence degrade quadratically.
 
 Publication reads PostgreSQL snapshots by ProductId and invokes the real
 publication service with a deterministic local storefront. Eligible records are
@@ -61,6 +65,12 @@ index between pages (at most the published subset, not the complete catalog).
 Each PostgreSQL publication save uses one atomic upsert; the existing
 ProductId/storefront and remote/storefront mapping conflicts still fail closed
 with stable domain errors.
+
+The PostgreSQL test boundary owns each transaction as one exclusive queued
+operation and passes a transaction-scoped queryable to repositories. The scale
+suite executes baseline, refresh and replay in one guarded setup journey before
+the ten scenario assertions, so a primary phase failure cannot launch an
+overlapping dependent phase or produce misleading partial-state failures.
 
 ## Acceptance Scenarios
 
@@ -91,11 +101,13 @@ implementation report after the first successful branch run.
 The suite checks unique supplier product and offer identities, one publication
 per ProductId/storefront, unique remote publication IDs, no orphan offers, no
 orphan publications and no unreferenced scale ProductIds. `EXPLAIN (FORMAT
-JSON)` is inspected for the existing supplier-product, supplier-offer and
-publication indexes without asserting brittle costs or exact plan text.
+JSON)` is inspected for the supplier-product, supplier-offer, publication and
+region-evidence snapshot indexes without asserting brittle costs or exact plan
+costs.
 
-No migration is added. Migration baseline 026 and its existing constraints are
-unchanged.
+Reversible migration 027 adds only
+`region_evidence_offer_version_captured_idx`; no constraints or business-state
+semantics change.
 
 ## Safe Evidence
 

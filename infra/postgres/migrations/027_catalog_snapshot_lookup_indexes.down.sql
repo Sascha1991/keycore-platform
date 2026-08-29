@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS region_evidence_offer_version_captured_idx;

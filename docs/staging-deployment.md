@@ -27,7 +27,7 @@ Staging requires all of the following before readiness becomes `READY`:
   isolated `https://staging.example.invalid` CI fixture), Secure cookies, CSRF
   enabled and debug disabled;
 - production Operations Control authority disabled; and
-- PostgreSQL reachable with exactly the repository migrations through `026`.
+- PostgreSQL reachable with exactly the repository migrations through `027`.
 
 The resource environment and IDs are trusted deployment configuration. The
 repository cannot reliably infer a cloud resource's ownership from an arbitrary
@@ -81,7 +81,7 @@ npm run staging:preflight
 
 `staging:migrate` performs the local safety guard before making a database
 connection, then repeatably applies the existing reversible migrations
-through `026_phase_10_gap_closure`. `staging:seed` is transactionally
+through `027_catalog_snapshot_lookup_indexes`. `staging:seed` is transactionally
 idempotent and refuses any environment other than explicit `STAGING` with a
 valid staging deployment ID.
 

@@ -49,6 +49,30 @@ let observedNow = baselineNow;
 let baselineDurationMs = 0;
 let refreshDurationMs = 0;
 let replayDurationMs = 0;
+let schemaInitializationMs = 0;
+let baselineSyncMs = 0;
+let baselinePublicationMs = 0;
+let refreshSyncMs = 0;
+let refreshPublicationMs = 0;
+let replaySyncMs = 0;
+let replayPublicationMs = 0;
+type ScaleExecutionPhase = ScalePhase | "REPLAY";
+let activePersistencePhase: ScaleExecutionPhase = "BASELINE";
+const pagePersistenceMs: Record<ScaleExecutionPhase, number[]> = {
+  BASELINE: [],
+  REFRESH: [],
+  REPLAY: [],
+};
+const staleDeactivationMs: Record<ScaleExecutionPhase, number[]> = {
+  BASELINE: [],
+  REFRESH: [],
+  REPLAY: [],
+};
+const publicationPageMs: Record<ScaleExecutionPhase, number[]> = {
+  BASELINE: [],
+  REFRESH: [],
+  REPLAY: [],
+};
 let baselineCounts: CatalogScaleCounts;
 let refreshCounts: CatalogScaleCounts;
 let replayCounts: CatalogScaleCounts;
@@ -76,10 +100,12 @@ const requiredDatabase = (): PostgresTestDatabase => {
 
 describePostgres("KS-11-03 catalog scale validation", () => {
   beforeAll(async () => {
+    const schemaStarted = performance.now();
     database = await PostgresTestDatabase.initialize({
       connectionString: databaseUrl,
       schemaName,
     });
+    schemaInitializationMs = Math.round(performance.now() - schemaStarted);
     source = new DeterministicScaleSupplier();
     discovery = new DeterministicScaleOfferDiscovery(source);
     remote = new DeterministicScaleStorefront();
@@ -88,45 +114,24 @@ describePostgres("KS-11-03 catalog scale validation", () => {
       now: () => observedNow,
       offerDiscovery: discovery,
       pageLimit: scalePageSize,
-      repository: new PostgresCatalogSyncRepository(requiredDatabase()),
+      repository: new PostgresCatalogSyncRepository(requiredDatabase(), {
+        pagePersisted: ({ durationMs }) => {
+          pagePersistenceMs[activePersistencePhase].push(durationMs);
+        },
+        staleRecordsDeactivated: ({ durationMs }) => {
+          staleDeactivationMs[activePersistencePhase].push(durationMs);
+        },
+      }),
     });
-  }, 60_000);
+    await runScaleJourney();
+  }, 950_000);
 
   afterAll(async () => {
     await database?.cleanup();
   }, 60_000);
 
   it("SCALE-001 BASELINE_IMPORT_50K", async () => {
-    const duplicate = duplicatePageSupplier(source);
-    const duplicateRun = await service.runFullSync(duplicate);
-    duplicateResultStatus = duplicateRun.run.status;
-    expect(duplicateRun.run).toMatchObject({
-      errorMessage: "Duplicate supplier product identity in catalog page",
-      status: "FAILED",
-    });
-    expect(await counts()).toMatchObject({ offers: 0, supplierProducts: 0 });
-
-    const started = performance.now();
-    const sync = await service.runFullSync(source);
-    baselinePublication = await publishScaleCatalog({
-      db: requiredDatabase(),
-      now: baselineNow,
-      pageSize: scalePageSize,
-      remote,
-      supplierCode,
-    });
-    baselineDurationMs = Math.round(performance.now() - started);
-    baselineCounts = await counts();
     const expected = expectedDistribution("BASELINE");
-
-    expect(sync.run.status).toBe("SUCCEEDED");
-    expect(sync.run.metrics).toMatchObject({
-      offersSeen: scaleBaselineOfferCount,
-      pagesFetched: 100,
-      productsSeen: scaleProductCount,
-      staleOffersDeactivated: 0,
-      staleProductsDeactivated: 0,
-    });
     expect(baselineCounts).toMatchObject({
       activeOffers: scaleBaselineOfferCount,
       activeSupplierProducts: scaleProductCount,
@@ -142,29 +147,7 @@ describePostgres("KS-11-03 catalog scale validation", () => {
   });
 
   it("SCALE-002 REFRESH_WITH_CHANGES", async () => {
-    source.setPhase("REFRESH");
-    observedNow = refreshNow;
-    const started = performance.now();
-    const sync = await service.runFullSync(source);
-    refreshPublication = await publishScaleCatalog({
-      db: requiredDatabase(),
-      now: refreshNow,
-      pageSize: scalePageSize,
-      remote,
-      supplierCode,
-    });
-    refreshDurationMs = Math.round(performance.now() - started);
-    refreshCounts = await counts();
     const expected = expectedDistribution("REFRESH");
-
-    expect(sync.run.status).toBe("SUCCEEDED");
-    expect(sync.run.metrics).toMatchObject({
-      offersSeen: scaleRefreshOfferCount,
-      pagesFetched: 100,
-      productsSeen: scaleProductCount,
-      staleOffersDeactivated: scaleStaleOfferCount,
-      staleProductsDeactivated: scaleStaleProductCount,
-    });
     expect(refreshCounts).toMatchObject({
       activeOffers: scaleRefreshOfferCount,
       activeSupplierProducts: scaleProductCount,
@@ -179,24 +162,7 @@ describePostgres("KS-11-03 catalog scale validation", () => {
   });
 
   it("SCALE-003 IDEMPOTENT_REPLAY", async () => {
-    const remoteBefore = remoteCounts(remote);
-    const snapshotCountsBefore = await snapshotCounts();
-    const started = performance.now();
-    const sync = await service.runFullSync(source);
-    replayPublication = await publishScaleCatalog({
-      db: requiredDatabase(),
-      now: refreshNow,
-      pageSize: scalePageSize,
-      remote,
-      supplierCode,
-    });
-    replayDurationMs = Math.round(performance.now() - started);
-    replayCounts = await counts();
-
-    expect(sync.run.status).toBe("SUCCEEDED");
     expect(replayCounts).toEqual(refreshCounts);
-    expect(await snapshotCounts()).toEqual(snapshotCountsBefore);
-    expect(remoteCounts(remote)).toEqual(remoteBefore);
     expect(replayPublication.created).toBe(0);
     expect(replayPublication.updated).toBe(0);
     expect(replayPublication.unpublished).toBe(0);
@@ -255,6 +221,7 @@ describePostgres("KS-11-03 catalog scale validation", () => {
         "supplier_offers_supplier_external_unique",
         "storefront_publications_product_storefront_unique",
         "storefront_publications_remote_storefront_unique",
+        "region_evidence_offer_version_captured_idx",
       ]),
     );
     const plans = await lookupPlans();
@@ -266,6 +233,9 @@ describePostgres("KS-11-03 catalog scale validation", () => {
     );
     expect(plans.publication).toContain(
       "storefront_publications_product_storefront_unique",
+    );
+    expect(plans.regionEvidence).toContain(
+      "region_evidence_offer_version_captured_idx",
     );
   });
 
@@ -283,6 +253,111 @@ describePostgres("KS-11-03 catalog scale validation", () => {
     });
   });
 });
+
+const runScaleJourney = async (): Promise<void> => {
+  const duplicate = duplicatePageSupplier(source);
+  const duplicateRun = await service.runFullSync(duplicate);
+  duplicateResultStatus = duplicateRun.run.status;
+  expect(duplicateRun.run).toMatchObject({
+    errorMessage: "Duplicate supplier product identity in catalog page",
+    status: "FAILED",
+  });
+  expect(await counts()).toMatchObject({ offers: 0, supplierProducts: 0 });
+
+  activePersistencePhase = "BASELINE";
+  let started = performance.now();
+  const baselineSync = await service.runFullSync(source);
+  baselineSyncMs = Math.round(performance.now() - started);
+  assertWithinPhaseTarget("baseline catalog sync", baselineSyncMs);
+  expect(baselineSync.run.status).toBe("SUCCEEDED");
+  expect(baselineSync.run.metrics).toMatchObject({
+    offersSeen: scaleBaselineOfferCount,
+    pagesFetched: 100,
+    productsSeen: scaleProductCount,
+    staleOffersDeactivated: 0,
+    staleProductsDeactivated: 0,
+  });
+
+  started = performance.now();
+  baselinePublication = await publishScaleCatalog({
+    db: requiredDatabase(),
+    now: baselineNow,
+    pageSize: scalePageSize,
+    pagePublished: (durationMs) => publicationPageMs.BASELINE.push(durationMs),
+    remote,
+    supplierCode,
+  });
+  baselinePublicationMs = Math.round(performance.now() - started);
+  assertWithinPhaseTarget("baseline publication", baselinePublicationMs);
+  baselineDurationMs = baselineSyncMs + baselinePublicationMs;
+  assertWithinPhaseTarget("baseline total", baselineDurationMs);
+  baselineCounts = await counts();
+
+  source.setPhase("REFRESH");
+  observedNow = refreshNow;
+  activePersistencePhase = "REFRESH";
+  started = performance.now();
+  const refreshSync = await service.runFullSync(source);
+  refreshSyncMs = Math.round(performance.now() - started);
+  assertWithinPhaseTarget("refresh catalog sync", refreshSyncMs);
+  expect(refreshSync.run.status).toBe("SUCCEEDED");
+  expect(refreshSync.run.metrics).toMatchObject({
+    offersSeen: scaleRefreshOfferCount,
+    pagesFetched: 100,
+    productsSeen: scaleProductCount,
+    staleOffersDeactivated: scaleStaleOfferCount,
+    staleProductsDeactivated: scaleStaleProductCount,
+  });
+
+  started = performance.now();
+  refreshPublication = await publishScaleCatalog({
+    db: requiredDatabase(),
+    now: refreshNow,
+    pageSize: scalePageSize,
+    pagePublished: (durationMs) => publicationPageMs.REFRESH.push(durationMs),
+    remote,
+    supplierCode,
+  });
+  refreshPublicationMs = Math.round(performance.now() - started);
+  assertWithinPhaseTarget("refresh publication", refreshPublicationMs);
+  refreshDurationMs = refreshSyncMs + refreshPublicationMs;
+  assertWithinPhaseTarget("refresh total", refreshDurationMs);
+  refreshCounts = await counts();
+
+  const remoteBefore = remoteCounts(remote);
+  const snapshotCountsBefore = await snapshotCounts();
+  activePersistencePhase = "REPLAY";
+  started = performance.now();
+  const replaySync = await service.runFullSync(source);
+  replaySyncMs = Math.round(performance.now() - started);
+  assertWithinPhaseTarget("replay catalog sync", replaySyncMs);
+  expect(replaySync.run.status).toBe("SUCCEEDED");
+
+  started = performance.now();
+  replayPublication = await publishScaleCatalog({
+    db: requiredDatabase(),
+    now: refreshNow,
+    pageSize: scalePageSize,
+    pagePublished: (durationMs) => publicationPageMs.REPLAY.push(durationMs),
+    remote,
+    supplierCode,
+  });
+  replayPublicationMs = Math.round(performance.now() - started);
+  assertWithinPhaseTarget("replay publication", replayPublicationMs);
+  replayDurationMs = replaySyncMs + replayPublicationMs;
+  assertWithinPhaseTarget("replay total", replayDurationMs);
+  replayCounts = await counts();
+  expect(await snapshotCounts()).toEqual(snapshotCountsBefore);
+  expect(remoteCounts(remote)).toEqual(remoteBefore);
+};
+
+const assertWithinPhaseTarget = (phase: string, durationMs: number): void => {
+  if (durationMs >= performanceTargetMs) {
+    throw new Error(
+      `${phase} exceeded the ${performanceTargetMs} ms release-blocking target (${durationMs} ms)`,
+    );
+  }
+};
 
 const duplicatePageSupplier = (
   target: DeterministicScaleSupplier,
@@ -547,6 +622,7 @@ const relevantIndexes = async (): Promise<readonly string[]> => {
         "supplier_offers_supplier_external_unique",
         "storefront_publications_product_storefront_unique",
         "storefront_publications_remote_storefront_unique",
+        "region_evidence_offer_version_captured_idx",
       ],
     ],
   );
@@ -570,6 +646,10 @@ const lookupPlans = async () => {
     publication: await explain(
       "SELECT * FROM storefront_publications WHERE product_id = $1 AND storefront = $2",
       [sampleProductId, scaleStorefront],
+    ),
+    regionEvidence: await explain(
+      "SELECT * FROM region_evidence WHERE offer_id = (SELECT id FROM offers LIMIT 1) AND source_evidence_version = $1 AND captured_at = $2",
+      ["germany-eligibility-v1", refreshNow],
     ),
     supplierOffer: await explain(
       "SELECT * FROM supplier_offers WHERE supplier_id = (SELECT id FROM suppliers WHERE supplier_code = $1) AND supplier_offer_id = $2",
@@ -640,6 +720,42 @@ const writeEvidence = async (input: {
     },
     noDataLossCount: 0,
     publicationDuplicateCount: 0,
+    profiling: {
+      baseline: {
+        catalogSyncMs: baselineSyncMs,
+        pagePersistenceMs: representativePageDurations(
+          pagePersistenceMs.BASELINE,
+        ),
+        publicationMs: baselinePublicationMs,
+        publicationPageMs: representativePageDurations(
+          publicationPageMs.BASELINE,
+        ),
+        staleDeactivationMs: staleDeactivationMs.BASELINE.at(-1) ?? 0,
+      },
+      refresh: {
+        catalogSyncMs: refreshSyncMs,
+        pagePersistenceMs: representativePageDurations(
+          pagePersistenceMs.REFRESH,
+        ),
+        publicationMs: refreshPublicationMs,
+        publicationPageMs: representativePageDurations(
+          publicationPageMs.REFRESH,
+        ),
+        staleDeactivationMs: staleDeactivationMs.REFRESH.at(-1) ?? 0,
+      },
+      replay: {
+        catalogSyncMs: replaySyncMs,
+        pagePersistenceMs: representativePageDurations(
+          pagePersistenceMs.REPLAY,
+        ),
+        publicationMs: replayPublicationMs,
+        publicationPageMs: representativePageDurations(
+          publicationPageMs.REPLAY,
+        ),
+        staleDeactivationMs: staleDeactivationMs.REPLAY.at(-1) ?? 0,
+      },
+      schemaInitializationMs,
+    },
     refresh: {
       activeOffers: input.refreshCounts.activeOffers,
       activeProducts: input.refreshCounts.activeSupplierProducts,
@@ -703,6 +819,16 @@ const writeEvidence = async (input: {
     "utf8",
   );
 };
+
+const representativePageDurations = (
+  durations: readonly number[],
+): Readonly<Record<string, number | null>> =>
+  Object.fromEntries(
+    [1, 10, 25, 50, 75, 100].map((page) => [
+      `page${page}`,
+      durations[page - 1] ?? null,
+    ]),
+  );
 
 const safeCommitSha = (value: string | undefined): string =>
   value && /^[0-9a-f]{40}$/u.test(value) ? value : "LOCAL_UNCOMMITTED";

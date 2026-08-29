@@ -10,7 +10,7 @@ boundaries.
 
 - KS-11-01 and KS-11-02 complete and merged.
 - Phase-05 catalog synchronization, Germany eligibility and publication.
-- PostgreSQL migration baseline 026.
+- PostgreSQL migration baseline 027.
 
 ## Scope
 
@@ -39,6 +39,8 @@ boundaries.
 - Safe CI evidence is archived for 14 days.
 - Required catalog, PostgreSQL, publication, staging, E2E and repository quality
   gates pass.
+- Region evidence snapshot replay uses an indexed offer/version/capture lookup;
+  representative PostgreSQL plans prove the supporting index is selected.
 
 ## Forbidden Scope
 

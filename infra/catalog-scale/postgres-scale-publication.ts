@@ -98,15 +98,9 @@ export const publishScaleCatalog = async (input: {
   readonly supplierCode: string;
   readonly pageSize: number;
   readonly now: Date;
+  readonly pagePublished?: (durationMs: number) => void;
 }): Promise<ScalePublicationPassResult> => {
-  const durableRepository = new PostgresStorefrontPublicationRepository(
-    input.db,
-    async () => ({ mappings: [], offers: [], product: null }),
-  );
-  const repository = new ScalePublicationPageRepository(
-    input.db,
-    durableRepository,
-  );
+  const repository = new ScalePublicationPageRepository(input.db);
   const priceProvider = new PostgresScalePriceProvider(input.db);
   await repository.initialize(scaleStorefront);
   const service = new StorefrontPublicationService({
@@ -141,10 +135,11 @@ export const publishScaleCatalog = async (input: {
       `,
         [input.supplierCode, cursor, input.pageSize],
       );
-    await input.db.transaction(async () => {
+    const pageStartedAt = performance.now();
+    await input.db.transaction(async (pageDb) => {
       const productIds = page.rows.map((row) => productId(row.product_id));
-      await repository.loadPage(productIds, scaleStorefront);
-      await priceProvider.loadPage(productIds);
+      await repository.loadPage(productIds, scaleStorefront, pageDb);
+      await priceProvider.loadPage(productIds, pageDb);
       for (const row of page.rows) {
         const publication = await service.publish({
           correlationId: correlationId(
@@ -161,6 +156,7 @@ export const publishScaleCatalog = async (input: {
         if (publication.outcome === "NO_OP") result.noOp += 1;
       }
     });
+    input.pagePublished?.(Math.round(performance.now() - pageStartedAt));
     cursor = page.rows.at(-1)?.supplier_product_id ?? null;
     if (page.rows.length < input.pageSize) break;
   } while (cursor);
@@ -178,11 +174,11 @@ class ScalePublicationPageRepository implements StorefrontPublicationRepository 
   >();
   private readonly slugOwners = new Map<string, ProductId>();
   private readonly snapshots = new Map<string, StorefrontPublicationSnapshot>();
+  private pageDatabase: Queryable;
 
-  public constructor(
-    private readonly db: Queryable,
-    private readonly durable: PostgresStorefrontPublicationRepository,
-  ) {}
+  public constructor(private readonly db: Queryable) {
+    this.pageDatabase = db;
+  }
 
   public async initialize(storefront: StorefrontChannel): Promise<void> {
     const result = await this.db.query<PublicationSnapshotRow>(
@@ -198,11 +194,12 @@ class ScalePublicationPageRepository implements StorefrontPublicationRepository 
   public async loadPage(
     productIds: readonly ProductId[],
     storefront: StorefrontChannel,
+    db: Queryable = this.db,
   ): Promise<void> {
     this.publications.clear();
     this.snapshots.clear();
     if (productIds.length === 0) return;
-    const productResult = await this.db.query<ProductSnapshotRow>(
+    const productResult = await db.query<ProductSnapshotRow>(
       `
       SELECT products.id::text, products.title, products.product_type,
         products.platform, products.lifecycle,
@@ -215,7 +212,7 @@ class ScalePublicationPageRepository implements StorefrontPublicationRepository 
       `,
       [productIds],
     );
-    const offers = await this.db.query<OfferSnapshotRow>(
+    const offers = await db.query<OfferSnapshotRow>(
       `
       SELECT offers.id::text, supplier_offers.active, offers.availability,
         latest_decision.decision, offers.product_id::text
@@ -248,7 +245,7 @@ class ScalePublicationPageRepository implements StorefrontPublicationRepository 
         product: productFromRow(row),
       });
     }
-    const publications = await this.db.query<PublicationSnapshotRow>(
+    const publications = await db.query<PublicationSnapshotRow>(
       `${publicationSelect}
        WHERE product_id = ANY($1::uuid[]) AND storefront = $2`,
       [productIds, storefront],
@@ -258,6 +255,7 @@ class ScalePublicationPageRepository implements StorefrontPublicationRepository 
       this.publications.set(publication.productId, publication);
       this.indexPublication(publication);
     }
+    this.pageDatabase = db;
   }
 
   public async loadSnapshot(
@@ -296,7 +294,10 @@ class ScalePublicationPageRepository implements StorefrontPublicationRepository 
     record: StorefrontPublicationRecord,
   ): Promise<StorefrontPublicationRecord> {
     const previous = this.publications.get(record.productId);
-    const saved = await this.durable.savePublication(record);
+    const saved = await new PostgresStorefrontPublicationRepository(
+      this.pageDatabase,
+      async () => ({ mappings: [], offers: [], product: null }),
+    ).savePublication(record);
     if (previous?.slug && previous.slug !== saved.slug) {
       this.slugOwners.delete(previous.slug);
     }
@@ -318,10 +319,13 @@ class PostgresScalePriceProvider implements StorefrontPriceProvider {
 
   public constructor(private readonly db: Queryable) {}
 
-  public async loadPage(productIds: readonly ProductId[]): Promise<void> {
+  public async loadPage(
+    productIds: readonly ProductId[],
+    db: Queryable = this.db,
+  ): Promise<void> {
     this.prices.clear();
     if (productIds.length === 0) return;
-    const result = await this.db.query<{
+    const result = await db.query<{
       readonly amount_minor: string;
       readonly currency: string;
       readonly offer_id: string;

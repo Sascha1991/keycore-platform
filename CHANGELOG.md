@@ -8,9 +8,10 @@
   stable canonical identity, duplicate/data-loss/orphan/index assertions and
   omission-first CI evidence. Added bounded transactional PostgreSQL page
   upserts, page-preloaded publication evaluation, bounded transactional atomic
-  mapping-safe publication persistence and side-effect-free blocked publication
-  replay without a migration or external supplier/storefront request; KS-11-04
-  through KS-11-07 remain open.
+  mapping-safe publication persistence, side-effect-free blocked publication
+  replay, exclusive test transaction ownership and migration 027's measured
+  region-evidence snapshot lookup index without an external supplier/storefront
+  request; KS-11-04 through KS-11-07 remain open.
 
 - Added KS-11-02 deterministic E2E acceptance coverage for 15 critical
   customer/order scenarios, a real-PostgreSQL coherence journey, omission-first

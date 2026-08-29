@@ -44,7 +44,21 @@ interface CheckpointRow {
 }
 
 export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
-  public constructor(private readonly db: TransactionalQueryable) {}
+  public constructor(
+    private readonly db: TransactionalQueryable,
+    private readonly observer?: {
+      readonly pagePersisted?: (observation: {
+        readonly durationMs: number;
+        readonly offerCount: number;
+        readonly productCount: number;
+      }) => void;
+      readonly staleRecordsDeactivated?: (observation: {
+        readonly durationMs: number;
+        readonly offers: number;
+        readonly products: number;
+      }) => void;
+    },
+  ) {}
 
   public async beginRun(input: {
     readonly supplierId: SupplierId;
@@ -338,6 +352,7 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
       })),
     );
 
+    const startedAt = performance.now();
     await this.db.transaction(async (db) => {
       const mappingConflict = await db.query<{
         readonly conflict: boolean;
@@ -590,6 +605,11 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
         );
       }
     });
+    this.observer?.pagePersisted?.({
+      durationMs: Math.round(performance.now() - startedAt),
+      offerCount: offers.length,
+      productCount: products.length,
+    });
   }
 
   public async deactivateStaleFullSyncRecords(input: {
@@ -597,6 +617,7 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
     readonly runId: string;
     readonly observedAt: Date;
   }): Promise<{ readonly products: number; readonly offers: number }> {
+    const startedAt = performance.now();
     const supplierUuid = await this.ensureSupplier(input.supplierId);
     const offers = await this.db.query(
       `
@@ -614,10 +635,15 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
       `,
       [supplierUuid, input.runId, input.observedAt],
     );
-    return {
+    const result = {
       offers: offers.rowCount ?? 0,
       products: products.rowCount ?? 0,
     };
+    this.observer?.staleRecordsDeactivated?.({
+      ...result,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+    return result;
   }
 
   public async getCheckpoint(input: {
