@@ -21,7 +21,7 @@ import {
   type StorefrontPublicationSnapshot,
   type StorefrontRemoteProductSnapshot,
 } from "../../packages/platform/src/contracts.js";
-import type { Queryable } from "../postgres/client.js";
+import type { Queryable, TransactionalQueryable } from "../postgres/client.js";
 import { PostgresStorefrontPublicationRepository } from "../postgres/storefront-publication-repositories.js";
 
 export const scaleStorefront = storefrontChannel("KEYRANO_SCALE_CI");
@@ -93,7 +93,7 @@ export class DeterministicScaleStorefront implements StorefrontPort {
 }
 
 export const publishScaleCatalog = async (input: {
-  readonly db: Queryable;
+  readonly db: TransactionalQueryable;
   readonly remote: DeterministicScaleStorefront;
   readonly supplierCode: string;
   readonly pageSize: number;
@@ -141,24 +141,26 @@ export const publishScaleCatalog = async (input: {
       `,
         [input.supplierCode, cursor, input.pageSize],
       );
-    const productIds = page.rows.map((row) => productId(row.product_id));
-    await repository.loadPage(productIds, scaleStorefront);
-    await priceProvider.loadPage(productIds);
-    for (const row of page.rows) {
-      const publication = await service.publish({
-        correlationId: correlationId(
-          `scale-publication-${row.supplier_product_id}`,
-        ),
-        productId: productId(row.product_id),
-        storefront: scaleStorefront,
-      });
-      result.processed += 1;
-      if (publication.outcome === "CREATED") result.created += 1;
-      if (publication.outcome === "UPDATED") result.updated += 1;
-      if (publication.outcome === "UNPUBLISHED") result.unpublished += 1;
-      if (publication.outcome === "BLOCKED") result.blocked += 1;
-      if (publication.outcome === "NO_OP") result.noOp += 1;
-    }
+    await input.db.transaction(async () => {
+      const productIds = page.rows.map((row) => productId(row.product_id));
+      await repository.loadPage(productIds, scaleStorefront);
+      await priceProvider.loadPage(productIds);
+      for (const row of page.rows) {
+        const publication = await service.publish({
+          correlationId: correlationId(
+            `scale-publication-${row.supplier_product_id}`,
+          ),
+          productId: productId(row.product_id),
+          storefront: scaleStorefront,
+        });
+        result.processed += 1;
+        if (publication.outcome === "CREATED") result.created += 1;
+        if (publication.outcome === "UPDATED") result.updated += 1;
+        if (publication.outcome === "UNPUBLISHED") result.unpublished += 1;
+        if (publication.outcome === "BLOCKED") result.blocked += 1;
+        if (publication.outcome === "NO_OP") result.noOp += 1;
+      }
+    });
     cursor = page.rows.at(-1)?.supplier_product_id ?? null;
     if (page.rows.length < input.pageSize) break;
   } while (cursor);

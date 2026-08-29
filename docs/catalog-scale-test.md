@@ -55,11 +55,12 @@ blocked/unpublished evaluation is a `NO_OP`, preventing duplicate remote side
 effects.
 
 The publication harness preloads snapshots, latest prices and current
-publication rows for the same 500-product page. It retains only the published
-slug/remote-owner uniqueness index between pages (at most the published subset,
-not the complete catalog). PostgreSQL publication saves use one atomic upsert;
-the existing ProductId/storefront and remote/storefront mapping conflicts still
-fail closed with stable domain errors.
+publication rows for the same 500-product page and persists that page in one
+bounded transaction. It retains only the published slug/remote-owner uniqueness
+index between pages (at most the published subset, not the complete catalog).
+Each PostgreSQL publication save uses one atomic upsert; the existing
+ProductId/storefront and remote/storefront mapping conflicts still fail closed
+with stable domain errors.
 
 ## Acceptance Scenarios
 

@@ -109,7 +109,7 @@ describePostgres("KS-11-03 catalog scale validation", () => {
     const started = performance.now();
     const sync = await service.runFullSync(source);
     baselinePublication = await publishScaleCatalog({
-      db: { query },
+      db: requiredDatabase(),
       now: baselineNow,
       pageSize: scalePageSize,
       remote,
@@ -147,7 +147,7 @@ describePostgres("KS-11-03 catalog scale validation", () => {
     const started = performance.now();
     const sync = await service.runFullSync(source);
     refreshPublication = await publishScaleCatalog({
-      db: { query },
+      db: requiredDatabase(),
       now: refreshNow,
       pageSize: scalePageSize,
       remote,
@@ -184,7 +184,7 @@ describePostgres("KS-11-03 catalog scale validation", () => {
     const started = performance.now();
     const sync = await service.runFullSync(source);
     replayPublication = await publishScaleCatalog({
-      db: { query },
+      db: requiredDatabase(),
       now: refreshNow,
       pageSize: scalePageSize,
       remote,
