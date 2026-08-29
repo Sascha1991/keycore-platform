@@ -61,7 +61,9 @@ The same measured issue affected decision replay more strongly. Migration 027
 also makes `(offer_id, region_evidence_id, decision, reason_code,
 policy_version)` unique, matching the pre-existing application deduplication
 identity. Decision persistence likewise uses `ON CONFLICT DO NOTHING`; it does
-not bypass Germany eligibility evaluation or change a decision.
+not bypass Germany eligibility evaluation or change a decision. Its evidence
+resolution is an explicit per-offer lateral lookup, preventing PostgreSQL from
+expanding the page source against all same-version evidence snapshots.
 
 Publication reads PostgreSQL snapshots by ProductId and invokes the real
 publication service with a deterministic local storefront. Eligible records are

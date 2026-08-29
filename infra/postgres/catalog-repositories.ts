@@ -584,9 +584,14 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
             JOIN supplier_offers ON supplier_offers.supplier_id = $1
               AND supplier_offers.supplier_offer_id = source.supplier_offer_id
             JOIN offers ON offers.supplier_offer_id = supplier_offers.id
-            JOIN region_evidence AS evidence ON evidence.offer_id = offers.id
-              AND evidence.source_evidence_version = source.policy_version
-              AND evidence.captured_at = source.captured_at
+            JOIN LATERAL (
+              SELECT region_evidence.id
+              FROM region_evidence
+              WHERE region_evidence.offer_id = offers.id
+                AND region_evidence.source_evidence_version = source.policy_version
+                AND region_evidence.captured_at = source.captured_at
+              LIMIT 1
+            ) AS evidence ON true
             ON CONFLICT (
               offer_id, region_evidence_id, decision, reason_code, policy_version
             )

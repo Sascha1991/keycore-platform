@@ -687,8 +687,18 @@ const lookupPlans = async () => {
       ["germany-eligibility-v1", refreshNow],
     ),
     regionDecision: await explain(
-      "SELECT * FROM region_decisions WHERE offer_id = (SELECT id FROM offers LIMIT 1) AND region_evidence_id = (SELECT id FROM region_evidence LIMIT 1) AND decision = $1 AND reason_code = $2 AND policy_version = $3",
-      ["ALLOWED", "EXPLICITLY_ALLOWED", "de-eligibility-v1"],
+      `SELECT evidence.id
+       FROM offers
+       JOIN LATERAL (
+         SELECT region_evidence.id
+         FROM region_evidence
+         WHERE region_evidence.offer_id = offers.id
+           AND region_evidence.source_evidence_version = $1
+           AND region_evidence.captured_at = $2
+         LIMIT 1
+       ) AS evidence ON true
+       WHERE offers.id = (SELECT id FROM offers LIMIT 1)`,
+      ["germany-eligibility-v1", refreshNow],
     ),
     supplierOffer: await explain(
       "SELECT * FROM supplier_offers WHERE supplier_id = (SELECT id FROM suppliers WHERE supplier_code = $1) AND supplier_offer_id = $2",
