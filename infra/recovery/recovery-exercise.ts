@@ -629,11 +629,29 @@ const exerciseRedisLoss = async (
   redis.on("error", () => undefined);
   await redis.connect();
   try {
+    const orderCountBeforeLoss = await scalar(
+      db,
+      "SELECT count(*) FROM keycore_orders",
+    );
+    const globalBeforeLoss = await controls.findControl(
+      "GLOBAL_COMMERCE_MUTATIONS",
+    );
     await redis.flushDb();
     const emptyAfterLoss = (await redis.dbSize()) === 0;
-    const orderCount = await scalar(db, "SELECT count(*) FROM keycore_orders");
-    const global = await controls.findControl("GLOBAL_COMMERCE_MUTATIONS");
-    if (!emptyAfterLoss || orderCount < 5 || global?.state !== "PAUSED") {
+    const orderCountAfterLoss = await scalar(
+      db,
+      "SELECT count(*) FROM keycore_orders",
+    );
+    const globalAfterLoss = await controls.findControl(
+      "GLOBAL_COMMERCE_MUTATIONS",
+    );
+    if (
+      !emptyAfterLoss ||
+      orderCountBeforeLoss === 0 ||
+      orderCountAfterLoss !== orderCountBeforeLoss ||
+      globalBeforeLoss?.state !== "PAUSED" ||
+      globalAfterLoss?.state !== "PAUSED"
+    ) {
       throw new Error("RECOVERY_REDIS_LOSS_BYPASSED_AUTHORITY");
     }
     await redis.set("keycore:recovery:rebuilt", "safe", { EX: 30 });
