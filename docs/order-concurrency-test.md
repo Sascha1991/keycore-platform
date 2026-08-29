@@ -20,6 +20,12 @@ then closes the connection. No actor overlaps `BEGIN` or `COMMIT` on one client.
 Scenario files execute serially to avoid unrelated fixture setup contention;
 the actors inside every race remain genuinely concurrent.
 
+CONC-014 queues contenders on the exact guest-claim row with `FOR UPDATE`.
+`SKIP LOCKED` is intentionally not used there: a mismatched contender must not
+make every simultaneous verified matching contender observe a false missing
+claim. The test requires one `CLAIMED`, nine safe `CLAIM_DENIED` results, one
+consumption and the matching customer as immutable owner.
+
 Ten actors are used for high-value races. Two actors are used where the domain
 invariant is specifically current-owner versus stale-owner or competing
 terminal writers. Each test has a 60-second bound and the CI step has a

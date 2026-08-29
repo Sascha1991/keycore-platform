@@ -180,7 +180,7 @@ export class PostgresGuestOrderClaimRepository implements GuestOrderClaimReposit
           SELECT ${claimReturning}
           FROM guest_order_claim_challenges
           WHERE token_hash = $1
-          FOR UPDATE SKIP LOCKED
+          FOR UPDATE
         `,
         [input.tokenHash],
       );

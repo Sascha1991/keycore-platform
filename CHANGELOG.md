@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Hardened concurrent guest-order claims so a mismatched contender holding the
+  claim row cannot cause all verified matching contenders to fail through
+  `SKIP LOCKED`. Contenders retain independent transactions, exactly one
+  matching claimant consumes the hash-only token and all losers fail closed.
+
 - Added KS-11-06 release-blocking recovery validation with guarded ephemeral
   source and restore databases, native PostgreSQL custom-format backup/restore,
   REC-001 through REC-018 evidence, restored-state invariant audit, Redis-loss

@@ -155,6 +155,12 @@ Guest claim tokens are hash-only, single-use, purpose-bound and expiring.
 Reissue revokes older active claim credentials for the same order. Definitive
 claim-email delivery failure revokes the newly persisted token.
 
+Concurrent guest-claim attempts use independent transactions and a blocking
+row lock on the exact token hash. An unverified or email-mismatched contender
+may be evaluated first, but cannot make the challenge temporarily appear
+absent to verified matching contenders. Exactly one matching contender may
+consume the token and bind ownership; every remaining contender is denied.
+
 The known live fulfillment `fd61be5e-44ea-4914-98ae-c4404dc31779` remains
 legacy/unclaimed. KS-08-05 does not generate retroactive claim evidence and does
 not bind it to any customer.
