@@ -553,20 +553,34 @@ const relevantIndexes = async (): Promise<readonly string[]> => {
   return result.rows.map((row) => row.indexname);
 };
 
-const lookupPlans = async () => ({
-  publication: await explain(
-    "SELECT * FROM storefront_publications WHERE product_id = (SELECT product_id FROM supplier_products LIMIT 1) AND storefront = $1",
-    [scaleStorefront],
-  ),
-  supplierOffer: await explain(
-    "SELECT * FROM supplier_offers WHERE supplier_id = (SELECT id FROM suppliers WHERE supplier_code = $1) AND supplier_offer_id = $2",
-    [supplierCode, "scale-so-025000-primary"],
-  ),
-  supplierProduct: await explain(
-    "SELECT * FROM supplier_products WHERE supplier_id = (SELECT id FROM suppliers WHERE supplier_code = $1) AND supplier_product_id = $2",
+const lookupPlans = async () => {
+  const sample = await query<{ product_id: string }>(
+    `
+      SELECT supplier_products.product_id::text
+      FROM supplier_products
+      JOIN suppliers ON suppliers.id = supplier_products.supplier_id
+      WHERE suppliers.supplier_code = $1
+        AND supplier_products.supplier_product_id = $2
+    `,
     [supplierCode, "scale-sp-025000"],
-  ),
-});
+  );
+  const sampleProductId = sample.rows[0]?.product_id;
+  if (!sampleProductId) throw new Error("Scale query-plan sample is missing");
+  return {
+    publication: await explain(
+      "SELECT * FROM storefront_publications WHERE product_id = $1 AND storefront = $2",
+      [sampleProductId, scaleStorefront],
+    ),
+    supplierOffer: await explain(
+      "SELECT * FROM supplier_offers WHERE supplier_id = (SELECT id FROM suppliers WHERE supplier_code = $1) AND supplier_offer_id = $2",
+      [supplierCode, "scale-so-025000-primary"],
+    ),
+    supplierProduct: await explain(
+      "SELECT * FROM supplier_products WHERE supplier_id = (SELECT id FROM suppliers WHERE supplier_code = $1) AND supplier_product_id = $2",
+      [supplierCode, "scale-sp-025000"],
+    ),
+  };
+};
 
 const explain = async (
   sql: string,

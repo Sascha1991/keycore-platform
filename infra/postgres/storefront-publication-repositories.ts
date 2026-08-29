@@ -98,30 +98,9 @@ export class PostgresStorefrontPublicationRepository implements StorefrontPublic
   public async savePublication(
     record: StorefrontPublicationRecord,
   ): Promise<StorefrontPublicationRecord> {
-    const existing = await this.findPublication(record);
-    if (
-      existing?.remoteProductId &&
-      record.remoteProductId &&
-      existing.remoteProductId !== record.remoteProductId
-    ) {
-      throw new StorefrontMappingConflictError(
-        "MAPPING_CONFLICT_PRODUCT_STOREFRONT",
-      );
-    }
-    if (record.remoteProductId) {
-      const remoteConflict = await this.findPublicationByRemoteId({
-        remoteProductId: record.remoteProductId,
-        storefront: record.storefront,
-      });
-      if (remoteConflict && remoteConflict.productId !== record.productId) {
-        throw new StorefrontMappingConflictError(
-          "MAPPING_CONFLICT_REMOTE_STOREFRONT",
-        );
-      }
-    }
-
-    const result = await this.db.query<PublicationRow>(
-      `
+    try {
+      const result = await this.db.query<PublicationRow>(
+        `
         INSERT INTO storefront_publications(
           product_id, storefront, remote_product_id, state,
           publication_version, fingerprint, slug, last_attempt_at,
@@ -141,34 +120,57 @@ export class PostgresStorefrontPublicationRepository implements StorefrontPublic
           last_error_classification = EXCLUDED.last_error_classification,
           reconciliation_required = EXCLUDED.reconciliation_required,
           updated_at = EXCLUDED.updated_at
+        WHERE storefront_publications.remote_product_id IS NULL
+          OR EXCLUDED.remote_product_id IS NULL
+          OR storefront_publications.remote_product_id = EXCLUDED.remote_product_id
         RETURNING product_id::text, storefront, remote_product_id, state,
           publication_version, fingerprint, slug, last_attempt_at,
           last_success_at, last_error_classification,
           reconciliation_required, created_at, updated_at
-      `,
-      [
-        record.productId,
-        record.storefront,
-        record.remoteProductId ?? null,
-        record.state,
-        record.publicationVersion,
-        record.fingerprint ?? null,
-        record.slug ?? null,
-        record.lastAttemptAt ?? null,
-        record.lastSuccessAt ?? null,
-        record.lastErrorClassification ?? null,
-        record.reconciliationRequired,
-        record.createdAt,
-        record.updatedAt,
-      ],
-    );
-    const row = result.rows[0];
-    if (!row) {
-      throw new Error("Expected storefront publication upsert row");
+        `,
+        [
+          record.productId,
+          record.storefront,
+          record.remoteProductId ?? null,
+          record.state,
+          record.publicationVersion,
+          record.fingerprint ?? null,
+          record.slug ?? null,
+          record.lastAttemptAt ?? null,
+          record.lastSuccessAt ?? null,
+          record.lastErrorClassification ?? null,
+          record.reconciliationRequired,
+          record.createdAt,
+          record.updatedAt,
+        ],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new StorefrontMappingConflictError(
+          "MAPPING_CONFLICT_PRODUCT_STOREFRONT",
+        );
+      }
+      return publicationFromRow(row);
+    } catch (error) {
+      if (isRemoteStorefrontUniqueViolation(error)) {
+        throw new StorefrontMappingConflictError(
+          "MAPPING_CONFLICT_REMOTE_STOREFRONT",
+        );
+      }
+      throw error;
     }
-    return publicationFromRow(row);
   }
 }
+
+const isRemoteStorefrontUniqueViolation = (
+  error: unknown,
+): error is { readonly code: "23505"; readonly constraint: string } =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  error.code === "23505" &&
+  "constraint" in error &&
+  error.constraint === "storefront_publications_remote_storefront_unique";
 
 const publicationFromRow = (
   row: PublicationRow,
