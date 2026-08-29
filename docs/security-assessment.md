@@ -68,8 +68,9 @@ KS-11-07 human UAT remain separate required checkpoints.
 - Remediation target: `PHASE_12_DEPLOYMENT_HARDENING`.
 
 There are no unresolved Critical or High findings in the implemented
-assessment definition. CI execution is still required before that result can be
-accepted for this PR.
+assessment definition. Every PR head must still pass the CI assessment before
+that result is accepted; automated success does not grant human readiness
+approval.
 
 ## Evidence Safety
 
