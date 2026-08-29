@@ -62,6 +62,25 @@ describe("audit metadata validation", () => {
     }
   });
 
+  it("rejects secret-shaped values hidden under otherwise safe field names", () => {
+    const sensitiveValues = [
+      ["TEST", "AAAAA", "BBBBB", "CCCCC"].join("-"),
+      ["Bearer", "synthetic.session.credential.123456"].join(" "),
+      ["api", "key=synthetic-supplier-credential"].join("_"),
+      ["client", "secret=synthetic-payment-secret"].join("_"),
+      ["master", "key=synthetic-wrapping-material"].join("_"),
+      ["verification", "token=synthetic-verification-token"].join("_"),
+      ["delivery", "capability=synthetic-delivery-capability"].join("_"),
+      ["whsec", "syntheticwebhooksecret123456"].join("_"),
+    ];
+
+    for (const sensitiveValue of sensitiveValues) {
+      expect(() => validateAuditMetadata({ note: sensitiveValue })).toThrow(
+        /forbidden value/u,
+      );
+    }
+  });
+
   it("rejects unsafe metadata values and oversized payloads", () => {
     expect(() =>
       validateAuditMetadata({

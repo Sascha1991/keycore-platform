@@ -1,0 +1,53 @@
+import { defineConfig } from "vitest/config";
+
+import {
+  SecurityAssessmentReporter,
+  securityTestNamePattern,
+} from "./infra/security/security-assessment-reporter.js";
+
+export default defineConfig({
+  test: {
+    fileParallelism: false,
+    hookTimeout: 60_000,
+    include: [
+      "infra/security/security-assessment.test.ts",
+      "infra/e2e/keycore-acceptance.test.ts",
+      "infra/payments/stripe-adapter.test.ts",
+      "infra/payments/stripe-payments-service.test.ts",
+      "infra/postgres/customer-account-persistence.test.ts",
+      "infra/postgres/customer-authentication-persistence.test.ts",
+      "infra/postgres/customer-key-delivery-persistence.test.ts",
+      "infra/postgres/customer-registration-persistence.test.ts",
+      "infra/postgres/fraud-risk-persistence.test.ts",
+      "infra/postgres/fulfillment-persistence.test.ts",
+      "infra/postgres/guest-order-claim-persistence.test.ts",
+      "infra/postgres/operations-persistence.test.ts",
+      "infra/postgres/order-persistence.test.ts",
+      "infra/postgres/payment-persistence.test.ts",
+      "infra/postgres/persistence.test.ts",
+      "infra/postgres/procurement-persistence.test.ts",
+      "infra/postgres/supplier-claim-persistence.test.ts",
+      "infra/postgres/support-case-persistence.test.ts",
+      "packages/platform/src/audit/audit.test.ts",
+      "packages/platform/src/catalog/germany-eligibility.test.ts",
+      "packages/platform/src/claims/supplier-claims.test.ts",
+      "packages/platform/src/customers/customer-account-transport.test.ts",
+      "packages/platform/src/customers/customer-authentication.test.ts",
+      "packages/platform/src/customers/customer-invoices.test.ts",
+      "packages/platform/src/customers/customer-key-access.test.ts",
+      "packages/platform/src/customers/customer-registration.test.ts",
+      "packages/platform/src/customers/guest-order-claim.test.ts",
+      "packages/platform/src/fraud/risk.test.ts",
+      "packages/platform/src/fulfillment/authenticated-customer-delivery.test.ts",
+      "packages/platform/src/fulfillment/secure-key-fulfillment.test.ts",
+      "packages/platform/src/operations/operations-foundation.test.ts",
+      "packages/platform/src/procurement/supplier-procurement.test.ts",
+      "packages/platform/src/storefront/publication.test.ts",
+      "packages/platform/src/support/support-cases.test.ts",
+    ],
+    passWithNoTests: false,
+    reporters: ["default", new SecurityAssessmentReporter()],
+    testNamePattern: securityTestNamePattern,
+    testTimeout: 60_000,
+  },
+});

@@ -12,8 +12,10 @@ KeyCore uses layered release-blocking checks:
    50,000 paged synthetic products, baseline/refresh/replay and safe evidence;
 6. `npm run order:concurrency` executes KS-11-04 with real PostgreSQL
    repositories, independent competing clients and omission-first evidence;
-   and
-7. later Phase-11 tasks separately cover security, recovery and human UAT.
+7. `npm run security:assessment` executes KS-11-05's SEC-001 through SEC-020
+   release gate with focused production-facing tests and omission-first
+   evidence; and
+8. later Phase-11 tasks separately cover recovery and human UAT.
 
 `npm run check` is the repository quality gate. `npm run e2e:acceptance` is the
 focused acceptance command and emits safe CI evidence. Tests use injected clocks,
@@ -30,6 +32,14 @@ serially, while each race uses independent clients for its actors; this avoids
 overlapping transactions on one client without imposing a repository-wide
 mutex. A 60-second per-test bound and 15-minute CI step bound expose hangs and
 deadlocks. The command has no external network dependency.
+
+The security assessment runs selected unit and isolated PostgreSQL assertions
+serially. Local runs may report PostgreSQL scenarios as skipped when the test
+database is unavailable, but CI treats every skipped applicable SEC scenario as
+a release-gate failure. SEC-020 is explicitly not applicable until this
+repository owns a production HTTP edge. Unresolved Critical or High findings
+also fail the security gate; automated success never grants
+`SECURITY-READINESS`.
 
 The current E2E boundary is application and persistence level. Browser/storefront
 coverage must not be claimed until a real storefront transport exists and owner

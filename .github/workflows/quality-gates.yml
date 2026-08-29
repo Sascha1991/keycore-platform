@@ -80,6 +80,18 @@ jobs:
           path: artifacts/order-concurrency/
           if-no-files-found: error
           retention-days: 14
+      - name: Run KS-11-05 security assessment
+        id: security_assessment
+        run: npm run security:assessment
+        timeout-minutes: 15
+      - name: Archive safe KS-11-05 security assessment evidence
+        if: always() && steps.security_assessment.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ks-11-05-security-assessment-evidence
+          path: artifacts/security-assessment/
+          if-no-files-found: error
+          retention-days: 14
 
   php:
     name: PHP foundation checks

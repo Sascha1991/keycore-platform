@@ -81,6 +81,15 @@ const maxAuditMetadataSerializedBytes = 8_192;
 const maxAuditMetadataArrayLength = 50;
 const maxAuditMetadataObjectKeys = 50;
 
+const forbiddenMetadataStringPatterns = [
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/iu,
+  /\b(?:sk|rk)_live_[A-Za-z0-9]{12,}\b/u,
+  /\bwhsec_[A-Za-z0-9]{12,}\b/u,
+  /\b(?:[a-z]+[_-])*(?:api[_-]?key|capability|client[_-]?secret|master[_-]?key|password|product[_-]?key|secret|token)\s*[:=]\s*\S+/iu,
+  /\bTEST(?:-[A-Z0-9]{5}){3,4}\b/u,
+  /\b(?:CANARY|DO_NOT_LEAK|SYNTHETIC_SECRET_CANARY)\b/iu,
+] as const;
+
 const forbiddenExactMetadataKeys = new Set([
   "apikey",
   "authenticationtag",
@@ -162,6 +171,11 @@ const validateAuditMetadataValue = (
   if (typeof value === "string") {
     if (value.length > maxAuditMetadataStringLength) {
       throw new Error(`Audit metadata string is too large at ${path}`);
+    }
+    if (
+      forbiddenMetadataStringPatterns.some((pattern) => pattern.test(value))
+    ) {
+      throw new Error(`Audit metadata contains a forbidden value at ${path}`);
     }
     return;
   }
