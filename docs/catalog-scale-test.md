@@ -52,6 +52,10 @@ snapshot identity `(offer_id, source_evidence_version, captured_at)` and
 includes the evidence ID consumed by the following decision join. Without that
 index, the page-level replay check scanned the growing evidence table and made
 catalog persistence degrade quadratically.
+The index is unique because those three fields are the durable identity of one
+captured evidence snapshot. Page persistence uses `ON CONFLICT DO NOTHING`, so
+exact replay is independent of table statistics and duplicate snapshots remain
+impossible under concurrent writers.
 
 Publication reads PostgreSQL snapshots by ProductId and invokes the real
 publication service with a deterministic local storefront. Eligible records are

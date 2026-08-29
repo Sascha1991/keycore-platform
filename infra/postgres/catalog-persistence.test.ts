@@ -172,6 +172,30 @@ describePostgres("PostgreSQL catalog synchronization persistence", () => {
       catalogOfferProductMappingChangedMessage,
     );
   });
+
+  it("enforces the durable region evidence snapshot identity", async () => {
+    await expect(
+      query(`
+        INSERT INTO region_evidence(
+          offer_id, allowed_countries, excluded_countries,
+          supplier_region_identifier, documented_semantics_reference,
+          requires_vpn, requires_foreign_account, activation_restrictions,
+          has_missing_values, has_unknown_values, has_contradictory_evidence,
+          source_evidence_version, captured_at
+        )
+        SELECT offer_id, allowed_countries, excluded_countries,
+          supplier_region_identifier, documented_semantics_reference,
+          requires_vpn, requires_foreign_account, activation_restrictions,
+          has_missing_values, has_unknown_values, has_contradictory_evidence,
+          source_evidence_version, captured_at
+        FROM region_evidence
+        ORDER BY id
+        LIMIT 1
+      `),
+    ).rejects.toThrow(
+      /region_evidence_offer_version_captured_idx|duplicate key/u,
+    );
+  });
 });
 
 const normalizedOffers = async (
