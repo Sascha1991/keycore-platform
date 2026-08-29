@@ -103,6 +103,54 @@ describePostgres("PostgresOrderRepository", () => {
     }
   });
 
+  it("processes 10 unrelated orders concurrently without a repository-wide lock", async () => {
+    const database = await initDatabase();
+    try {
+      const product = await insertFixtureProduct(database);
+      const locks = await Promise.all(
+        Array.from({ length: 10 }, () => createActiveLock(database, product)),
+      );
+      const results = await Promise.all(
+        locks.map((lock, index) =>
+          withOrderClient(database.schemaName, (service) =>
+            service.createOrder({
+              correlationId,
+              idempotencyKey: `independent-order-${index}`,
+              priceLockId: lock.id,
+              productId: product,
+              quantity: 1,
+            }),
+          ),
+        ),
+      );
+
+      expect(results.every((result) => result.status === "CREATED")).toBe(true);
+      expect(new Set(results.map((result) => result.order?.id)).size).toBe(10);
+      await expect(orderCount(database)).resolves.toBe(10);
+      const lockStates = await priceLockStates(
+        database,
+        locks.map((lock) => lock.id),
+      );
+      expect(
+        [...lockStates.values()].every((status) => status === "CONSUMED"),
+      ).toBe(true);
+      const businessEffects = await database.query<{
+        readonly history_count: string;
+        readonly outbox_count: string;
+      }>(`
+        SELECT
+          (SELECT count(*)::text FROM order_transition_history) AS history_count,
+          (SELECT count(*)::text FROM outbox_events WHERE event_type = 'order.created') AS outbox_count
+      `);
+      expect(businessEffects.rows[0]).toEqual({
+        history_count: "10",
+        outbox_count: "10",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  }, 30_000);
+
   it("fails closed when concurrent different idempotency keys try the same PriceLock", async () => {
     const database = await initDatabase();
     try {
@@ -426,27 +474,24 @@ describePostgres("PostgresOrderRepository", () => {
       const product = await insertFixtureProduct(database);
       const lock = await createActiveLock(database, product);
       const completed = await completeOrder(database, product, lock.id);
-      const results = await Promise.all([
-        withOrderClient(database.schemaName, (service) =>
-          service.requestRefund({
-            correlationId,
-            expectedVersion: completed.recordVersion,
-            orderId: completed.id,
-          }),
+      const results = await Promise.all(
+        Array.from({ length: 10 }, () =>
+          withOrderClient(database.schemaName, (service) =>
+            service.requestRefund({
+              correlationId,
+              expectedVersion: completed.recordVersion,
+              orderId: completed.id,
+            }),
+          ),
         ),
-        withOrderClient(database.schemaName, (service) =>
-          service.requestRefund({
-            correlationId,
-            expectedVersion: completed.recordVersion,
-            orderId: completed.id,
-          }),
-        ),
-      ]);
+      );
 
-      expect(results.map((result) => result.status).sort()).toEqual([
-        "CONFLICT",
-        "UPDATED",
-      ]);
+      expect(
+        results.filter((result) => result.status === "UPDATED"),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "CONFLICT"),
+      ).toHaveLength(9);
       await expect(
         database.query(
           "UPDATE keycore_orders SET customer_amount_minor = 1 WHERE id = $1",

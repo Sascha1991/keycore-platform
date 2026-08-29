@@ -158,18 +158,24 @@ describe.skipIf(!connectionString)(
             operationId: createdOperation.id,
           }),
         );
-        const succeeded = await withProcurementRepository(
-          database.schemaName,
-          (repository) =>
-            repository.markSucceeded({
-              acquisitionAmount: money(1_000n, currency("EUR")),
-              executionToken: leaseToken,
-              externalSupplierOrderId: "supplier-order-alpha",
-              normalizedSupplierStatus: "FULFILLED",
-              now,
-              operationId: createdOperation.id,
-              responseFingerprint: "safe-fingerprint",
-            }),
+        const completionRace = await Promise.all(
+          Array.from({ length: 10 }, () =>
+            withProcurementRepository(database.schemaName, (repository) =>
+              repository.markSucceeded({
+                acquisitionAmount: money(1_000n, currency("EUR")),
+                executionToken: leaseToken,
+                externalSupplierOrderId: "supplier-order-alpha",
+                normalizedSupplierStatus: "FULFILLED",
+                now,
+                operationId: createdOperation.id,
+                responseFingerprint: "safe-fingerprint",
+              }),
+            ),
+          ),
+        );
+        const succeeded = completionRace.find((result) => result !== null);
+        expect(completionRace.filter((result) => result !== null)).toHaveLength(
+          1,
         );
         expect(succeeded?.status).toBe("SUCCEEDED");
 

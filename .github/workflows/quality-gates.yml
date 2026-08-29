@@ -69,6 +69,17 @@ jobs:
           path: artifacts/catalog-scale/
           if-no-files-found: error
           retention-days: 14
+      - name: Run KS-11-04 order concurrency validation
+        run: npm run order:concurrency
+        timeout-minutes: 15
+      - name: Archive safe KS-11-04 order concurrency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ks-11-04-order-concurrency-evidence
+          path: artifacts/order-concurrency/
+          if-no-files-found: error
+          retention-days: 14
 
   php:
     name: PHP foundation checks

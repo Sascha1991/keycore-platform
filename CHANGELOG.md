@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added KS-11-04 release-blocking PostgreSQL order concurrency validation for
+  idempotent order creation, PriceLock ownership, payment events, procurement,
+  fulfillment, customer delivery, guest claims, refunds, optimistic state
+  transitions and ten independent orders. Competing operations use independent
+  clients, external effects remain synthetic, and CI archives omission-first
+  aggregate evidence; KS-11-05 through KS-11-07 remain not started.
+
 - Added KS-11-03 release-blocking catalog scale validation with 50,000
   deterministic paged synthetic products, 60,000 baseline offers, PostgreSQL
   baseline/refresh/replay coverage, Germany fail-closed publication checks,
