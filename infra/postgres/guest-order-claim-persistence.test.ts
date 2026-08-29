@@ -108,12 +108,7 @@ describePostgres("PostgresGuestOrderClaimRepository", () => {
           }),
         ),
       );
-      expect(race.filter((result) => result.status === "CLAIMED")).toHaveLength(
-        1,
-      );
-      expect(
-        race.filter((result) => result.status === "CLAIM_DENIED"),
-      ).toHaveLength(9);
+      expectClaimRaceDistribution(race);
       await expect(
         database.query(
           "SELECT customer_id::text FROM keycore_orders WHERE id = $1",
@@ -164,16 +159,30 @@ describePostgres("PostgresGuestOrderClaimRepository", () => {
           }),
         ),
       );
-      expect(
-        competingRace.filter((result) => result.status === "CLAIMED"),
-      ).toHaveLength(1);
+      expectClaimRaceDistribution(competingRace);
       await expect(
         database.query(
-          "SELECT customer_id::text FROM keycore_orders WHERE id = $1",
+          `
+            SELECT o.customer_id::text,
+              count(c.id) FILTER (WHERE c.consumed_at IS NOT NULL)::text AS consumed_count,
+              count(c.id) FILTER (
+                WHERE c.consumed_at IS NULL AND c.revoked_at IS NULL
+              )::text AS active_count
+            FROM keycore_orders o
+            LEFT JOIN guest_order_claim_challenges c ON c.order_id = o.id
+            WHERE o.id = $1
+            GROUP BY o.id, o.customer_id
+          `,
           [competingOrder],
         ),
       ).resolves.toMatchObject({
-        rows: [expect.objectContaining({ customer_id: buyer })],
+        rows: [
+          expect.objectContaining({
+            active_count: "0",
+            consumed_count: "1",
+            customer_id: buyer,
+          }),
+        ],
       });
     } finally {
       await database.cleanup();
@@ -468,4 +477,18 @@ const required = <TValue>(value: TValue | null | undefined): TValue => {
     throw new Error("Expected PostgreSQL guest claim fixture");
   }
   return value;
+};
+
+const expectClaimRaceDistribution = (
+  results: readonly { readonly status: string }[],
+): void => {
+  const statusCounts = Object.fromEntries(
+    [...new Set(results.map((result) => result.status))]
+      .sort()
+      .map((status) => [
+        status,
+        results.filter((result) => result.status === status).length,
+      ]),
+  );
+  expect(statusCounts).toEqual({ CLAIMED: 1, CLAIM_DENIED: 9 });
 };

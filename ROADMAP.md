@@ -156,11 +156,10 @@ Load, security, recovery and end-to-end testing with synthetic and sandbox trans
 
 Phase 11 is tracked in `docs/phase-11-acceptance-matrix.md` as seven distinct
 checkpoints. KS-11-01 staging, KS-11-02 deterministic E2E acceptance, KS-11-03
-catalog scale validation and KS-11-04 order concurrency validation are complete
-and merged. KS-11-05 implements the security assessment and release gate and is
-pending review and merge. KS-11-06 recovery exercise and KS-11-07 owner UAT
-remain not started. Phase 11 is not complete and `SECURITY-READINESS` remains
-unapproved.
+catalog scale validation, KS-11-04 order concurrency validation and KS-11-05
+security assessment are complete and merged. KS-11-06 implements the recovery
+exercise and is pending review and merge. KS-11-07 owner UAT remains not
+started. Phase 11 is not complete and `SECURITY-READINESS` remains unapproved.
 
 ## Phase 12 – Production Readiness
 
