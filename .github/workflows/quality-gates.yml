@@ -54,9 +54,10 @@ jobs:
           pg_dump --version
       - run: npm run check
       - name: Run KS-11-02 acceptance suite
+        id: e2e_acceptance
         run: npm run e2e:acceptance
       - name: Archive safe KS-11-02 acceptance evidence
-        if: always()
+        if: always() && steps.e2e_acceptance.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: ks-11-02-e2e-acceptance-evidence
@@ -64,10 +65,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Run KS-11-03 catalog scale validation
+        id: catalog_scale
         run: npm run catalog:scale
         timeout-minutes: 20
       - name: Archive safe KS-11-03 catalog scale evidence
-        if: always()
+        if: always() && steps.catalog_scale.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: ks-11-03-catalog-scale-evidence
@@ -75,10 +77,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Run KS-11-04 order concurrency validation
+        id: order_concurrency
         run: npm run order:concurrency
         timeout-minutes: 15
       - name: Archive safe KS-11-04 order concurrency evidence
-        if: always()
+        if: always() && steps.order_concurrency.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: ks-11-04-order-concurrency-evidence
