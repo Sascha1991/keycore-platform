@@ -112,6 +112,17 @@ jobs:
           path: artifacts/recovery-exercise/
           if-no-files-found: error
           retention-days: 14
+      - name: Run KS-11-07 UAT package validation
+        id: uat_validation
+        run: npm run uat:validate
+      - name: Archive safe KS-11-07 UAT preparation evidence
+        if: always() && steps.uat_validation.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ks-11-07-uat-preparation-evidence
+          path: artifacts/user-acceptance/
+          if-no-files-found: error
+          retention-days: 14
 
   php:
     name: PHP foundation checks

@@ -22,6 +22,7 @@
     "order:concurrency": "vitest run --config vitest.order-concurrency.config.ts",
     "recovery:exercise": "vitest run --config vitest.recovery-exercise.config.ts",
     "security:assessment": "vitest run --config vitest.security-assessment.config.ts",
+    "uat:validate": "node --import tsx scripts/validate-uat.ts",
     "db:migrate": "node --import tsx infra/postgres/migrate.ts up",
     "db:rollback": "node --import tsx infra/postgres/migrate.ts down",
     "db:status": "node --import tsx infra/postgres/migrate.ts status",
