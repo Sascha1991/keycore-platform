@@ -587,15 +587,10 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
             JOIN region_evidence AS evidence ON evidence.offer_id = offers.id
               AND evidence.source_evidence_version = source.policy_version
               AND evidence.captured_at = source.captured_at
-            WHERE NOT EXISTS (
-              SELECT 1
-              FROM region_decisions
-              WHERE region_decisions.offer_id = offers.id
-                AND region_decisions.region_evidence_id = evidence.id
-                AND region_decisions.decision = source.decision
-                AND region_decisions.reason_code = source.reason_code
-                AND region_decisions.policy_version = source.policy_version
+            ON CONFLICT (
+              offer_id, region_evidence_id, decision, reason_code, policy_version
             )
+            DO NOTHING
           `,
             [supplierUuid, offerPayload, input.observedAt],
           ),

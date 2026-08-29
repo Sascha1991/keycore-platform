@@ -57,6 +57,12 @@ captured evidence snapshot. Page persistence uses `ON CONFLICT DO NOTHING`, so
 exact replay is independent of table statistics and duplicate snapshots remain
 impossible under concurrent writers.
 
+The same measured issue affected decision replay more strongly. Migration 027
+also makes `(offer_id, region_evidence_id, decision, reason_code,
+policy_version)` unique, matching the pre-existing application deduplication
+identity. Decision persistence likewise uses `ON CONFLICT DO NOTHING`; it does
+not bypass Germany eligibility evaluation or change a decision.
+
 Publication reads PostgreSQL snapshots by ProductId and invokes the real
 publication service with a deterministic local storefront. Eligible records are
 created or updated; blocked records remain blocked or are unpublished. Repeated
@@ -110,9 +116,12 @@ JSON)` is inspected for the supplier-product, supplier-offer, publication and
 region-evidence snapshot indexes without asserting brittle costs or exact plan
 costs.
 
-Reversible migration 027 adds only
-`region_evidence_offer_version_captured_idx`; no constraints or business-state
-semantics change.
+Reversible migration 027 adds
+`region_evidence_offer_version_captured_idx` and
+`region_decisions_snapshot_identity_idx`. Both formalize pre-existing snapshot
+identities; no business-state meaning changes. PostgreSQL regression explicitly
+executes the down migration, verifies both indexes are absent (the migration
+026 shape), and reapplies 027 safely.
 
 ## Safe Evidence
 

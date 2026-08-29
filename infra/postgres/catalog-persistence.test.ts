@@ -17,6 +17,7 @@ import {
   type MockOfferFixture,
 } from "../suppliers/mock/mock-supplier.js";
 import { PostgresCatalogSyncRepository } from "./catalog-repositories.js";
+import { loadMigrations } from "./migrations.js";
 import { PostgresTestDatabase } from "./test-database.js";
 
 const databaseUrl = process.env.KEYCORE_TEST_DATABASE_URL;
@@ -196,7 +197,58 @@ describePostgres("PostgreSQL catalog synchronization persistence", () => {
       /region_evidence_offer_version_captured_idx|duplicate key/u,
     );
   });
+
+  it("enforces the durable region decision identity", async () => {
+    await expect(
+      query(`
+        INSERT INTO region_decisions(
+          offer_id, region_evidence_id, decision, reason_code,
+          policy_version, source_evidence_version, evaluated_at
+        )
+        SELECT offer_id, region_evidence_id, decision, reason_code,
+          policy_version, source_evidence_version, evaluated_at
+        FROM region_decisions
+        ORDER BY id
+        LIMIT 1
+      `),
+    ).rejects.toThrow(/region_decisions_snapshot_identity_idx|duplicate key/u);
+  });
+
+  it("rolls migration 027 back to its predecessor and reapplies safely", async () => {
+    const migration = (await loadMigrations()).find(
+      (candidate) => candidate.version === "027",
+    );
+    if (!migration) throw new Error("Migration 027 is unavailable");
+
+    await query(migration.downSql);
+    await expect(catalogSnapshotIndexes()).resolves.toEqual([]);
+    await query(migration.upSql);
+    await expect(catalogSnapshotIndexes()).resolves.toEqual([
+      "region_decisions_snapshot_identity_idx",
+      "region_evidence_offer_version_captured_idx",
+    ]);
+  });
 });
+
+const catalogSnapshotIndexes = async (): Promise<readonly string[]> => {
+  const result = await query<{ readonly indexname: string }>(
+    `
+      SELECT indexname
+      FROM pg_indexes
+      WHERE schemaname = $1
+        AND indexname = ANY($2::text[])
+      ORDER BY indexname
+    `,
+    [
+      schemaName,
+      [
+        "region_decisions_snapshot_identity_idx",
+        "region_evidence_offer_version_captured_idx",
+      ],
+    ],
+  );
+  return result.rows.map((row) => row.indexname);
+};
 
 const normalizedOffers = async (
   supplier: MockSupplier,

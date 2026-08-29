@@ -39,8 +39,8 @@ boundaries.
 - Safe CI evidence is archived for 14 days.
 - Required catalog, PostgreSQL, publication, staging, E2E and repository quality
   gates pass.
-- Region evidence snapshot replay uses an indexed offer/version/capture lookup;
-  representative PostgreSQL plans prove the supporting index is selected.
+- Region evidence and decision replay use indexed natural snapshot identities;
+  representative PostgreSQL plans prove both supporting indexes are selected.
 
 ## Forbidden Scope
 

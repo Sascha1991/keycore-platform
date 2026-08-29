@@ -246,6 +246,7 @@ describePostgres("KS-11-03 catalog scale validation", () => {
         "storefront_publications_product_storefront_unique",
         "storefront_publications_remote_storefront_unique",
         "region_evidence_offer_version_captured_idx",
+        "region_decisions_snapshot_identity_idx",
       ]),
     );
     const plans = await lookupPlans();
@@ -260,6 +261,9 @@ describePostgres("KS-11-03 catalog scale validation", () => {
     );
     expect(plans.regionEvidence).toContain(
       "region_evidence_offer_version_captured_idx",
+    );
+    expect(plans.regionDecision).toContain(
+      "region_decisions_snapshot_identity_idx",
     );
   });
 
@@ -653,6 +657,7 @@ const relevantIndexes = async (): Promise<readonly string[]> => {
         "storefront_publications_product_storefront_unique",
         "storefront_publications_remote_storefront_unique",
         "region_evidence_offer_version_captured_idx",
+        "region_decisions_snapshot_identity_idx",
       ],
     ],
   );
@@ -680,6 +685,10 @@ const lookupPlans = async () => {
     regionEvidence: await explain(
       "SELECT * FROM region_evidence WHERE offer_id = (SELECT id FROM offers LIMIT 1) AND source_evidence_version = $1 AND captured_at = $2",
       ["germany-eligibility-v1", refreshNow],
+    ),
+    regionDecision: await explain(
+      "SELECT * FROM region_decisions WHERE offer_id = (SELECT id FROM offers LIMIT 1) AND region_evidence_id = (SELECT id FROM region_evidence LIMIT 1) AND decision = $1 AND reason_code = $2 AND policy_version = $3",
+      ["ALLOWED", "EXPLICITLY_ALLOWED", "de-eligibility-v1"],
     ),
     supplierOffer: await explain(
       "SELECT * FROM supplier_offers WHERE supplier_id = (SELECT id FROM suppliers WHERE supplier_code = $1) AND supplier_offer_id = $2",
