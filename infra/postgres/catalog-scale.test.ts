@@ -262,6 +262,9 @@ describePostgres("KS-11-03 catalog scale validation", () => {
     expect(plans.regionEvidence).toContain(
       "region_evidence_offer_version_captured_idx",
     );
+    expect(plans.regionEvidenceResolution).toContain(
+      "region_evidence_offer_version_captured_idx",
+    );
     expect(plans.regionDecision).toContain(
       "region_decisions_snapshot_identity_idx",
     );
@@ -686,7 +689,7 @@ const lookupPlans = async () => {
       "SELECT * FROM region_evidence WHERE offer_id = (SELECT id FROM offers LIMIT 1) AND source_evidence_version = $1 AND captured_at = $2",
       ["germany-eligibility-v1", refreshNow],
     ),
-    regionDecision: await explain(
+    regionEvidenceResolution: await explain(
       `SELECT evidence.id
        FROM offers
        JOIN LATERAL (
@@ -699,6 +702,10 @@ const lookupPlans = async () => {
        ) AS evidence ON true
        WHERE offers.id = (SELECT id FROM offers LIMIT 1)`,
       ["germany-eligibility-v1", refreshNow],
+    ),
+    regionDecision: await explain(
+      "SELECT * FROM region_decisions WHERE offer_id = (SELECT id FROM offers LIMIT 1) AND region_evidence_id = (SELECT id FROM region_evidence LIMIT 1) AND decision = $1 AND reason_code = $2 AND policy_version = $3",
+      ["ALLOWED", "REGION_DE_ALLOWED", "germany-eligibility-v1"],
     ),
     supplierOffer: await explain(
       "SELECT * FROM supplier_offers WHERE supplier_id = (SELECT id FROM suppliers WHERE supplier_code = $1) AND supplier_offer_id = $2",
