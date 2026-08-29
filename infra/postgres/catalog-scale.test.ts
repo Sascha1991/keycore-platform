@@ -73,6 +73,16 @@ const publicationPageMs: Record<ScaleExecutionPhase, number[]> = {
   REFRESH: [],
   REPLAY: [],
 };
+const operationMs: Record<ScaleExecutionPhase, Record<string, number[]>> = {
+  BASELINE: {},
+  REFRESH: {},
+  REPLAY: {},
+};
+const transactionMs: Record<ScaleExecutionPhase, Record<string, number[]>> = {
+  BASELINE: {},
+  REFRESH: {},
+  REPLAY: {},
+};
 let baselineCounts: CatalogScaleCounts;
 let refreshCounts: CatalogScaleCounts;
 let replayCounts: CatalogScaleCounts;
@@ -104,6 +114,13 @@ describePostgres("KS-11-03 catalog scale validation", () => {
     database = await PostgresTestDatabase.initialize({
       connectionString: databaseUrl,
       schemaName,
+      transactionOperationCompleted: ({ durationMs, operation }) => {
+        recordTiming(
+          transactionMs[activePersistencePhase],
+          operation,
+          durationMs,
+        );
+      },
     });
     schemaInitializationMs = Math.round(performance.now() - schemaStarted);
     source = new DeterministicScaleSupplier();
@@ -117,6 +134,13 @@ describePostgres("KS-11-03 catalog scale validation", () => {
       repository: new PostgresCatalogSyncRepository(requiredDatabase(), {
         pagePersisted: ({ durationMs }) => {
           pagePersistenceMs[activePersistencePhase].push(durationMs);
+        },
+        operationCompleted: ({ durationMs, operation }) => {
+          recordTiming(
+            operationMs[activePersistencePhase],
+            operation,
+            durationMs,
+          );
         },
         staleRecordsDeactivated: ({ durationMs }) => {
           staleDeactivationMs[activePersistencePhase].push(durationMs);
@@ -733,11 +757,37 @@ const phaseProfile = (
   publicationMs: number,
 ) => ({
   catalogSyncMs,
+  operations: summarizeTimings(operationMs[phase]),
   pagePersistenceMs: representativePageDurations(pagePersistenceMs[phase]),
   publicationMs,
   publicationPageMs: representativePageDurations(publicationPageMs[phase]),
   staleDeactivationMs: staleDeactivationMs[phase].at(-1) ?? 0,
+  transactions: summarizeTimings(transactionMs[phase]),
 });
+
+const recordTiming = (
+  target: Record<string, number[]>,
+  operation: string,
+  durationMs: number,
+): void => {
+  (target[operation] ??= []).push(durationMs);
+};
+
+const summarizeTimings = (
+  timings: Readonly<Record<string, readonly number[]>>,
+): Readonly<
+  Record<string, { count: number; maxMs: number; totalMs: number }>
+> =>
+  Object.fromEntries(
+    Object.entries(timings).map(([operation, durations]) => [
+      operation,
+      {
+        count: durations.length,
+        maxMs: Math.max(0, ...durations),
+        totalMs: durations.reduce((total, duration) => total + duration, 0),
+      },
+    ]),
+  );
 
 const writeEvidence = async (input: {
   readonly baselineCounts: CatalogScaleCounts;

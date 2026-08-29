@@ -59,6 +59,10 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
         readonly offers: number;
         readonly products: number;
       }) => void;
+      readonly operationCompleted?: (observation: {
+        readonly durationMs: number;
+        readonly operation: string;
+      }) => void;
     },
   ) {}
 
@@ -68,20 +72,22 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
     readonly startedAt: Date;
   }): Promise<CatalogSyncRun> {
     const supplierId = await this.ensureSupplier(input.supplierId);
-    const result = await this.queryOne<SyncRunRow>(
-      `
+    const result = await this.observeOperation("run_begin", () =>
+      this.queryOne<SyncRunRow>(
+        `
         INSERT INTO catalog_sync_runs(supplier_id, mode, status, metrics, started_at)
         VALUES ($1, $2, 'RUNNING', $3::jsonb, $4)
         RETURNING id, $5::text AS supplier_code, mode, status, metrics, error_message,
           started_at, completed_at, failed_at
       `,
-      [
-        supplierId,
-        input.mode,
-        JSON.stringify(zeroMetrics()),
-        input.startedAt,
-        input.supplierId,
-      ],
+        [
+          supplierId,
+          input.mode,
+          JSON.stringify(zeroMetrics()),
+          input.startedAt,
+          input.supplierId,
+        ],
+      ),
     );
     return runFromRow(result);
   }
@@ -91,8 +97,9 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
     readonly completedAt: Date;
     readonly metrics: CatalogSyncMetrics;
   }): Promise<CatalogSyncRun> {
-    const row = await this.queryOne<SyncRunRow>(
-      `
+    const row = await this.observeOperation("run_complete", () =>
+      this.queryOne<SyncRunRow>(
+        `
         UPDATE catalog_sync_runs
         SET status = 'SUCCEEDED', completed_at = $2, metrics = $3::jsonb
         WHERE id = $1
@@ -100,7 +107,8 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
           (SELECT supplier_code FROM suppliers WHERE suppliers.id = catalog_sync_runs.supplier_id) AS supplier_code,
           mode, status, metrics, error_message, started_at, completed_at, failed_at
       `,
-      [input.runId, input.completedAt, JSON.stringify(input.metrics)],
+        [input.runId, input.completedAt, JSON.stringify(input.metrics)],
+      ),
     );
     return runFromRow(row);
   }
@@ -111,8 +119,9 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
     readonly errorMessage: string;
     readonly metrics: CatalogSyncMetrics;
   }): Promise<CatalogSyncRun> {
-    const row = await this.queryOne<SyncRunRow>(
-      `
+    const row = await this.observeOperation("run_fail", () =>
+      this.queryOne<SyncRunRow>(
+        `
         UPDATE catalog_sync_runs
         SET status = 'FAILED', failed_at = $2, error_message = $3, metrics = $4::jsonb
         WHERE id = $1
@@ -120,12 +129,13 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
           (SELECT supplier_code FROM suppliers WHERE suppliers.id = catalog_sync_runs.supplier_id) AS supplier_code,
           mode, status, metrics, error_message, started_at, completed_at, failed_at
       `,
-      [
-        input.runId,
-        input.failedAt,
-        input.errorMessage,
-        JSON.stringify(input.metrics),
-      ],
+        [
+          input.runId,
+          input.failedAt,
+          input.errorMessage,
+          JSON.stringify(input.metrics),
+        ],
+      ),
     );
     return runFromRow(row);
   }
@@ -298,18 +308,22 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
     const externalProductIds = input.products.map(
       ({ product }) => product.supplierProductId,
     );
-    const existing = await this.db.query<{
-      readonly product_id: string;
-      readonly supplier_product_id: string;
-    }>(
-      `
+    const existing = await this.observeOperation(
+      "existing_identity_preload",
+      () =>
+        this.db.query<{
+          readonly product_id: string;
+          readonly supplier_product_id: string;
+        }>(
+          `
         SELECT supplier_product_id, product_id::text
         FROM supplier_products
         WHERE supplier_id = $1
           AND supplier_product_id = ANY($2::text[])
           AND product_id IS NOT NULL
       `,
-      [supplierUuid, externalProductIds],
+          [supplierUuid, externalProductIds],
+        ),
     );
     const productIds = new Map(
       existing.rows.map((row) => [row.supplier_product_id, row.product_id]),
@@ -358,10 +372,11 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
 
     const startedAt = performance.now();
     await this.db.transaction(async (db) => {
-      const mappingConflict = await db.query<{
-        readonly conflict: boolean;
-      }>(
-        `
+      const mappingConflict = await this.observeOperation(
+        "mapping_conflict",
+        () =>
+          db.query<{ readonly conflict: boolean }>(
+            `
           SELECT true AS conflict
           FROM jsonb_to_recordset($2::jsonb) AS source(
             supplier_offer_id text,
@@ -373,7 +388,8 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
           WHERE supplier_products.supplier_product_id <> source.supplier_product_id
           LIMIT 1
         `,
-        [supplierUuid, offerPayload],
+            [supplierUuid, offerPayload],
+          ),
       );
       if (mappingConflict.rows[0]?.conflict) {
         throw new CatalogSyncError(
@@ -382,8 +398,9 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
         );
       }
 
-      await db.query(
-        `
+      await this.observeOperation("product_upsert", () =>
+        db.query(
+          `
           INSERT INTO products(
             id, product_type, title, platform, lifecycle, active,
             canonical_metadata_confidence, canonical_metadata
@@ -413,10 +430,12 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
             canonical_metadata = EXCLUDED.canonical_metadata,
             updated_at = now()
         `,
-        [productPayload],
+          [productPayload],
+        ),
       );
-      await db.query(
-        `
+      await this.observeOperation("supplier_product_upsert", () =>
+        db.query(
+          `
           INSERT INTO supplier_products(
             supplier_id, supplier_product_id, product_id, title, raw_metadata,
             lifecycle, active, first_seen_at, last_seen_at, last_sync_run_id
@@ -448,12 +467,14 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
             last_sync_run_id = EXCLUDED.last_sync_run_id,
             updated_at = now()
         `,
-        [supplierUuid, productPayload, input.observedAt, input.runId],
+          [supplierUuid, productPayload, input.observedAt, input.runId],
+        ),
       );
 
       if (offers.length > 0) {
-        await db.query(
-          `
+        await this.observeOperation("supplier_offer_upsert", () =>
+          db.query(
+            `
             INSERT INTO supplier_offers(
               supplier_id, supplier_product_id, supplier_offer_id,
               raw_metadata, active, first_seen_at, last_seen_at,
@@ -476,10 +497,12 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
               last_sync_run_id = EXCLUDED.last_sync_run_id,
               updated_at = now()
           `,
-          [supplierUuid, offerPayload, input.observedAt, input.runId],
+            [supplierUuid, offerPayload, input.observedAt, input.runId],
+          ),
         );
-        await db.query(
-          `
+        await this.observeOperation("offer_upsert", () =>
+          db.query(
+            `
             INSERT INTO offers(product_id, supplier_offer_id, availability)
             SELECT supplier_products.product_id, supplier_offers.id,
               source.availability
@@ -496,10 +519,12 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
               availability = EXCLUDED.availability,
               updated_at = now()
           `,
-          [supplierUuid, offerPayload],
+            [supplierUuid, offerPayload],
+          ),
         );
-        await db.query(
-          `
+        await this.observeOperation("region_evidence", () =>
+          db.query(
+            `
             INSERT INTO region_evidence(
               offer_id, allowed_countries, excluded_countries,
               supplier_region_identifier, documented_semantics_reference,
@@ -536,10 +561,12 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
             ON CONFLICT (offer_id, source_evidence_version, captured_at)
             DO NOTHING
           `,
-          [supplierUuid, offerPayload],
+            [supplierUuid, offerPayload],
+          ),
         );
-        await db.query(
-          `
+        await this.observeOperation("region_decision", () =>
+          db.query(
+            `
             INSERT INTO region_decisions(
               offer_id, region_evidence_id, decision, reason_code,
               policy_version, source_evidence_version, evaluated_at
@@ -570,10 +597,12 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
                 AND region_decisions.policy_version = source.policy_version
             )
           `,
-          [supplierUuid, offerPayload, input.observedAt],
+            [supplierUuid, offerPayload, input.observedAt],
+          ),
         );
-        await db.query(
-          `
+        await this.observeOperation("price_snapshot", () =>
+          db.query(
+            `
             INSERT INTO price_snapshots(
               offer_id, amount_minor, currency, availability, captured_at
             )
@@ -599,7 +628,8 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
                 AND price_snapshots.captured_at = source.captured_at
             )
           `,
-          [supplierUuid, offerPayload],
+            [supplierUuid, offerPayload],
+          ),
         );
       }
     });
@@ -617,21 +647,25 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
   }): Promise<{ readonly products: number; readonly offers: number }> {
     const startedAt = performance.now();
     const supplierUuid = await this.ensureSupplier(input.supplierId);
-    const offers = await this.db.query(
-      `
+    const offers = await this.observeOperation("stale_offer_update", () =>
+      this.db.query(
+        `
         UPDATE supplier_offers
         SET active = false, last_seen_at = $3
         WHERE supplier_id = $1 AND active = true AND last_sync_run_id IS DISTINCT FROM $2
       `,
-      [supplierUuid, input.runId, input.observedAt],
+        [supplierUuid, input.runId, input.observedAt],
+      ),
     );
-    const products = await this.db.query(
-      `
+    const products = await this.observeOperation("stale_product_update", () =>
+      this.db.query(
+        `
         UPDATE supplier_products
         SET active = false, last_seen_at = $3
         WHERE supplier_id = $1 AND active = true AND last_sync_run_id IS DISTINCT FROM $2
       `,
-      [supplierUuid, input.runId, input.observedAt],
+        [supplierUuid, input.runId, input.observedAt],
+      ),
     );
     const result = {
       offers: offers.rowCount ?? 0,
@@ -664,8 +698,9 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
 
   public async saveCheckpoint(input: CatalogSyncCheckpoint): Promise<void> {
     const supplierUuid = await this.ensureSupplier(input.supplierId);
-    await this.db.query(
-      `
+    await this.observeOperation("checkpoint_save", () =>
+      this.db.query(
+        `
         INSERT INTO catalog_sync_checkpoints(
           supplier_id, mode, cursor, high_watermark, completed_at, updated_at
         )
@@ -677,13 +712,14 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
           completed_at = EXCLUDED.completed_at,
           updated_at = now()
       `,
-      [
-        supplierUuid,
-        input.mode,
-        input.cursor ?? null,
-        input.highWatermark ?? null,
-        input.completedAt ?? null,
-      ],
+        [
+          supplierUuid,
+          input.mode,
+          input.cursor ?? null,
+          input.highWatermark ?? null,
+          input.completedAt ?? null,
+        ],
+      ),
     );
   }
 
@@ -708,18 +744,35 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
   private async ensureSupplier(supplierCode: SupplierId): Promise<string> {
     const cached = this.supplierUuids.get(supplierCode);
     if (cached) return cached;
-    const row = await this.queryOne<IdRow>(
-      `
+    const row = await this.observeOperation("supplier_ensure", () =>
+      this.queryOne<IdRow>(
+        `
         INSERT INTO suppliers(supplier_code, display_name)
         VALUES ($1, $1)
         ON CONFLICT (supplier_code)
         DO UPDATE SET updated_at = now()
         RETURNING id
       `,
-      [supplierCode],
+        [supplierCode],
+      ),
     );
     this.supplierUuids.set(supplierCode, row.id);
     return row.id;
+  }
+
+  private async observeOperation<TResult>(
+    operation: string,
+    action: () => Promise<TResult>,
+  ): Promise<TResult> {
+    const startedAt = performance.now();
+    try {
+      return await action();
+    } finally {
+      this.observer?.operationCompleted?.({
+        durationMs: Math.round(performance.now() - startedAt),
+        operation,
+      });
+    }
   }
 
   private async ensureProduct(

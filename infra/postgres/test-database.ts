@@ -8,6 +8,10 @@ const pgcryptoAdvisoryLockKey = [0x4b435052, 0x0503] as const;
 export interface PostgresTestDatabaseOptions {
   readonly connectionString: string | undefined;
   readonly schemaName: string;
+  readonly transactionOperationCompleted?: (observation: {
+    readonly durationMs: number;
+    readonly operation: "BEGIN" | "COMMIT" | "ROLLBACK";
+  }) => void;
 }
 
 export class PostgresTestDatabase implements TransactionalQueryable {
@@ -60,13 +64,19 @@ export class PostgresTestDatabase implements TransactionalQueryable {
         ): Promise<QueryResult<TRow>> =>
           this.client.query<TRow>(sql, values ? [...values] : undefined),
       };
-      await this.client.query("BEGIN");
+      await this.observeTransactionOperation("BEGIN", () =>
+        this.client.query("BEGIN"),
+      );
       try {
         const result = await callback(transactionClient);
-        await this.client.query("COMMIT");
+        await this.observeTransactionOperation("COMMIT", () =>
+          this.client.query("COMMIT"),
+        );
         return result;
       } catch (error) {
-        await this.client.query("ROLLBACK");
+        await this.observeTransactionOperation("ROLLBACK", () =>
+          this.client.query("ROLLBACK"),
+        );
         throw error;
       }
     });
@@ -78,6 +88,21 @@ export class PostgresTestDatabase implements TransactionalQueryable {
     const queued = this.queryQueue.then(operation);
     this.queryQueue = queued.catch(() => undefined);
     return queued;
+  }
+
+  private async observeTransactionOperation<TResult>(
+    operation: "BEGIN" | "COMMIT" | "ROLLBACK",
+    action: () => Promise<TResult>,
+  ): Promise<TResult> {
+    const startedAt = performance.now();
+    try {
+      return await action();
+    } finally {
+      this.options.transactionOperationCompleted?.({
+        durationMs: Math.round(performance.now() - startedAt),
+        operation,
+      });
+    }
   }
 
   public async applyAllMigrations(): Promise<void> {
