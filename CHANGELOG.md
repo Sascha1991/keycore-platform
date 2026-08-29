@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added KS-11-05 release-blocking security assessment coverage for
+  authentication, authorization, guest claims, Product Key confidentiality,
+  payment, procurement, fulfillment, delivery, fraud, support, supplier claims,
+  database invariants, emergency controls and Germany eligibility. Added
+  omission-first SEC-001 through SEC-020 evidence, a threat model and residual
+  risk register, hardened audit-value and repository secret detection, and
+  documented one remediated Medium and one deferred Low finding. KS-11-06 and
+  KS-11-07 remain not started and `SECURITY-READINESS` remains unapproved.
+
 - Added KS-11-04 release-blocking PostgreSQL order concurrency validation for
   idempotent order creation, PriceLock ownership, payment events, procurement,
   fulfillment, customer delivery, guest claims, refunds, optimistic state
