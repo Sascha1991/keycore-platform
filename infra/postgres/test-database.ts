@@ -1,5 +1,6 @@
 import { Client, type QueryResult, type QueryResultRow } from "pg";
 
+import type { Queryable, TransactionalQueryable } from "./client.js";
 import { loadMigrations, type Migration } from "./migrations.js";
 
 const pgcryptoAdvisoryLockKey = [0x4b435052, 0x0503] as const;
@@ -7,9 +8,13 @@ const pgcryptoAdvisoryLockKey = [0x4b435052, 0x0503] as const;
 export interface PostgresTestDatabaseOptions {
   readonly connectionString: string | undefined;
   readonly schemaName: string;
+  readonly transactionOperationCompleted?: (observation: {
+    readonly durationMs: number;
+    readonly operation: "BEGIN" | "COMMIT" | "ROLLBACK";
+  }) => void;
 }
 
-export class PostgresTestDatabase {
+export class PostgresTestDatabase implements TransactionalQueryable {
   private readonly client: Client;
   private readonly appliedMigrations: Migration[] = [];
   private queryQueue: Promise<unknown> = Promise.resolve();
@@ -43,11 +48,61 @@ export class PostgresTestDatabase {
     sql: string,
     values?: readonly unknown[],
   ): Promise<QueryResult<TResult>> {
-    const query = this.queryQueue.then(() =>
+    return this.enqueue(() =>
       this.client.query<TResult>(sql, values ? [...values] : undefined),
     );
-    this.queryQueue = query.catch(() => undefined);
-    return query;
+  }
+
+  public async transaction<TResult>(
+    callback: (client: Queryable) => Promise<TResult>,
+  ): Promise<TResult> {
+    return this.enqueue(async () => {
+      const transactionClient: Queryable = {
+        query: async <TRow extends QueryResultRow = QueryResultRow>(
+          sql: string,
+          values?: readonly unknown[],
+        ): Promise<QueryResult<TRow>> =>
+          this.client.query<TRow>(sql, values ? [...values] : undefined),
+      };
+      await this.observeTransactionOperation("BEGIN", () =>
+        this.client.query("BEGIN"),
+      );
+      try {
+        const result = await callback(transactionClient);
+        await this.observeTransactionOperation("COMMIT", () =>
+          this.client.query("COMMIT"),
+        );
+        return result;
+      } catch (error) {
+        await this.observeTransactionOperation("ROLLBACK", () =>
+          this.client.query("ROLLBACK"),
+        );
+        throw error;
+      }
+    });
+  }
+
+  private async enqueue<TResult>(
+    operation: () => Promise<TResult>,
+  ): Promise<TResult> {
+    const queued = this.queryQueue.then(operation);
+    this.queryQueue = queued.catch(() => undefined);
+    return queued;
+  }
+
+  private async observeTransactionOperation<TResult>(
+    operation: "BEGIN" | "COMMIT" | "ROLLBACK",
+    action: () => Promise<TResult>,
+  ): Promise<TResult> {
+    const startedAt = performance.now();
+    try {
+      return await action();
+    } finally {
+      this.options.transactionOperationCompleted?.({
+        durationMs: Math.round(performance.now() - startedAt),
+        operation,
+      });
+    }
   }
 
   public async applyAllMigrations(): Promise<void> {

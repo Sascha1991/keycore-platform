@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS region_decisions_snapshot_identity_idx;
+DROP INDEX IF EXISTS region_evidence_offer_version_captured_idx;

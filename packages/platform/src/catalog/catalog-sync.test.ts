@@ -20,6 +20,7 @@ import {
   germanyEligibilityPolicyVersion,
 } from "./germany-eligibility.js";
 import type {
+  CatalogSyncPageProduct,
   NormalizedSupplierOffer,
   NormalizedSupplierProduct,
 } from "../contracts.js";
@@ -315,6 +316,56 @@ describe("catalog synchronization foundation", () => {
     });
   });
 
+  it("uses bounded repository page upserts when the adapter supports them", async () => {
+    const fixtures = createGeneratedMockSupplierFixtures({
+      productCount: 12,
+      seed: "batch",
+    });
+    const supplier = new MockSupplier(fixtures);
+    const repository = new RecordingBatchCatalogRepository();
+    const result = await new CatalogSyncService({
+      eligibilityEngine: new GermanyEligibilityEngine(),
+      offerDiscovery: new StaticCatalogOfferDiscovery(
+        await normalizedOffers(supplier, fixtures.offers),
+      ),
+      pageLimit: 5,
+      repository,
+    }).runFullSync(supplier);
+
+    expect(result.run.status).toBe("SUCCEEDED");
+    expect(repository.pageSizes).toEqual([5, 5, 2]);
+    expect(repository.listProducts()).toHaveLength(12);
+    expect(repository.listOffers()).toHaveLength(14);
+  });
+
+  it("fails a batch before persistence when one page repeats an identity", async () => {
+    const fixtures = createGeneratedMockSupplierFixtures({
+      productCount: 1,
+      seed: "duplicate-page",
+    });
+    const product = requiredFixture(fixtures.products[0]);
+    const supplier = new MockSupplier({
+      offers: fixtures.offers,
+      products: [product, product],
+    });
+    const repository = new RecordingBatchCatalogRepository();
+    const result = await new CatalogSyncService({
+      eligibilityEngine: new GermanyEligibilityEngine(),
+      offerDiscovery: new StaticCatalogOfferDiscovery(
+        await normalizedOffers(supplier, fixtures.offers),
+      ),
+      pageLimit: 10,
+      repository,
+    }).runFullSync(supplier);
+
+    expect(result.run).toMatchObject({
+      errorMessage: "Duplicate supplier product identity in catalog page",
+      status: "FAILED",
+    });
+    expect(repository.listProducts()).toHaveLength(0);
+    expect(repository.listOffers()).toHaveLength(0);
+  });
+
   it("processes 50,000 synthetic products within the foundation scale budget", async () => {
     const fixtures = createGeneratedMockSupplierFixtures({
       productCount: 50_000,
@@ -386,3 +437,30 @@ const requiredFixture = <TFixture>(fixture: TFixture | undefined): TFixture => {
   }
   return fixture;
 };
+
+class RecordingBatchCatalogRepository extends InMemoryCatalogSyncRepository {
+  public readonly pageSizes: number[] = [];
+
+  public async upsertPage(input: {
+    readonly products: readonly CatalogSyncPageProduct[];
+    readonly runId: string;
+    readonly observedAt: Date;
+  }): Promise<void> {
+    this.pageSizes.push(input.products.length);
+    for (const product of input.products) {
+      await this.upsertProduct({
+        observedAt: input.observedAt,
+        product: product.product,
+        runId: input.runId,
+      });
+      for (const offer of product.offers) {
+        await this.upsertOffer({
+          assessment: offer.assessment,
+          observedAt: input.observedAt,
+          offer: offer.offer,
+          runId: input.runId,
+        });
+      }
+    }
+  }
+}

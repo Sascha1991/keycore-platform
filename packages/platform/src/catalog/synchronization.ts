@@ -132,6 +132,16 @@ export interface CatalogOfferDiscoveryPort {
   }): Promise<readonly NormalizedSupplierOffer[]>;
 }
 
+export interface CatalogSyncPageOffer {
+  readonly offer: NormalizedSupplierOffer;
+  readonly assessment: GermanyEligibilityAssessment;
+}
+
+export interface CatalogSyncPageProduct {
+  readonly product: NormalizedSupplierProduct;
+  readonly offers: readonly CatalogSyncPageOffer[];
+}
+
 export interface CatalogSyncRepository {
   beginRun(input: {
     readonly supplierId: SupplierId;
@@ -157,6 +167,12 @@ export interface CatalogSyncRepository {
   upsertOffer(input: {
     readonly offer: NormalizedSupplierOffer;
     readonly assessment: GermanyEligibilityAssessment;
+    readonly runId: string;
+    readonly observedAt: Date;
+  }): Promise<void>;
+  upsertPage?(input: {
+    readonly supplierId: SupplierId;
+    readonly products: readonly CatalogSyncPageProduct[];
     readonly runId: string;
     readonly observedAt: Date;
   }): Promise<void>;
@@ -329,20 +345,30 @@ export class CatalogSyncService {
           : { limit: this.pageLimit };
         const page = await input.fetchPage(pageRequest);
         metrics.pagesFetched += 1;
-        for (const product of page.items) {
-          const offers = await this.options.offerDiscovery.listOffersForProduct(
-            {
+        if (this.options.repository.upsertPage) {
+          const products = await this.preparePage(input.supplier, page.items);
+          await this.options.repository.upsertPage({
+            observedAt: this.now(),
+            products,
+            runId: run.runId,
+            supplierId: input.supplier.identity.supplierId,
+          });
+          this.incrementPageMetrics(products, metrics);
+        } else {
+          for (const product of page.items) {
+            const offers =
+              await this.options.offerDiscovery.listOffersForProduct({
+                product,
+                supplier: input.supplier,
+              });
+            await this.processProduct(
+              input.supplier.identity,
               product,
-              supplier: input.supplier,
-            },
-          );
-          await this.processProduct(
-            input.supplier.identity,
-            product,
-            offers,
-            run.runId,
-            metrics,
-          );
+              offers,
+              run.runId,
+              metrics,
+            );
+          }
         }
         cursor = page.nextCursor;
       } while (cursor);
@@ -395,6 +421,66 @@ export class CatalogSyncService {
         supplierId: input.supplier.identity.supplierId,
       });
       return { run: failed };
+    }
+  }
+
+  private async preparePage(
+    supplier: SupplierPort,
+    products: readonly NormalizedSupplierProduct[],
+  ): Promise<readonly CatalogSyncPageProduct[]> {
+    const productIdentities = new Set<string>();
+    const offerIdentities = new Set<string>();
+    const prepared: CatalogSyncPageProduct[] = [];
+    for (const product of products) {
+      if (product.supplier.supplierId !== supplier.identity.supplierId) {
+        throw new Error("Catalog product supplier identity mismatch");
+      }
+      if (productIdentities.has(product.supplierProductId)) {
+        throw new Error("Duplicate supplier product identity in catalog page");
+      }
+      productIdentities.add(product.supplierProductId);
+      const offers = await this.options.offerDiscovery.listOffersForProduct({
+        product,
+        supplier,
+      });
+      const assessed: CatalogSyncPageOffer[] = [];
+      for (const offer of offers) {
+        if (offer.supplier.supplierId !== supplier.identity.supplierId) {
+          throw new Error("Catalog offer supplier identity mismatch");
+        }
+        if (offer.supplierProductId !== product.supplierProductId) {
+          throw new CatalogSyncError(
+            "CATALOG_OFFER_PRODUCT_MAPPING_CHANGED",
+            catalogOfferProductMappingChangedMessage,
+          );
+        }
+        if (offerIdentities.has(offer.supplierOfferId)) {
+          throw new Error("Duplicate supplier offer identity in catalog page");
+        }
+        offerIdentities.add(offer.supplierOfferId);
+        const assessment = this.options.eligibilityEngine.evaluate({
+          evidence: offer.regionEvidence,
+          supplierId: supplier.identity.supplierId,
+        });
+        assessed.push({ assessment, offer });
+      }
+      prepared.push({ offers: assessed, product });
+    }
+    return prepared;
+  }
+
+  private incrementPageMetrics(
+    products: readonly CatalogSyncPageProduct[],
+    metrics: MutableCatalogSyncMetrics,
+  ): void {
+    for (const product of products) {
+      metrics.productsSeen += 1;
+      metrics.productsUpserted += 1;
+      for (const offer of product.offers) {
+        metrics.offersSeen += 1;
+        metrics.offersUpserted += 1;
+        incrementDecision(metrics, offer.assessment.decision);
+      }
     }
   }
 

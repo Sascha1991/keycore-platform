@@ -58,6 +58,17 @@ jobs:
           path: artifacts/e2e-acceptance/
           if-no-files-found: error
           retention-days: 14
+      - name: Run KS-11-03 catalog scale validation
+        run: npm run catalog:scale
+        timeout-minutes: 20
+      - name: Archive safe KS-11-03 catalog scale evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ks-11-03-catalog-scale-evidence
+          path: artifacts/catalog-scale/
+          if-no-files-found: error
+          retention-days: 14
 
   php:
     name: PHP foundation checks
