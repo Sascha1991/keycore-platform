@@ -48,9 +48,10 @@ refresh. Region evidence, decisions and price snapshots are appended only when
 their source snapshot changes, so exact replay does not create snapshot rows.
 Missing full-sync products/offers are soft-deactivated after all pages complete.
 Migration 027 adds the measured missing composite index for region-evidence
-snapshot identity `(offer_id, source_evidence_version, captured_at)`. Without
-that index, the page-level replay check scanned the growing evidence table and
-made catalog persistence degrade quadratically.
+snapshot identity `(offer_id, source_evidence_version, captured_at)` and
+includes the evidence ID consumed by the following decision join. Without that
+index, the page-level replay check scanned the growing evidence table and made
+catalog persistence degrade quadratically.
 
 Publication reads PostgreSQL snapshots by ProductId and invokes the real
 publication service with a deterministic local storefront. Eligible records are
@@ -115,8 +116,10 @@ semantics change.
 `artifacts/catalog-scale/`. CI uploads the directory as
 `ks-11-03-catalog-scale-evidence` for 14 days. Evidence contains only suite,
 environment, commit, synthetic counts, durations, safe result states and batch
-metadata. Database URLs, credentials, provider payloads, customer data and
-Product Keys are omitted.
+metadata. Safe aggregate diagnostic JSON/Markdown is written after each major
+phase, so a failed performance gate still preserves representative page timing
+without product identifiers. Database URLs, credentials, provider payloads,
+customer data and Product Keys are omitted.
 
 ## Limits
 

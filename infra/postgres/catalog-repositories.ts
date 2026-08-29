@@ -44,6 +44,8 @@ interface CheckpointRow {
 }
 
 export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
+  private readonly supplierUuids = new Map<SupplierId, string>();
+
   public constructor(
     private readonly db: TransactionalQueryable,
     private readonly observer?: {
@@ -351,6 +353,8 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
           offer.regionEvidence.supplierRegion?.supplierRegionId ?? null,
       })),
     );
+    const offerPayload = JSON.stringify(offers);
+    const productPayload = JSON.stringify(products);
 
     const startedAt = performance.now();
     await this.db.transaction(async (db) => {
@@ -369,7 +373,7 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
           WHERE supplier_products.supplier_product_id <> source.supplier_product_id
           LIMIT 1
         `,
-        [supplierUuid, JSON.stringify(offers)],
+        [supplierUuid, offerPayload],
       );
       if (mappingConflict.rows[0]?.conflict) {
         throw new CatalogSyncError(
@@ -409,7 +413,7 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
             canonical_metadata = EXCLUDED.canonical_metadata,
             updated_at = now()
         `,
-        [JSON.stringify(products)],
+        [productPayload],
       );
       await db.query(
         `
@@ -444,11 +448,10 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
             last_sync_run_id = EXCLUDED.last_sync_run_id,
             updated_at = now()
         `,
-        [supplierUuid, JSON.stringify(products), input.observedAt, input.runId],
+        [supplierUuid, productPayload, input.observedAt, input.runId],
       );
 
       if (offers.length > 0) {
-        const offerPayload = JSON.stringify(offers);
         await db.query(
           `
             INSERT INTO supplier_offers(
@@ -708,6 +711,8 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
   }
 
   private async ensureSupplier(supplierCode: SupplierId): Promise<string> {
+    const cached = this.supplierUuids.get(supplierCode);
+    if (cached) return cached;
     const row = await this.queryOne<IdRow>(
       `
         INSERT INTO suppliers(supplier_code, display_name)
@@ -718,6 +723,7 @@ export class PostgresCatalogSyncRepository implements CatalogSyncRepository {
       `,
       [supplierCode],
     );
+    this.supplierUuids.set(supplierCode, row.id);
     return row.id;
   }
 

@@ -268,6 +268,7 @@ const runScaleJourney = async (): Promise<void> => {
   let started = performance.now();
   const baselineSync = await service.runFullSync(source);
   baselineSyncMs = Math.round(performance.now() - started);
+  await writeDiagnosticEvidence("BASELINE_SYNC_COMPLETED");
   assertWithinPhaseTarget("baseline catalog sync", baselineSyncMs);
   expect(baselineSync.run.status).toBe("SUCCEEDED");
   expect(baselineSync.run.metrics).toMatchObject({
@@ -288,6 +289,7 @@ const runScaleJourney = async (): Promise<void> => {
     supplierCode,
   });
   baselinePublicationMs = Math.round(performance.now() - started);
+  await writeDiagnosticEvidence("BASELINE_PUBLICATION_COMPLETED");
   assertWithinPhaseTarget("baseline publication", baselinePublicationMs);
   baselineDurationMs = baselineSyncMs + baselinePublicationMs;
   assertWithinPhaseTarget("baseline total", baselineDurationMs);
@@ -299,6 +301,7 @@ const runScaleJourney = async (): Promise<void> => {
   started = performance.now();
   const refreshSync = await service.runFullSync(source);
   refreshSyncMs = Math.round(performance.now() - started);
+  await writeDiagnosticEvidence("REFRESH_SYNC_COMPLETED");
   assertWithinPhaseTarget("refresh catalog sync", refreshSyncMs);
   expect(refreshSync.run.status).toBe("SUCCEEDED");
   expect(refreshSync.run.metrics).toMatchObject({
@@ -319,6 +322,7 @@ const runScaleJourney = async (): Promise<void> => {
     supplierCode,
   });
   refreshPublicationMs = Math.round(performance.now() - started);
+  await writeDiagnosticEvidence("REFRESH_PUBLICATION_COMPLETED");
   assertWithinPhaseTarget("refresh publication", refreshPublicationMs);
   refreshDurationMs = refreshSyncMs + refreshPublicationMs;
   assertWithinPhaseTarget("refresh total", refreshDurationMs);
@@ -330,6 +334,7 @@ const runScaleJourney = async (): Promise<void> => {
   started = performance.now();
   const replaySync = await service.runFullSync(source);
   replaySyncMs = Math.round(performance.now() - started);
+  await writeDiagnosticEvidence("REPLAY_SYNC_COMPLETED");
   assertWithinPhaseTarget("replay catalog sync", replaySyncMs);
   expect(replaySync.run.status).toBe("SUCCEEDED");
 
@@ -343,6 +348,7 @@ const runScaleJourney = async (): Promise<void> => {
     supplierCode,
   });
   replayPublicationMs = Math.round(performance.now() - started);
+  await writeDiagnosticEvidence("REPLAY_PUBLICATION_COMPLETED");
   assertWithinPhaseTarget("replay publication", replayPublicationMs);
   replayDurationMs = replaySyncMs + replayPublicationMs;
   assertWithinPhaseTarget("replay total", replayDurationMs);
@@ -677,6 +683,60 @@ const remoteCounts = (storefront: DeterministicScaleStorefront) => ({
   create: storefront.createCalls,
   unpublish: storefront.unpublishCalls,
   update: storefront.updateCalls,
+});
+
+const writeDiagnosticEvidence = async (stage: string): Promise<void> => {
+  const outputDirectory = path.resolve(
+    process.env.KEYCORE_CATALOG_SCALE_EVIDENCE_DIR ?? "artifacts/catalog-scale",
+  );
+  const diagnostics = {
+    baseline: phaseProfile("BASELINE", baselineSyncMs, baselinePublicationMs),
+    environmentIdentity:
+      process.env.GITHUB_ACTIONS === "true" ? "CI" : "LOCAL_TEST",
+    refresh: phaseProfile("REFRESH", refreshSyncMs, refreshPublicationMs),
+    replay: phaseProfile("REPLAY", replaySyncMs, replayPublicationMs),
+    schemaInitializationMs,
+    stage,
+    suiteVersion: "KS-11-03-v1",
+  } as const;
+  assertSafeEvidence(diagnostics);
+  await mkdir(outputDirectory, { recursive: true });
+  await writeFile(
+    path.join(outputDirectory, "catalog-scale-diagnostics.json"),
+    `${JSON.stringify(diagnostics, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(outputDirectory, "catalog-scale-diagnostics.md"),
+    `${[
+      "# KS-11-03 Safe Aggregate Diagnostics",
+      "",
+      `- Stage: ${stage}`,
+      `- Schema initialization: ${schemaInitializationMs} ms`,
+      `- Baseline sync: ${baselineSyncMs} ms`,
+      `- Baseline publication: ${baselinePublicationMs} ms`,
+      `- Refresh sync: ${refreshSyncMs} ms`,
+      `- Refresh publication: ${refreshPublicationMs} ms`,
+      `- Replay sync: ${replaySyncMs} ms`,
+      `- Replay publication: ${replayPublicationMs} ms`,
+      "",
+      "Diagnostics contain aggregate synthetic-test timings only.",
+      "",
+    ].join("\n")}`,
+    "utf8",
+  );
+};
+
+const phaseProfile = (
+  phase: ScaleExecutionPhase,
+  catalogSyncMs: number,
+  publicationMs: number,
+) => ({
+  catalogSyncMs,
+  pagePersistenceMs: representativePageDurations(pagePersistenceMs[phase]),
+  publicationMs,
+  publicationPageMs: representativePageDurations(publicationPageMs[phase]),
+  staleDeactivationMs: staleDeactivationMs[phase].at(-1) ?? 0,
 });
 
 const writeEvidence = async (input: {
