@@ -107,7 +107,18 @@ dedicated CI step has a 20-minute job-step ceiling. These ceilings include both
 PostgreSQL synchronization and publication evaluation and are intentionally
 more generous than the existing 15-second in-memory 50k foundation benchmark.
 Observed CI durations are written to the evidence artifact and copied into the
-implementation report after the first successful branch run.
+implementation report after the first successful branch run. Quality Gates
+#156 measured:
+
+| Journey  | Catalog sync | Publication | Total     |
+| -------- | ------------ | ----------- | --------- |
+| Baseline | 33,166 ms    | 39,244 ms   | 72,410 ms |
+| Refresh  | 21,428 ms    | 9,397 ms    | 30,825 ms |
+| Replay   | 19,735 ms    | 8,722 ms    | 28,457 ms |
+
+All three totals are below the unchanged 300,000 ms release target. The full
+Vitest scale command, including setup and assertions, completed in 136.49
+seconds.
 
 ## Database Evidence
 
@@ -117,6 +128,14 @@ orphan publications and no unreferenced scale ProductIds. `EXPLAIN (FORMAT
 JSON)` is inspected for the supplier-product, supplier-offer, publication and
 region-evidence snapshot indexes without asserting brittle costs or exact plan
 costs.
+
+The representative `region_decisions` plan is parsed structurally. It must use
+an index-backed access path, retain all five expected predicates and estimate no
+more than one 500-record scale page. PostgreSQL may choose either the unique
+snapshot-identity index or the existing offer index; Quality Gates #155 chose
+`idx_region_decisions_offer` with the remaining predicates as filters, and the
+practical assertion passed in #156. Snapshot uniqueness is proven separately by
+the duplicate-rejection regression.
 
 Reversible migration 027 adds
 `region_evidence_offer_version_captured_idx` and
@@ -135,6 +154,12 @@ metadata. Safe aggregate diagnostic JSON/Markdown is written after each major
 phase, so a failed performance gate still preserves representative page timing
 without product identifiers. Database URLs, credentials, provider payloads,
 customer data and Product Keys are omitted.
+
+Quality Gates #156 emitted transaction-state and concurrent `client.query()`
+warnings only during the ordinary parallel PostgreSQL regression, before
+16:34:47 UTC. The isolated `catalog:scale` command ran from 16:34:48 through
+16:37:05 UTC without either warning. KS-11-03 therefore does not suppress or
+expand into the unrelated concurrent-test warning source.
 
 ## Limits
 
