@@ -37,3 +37,10 @@ The reviewer confirms redaction before attaching a reference, records their real
 identity and UTC review time, and states why the expected result passed or
 failed. Automated KS-11-02 through KS-11-06 artifacts may be linked as supporting
 technical evidence but never as human browser evidence.
+
+Machine-readable result evidence uses a safe repository-relative path under
+`docs/` or `artifacts/`, or an approved opaque `UAT-*`/`EVIDENCE-*` identifier.
+Absolute local paths and references containing secret-shaped material are
+rejected. `PASS` and `FAIL` require at least one safe reference; `BLOCKED` may
+omit a screenshot when the documented blocker prevented reaching a capturable
+surface, but still requires notes, reason and target dependency.

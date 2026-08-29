@@ -56,6 +56,26 @@ only approved least-privilege tooling.
 5. `npm run uat:validate` validates structure and safety; it does not judge or
    approve the result.
 
+## Acceptance Lifecycle
+
+The machine-readable lifecycle is:
+
+1. `PENDING`: preparation state. No human result has been recorded and human
+   approval is `NOT_APPROVED`.
+2. `IN_REVIEW`: at least one human `PASS`, `FAIL` or `BLOCKED` result has a real
+   reviewer, ISO-8601 UTC review time and policy-compliant evidence/notes. Human
+   approval remains `NOT_APPROVED`.
+3. `APPROVED`: every release-applicable scenario is `PASS`, every pass has safe
+   human evidence, UAT-018 passed, and ROLE-UAT-05 explicitly records
+   `APPROVED` with reviewer and UTC approval time.
+4. `REJECTED`: ROLE-UAT-05 explicitly rejects UAT and at least one human `FAIL`
+   remains documented.
+
+The validator supports all four states and rejects contradictory combinations.
+It checks consistency but cannot determine who edited Git. Git/PR review is the
+human authority record; Codex and automation are forbidden from recording the
+decision.
+
 ## Exit And Approval Criteria
 
 Human UAT may be approved only after every release-applicable scenario has an

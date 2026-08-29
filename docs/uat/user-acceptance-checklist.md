@@ -30,3 +30,9 @@ For every row, record the result, notes, evidence references, reviewer and UTC
 review time. Never capture the secure revealed value, credentials, payment
 details, claim material, session data, customer personal data or production
 content.
+
+After recording a real result, set `humanAcceptance` to `IN_REVIEW` and run
+`npm run uat:validate`. Do not mark a scenario `PASS` until its readiness is
+`EXECUTABLE_NOW`. ROLE-UAT-05 may move UAT to `APPROVED` only after all 18 rows,
+including UAT-018, have passed with safe evidence. That UAT decision does not
+approve `SECURITY-READINESS` or complete Phase 11 by itself.

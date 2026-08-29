@@ -30,6 +30,13 @@ Phase-12 behavior is implemented.
 - [x] Automated evidence is explicitly supporting evidence, not human acceptance.
 - [x] Validator rejects malformed IDs/statuses/references, fabricated approval,
       incomplete blockers and secret-shaped evidence.
+- [x] Validator supports `PENDING`, `IN_REVIEW`, `APPROVED` and `REJECTED`
+      lifecycle states without changing the current preparation artifacts.
+- [x] Future human `PASS`, `FAIL` and `BLOCKED` results are structurally
+      validated against UI readiness, reviewer, UTC timestamp, notes and safe
+      evidence requirements.
+- [x] UAT approval requires all 18 scenarios, including UAT-018, to be human
+      `PASS`; `SECURITY-READINESS` remains an independent gate.
 - [x] Validator is deterministic, read-only and uses no network or new dependency.
 - [x] CI runs validation after the existing KS-11-06 recovery gate and archives
       the complete safe package for 14 days.
@@ -41,3 +48,5 @@ Phase-12 behavior is implemented.
 
 Codex and CI cannot complete the two unchecked criteria. KS-11-07 preparation
 does not complete human UAT, Phase 11 or the separate `SECURITY-READINESS` gate.
+The validator checks artifact consistency only; ROLE-UAT-05 and Git/PR review
+provide the human authority record.

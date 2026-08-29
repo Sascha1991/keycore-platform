@@ -62,7 +62,10 @@ UAT is completed under KS-11-07.
 
 The UAT validator parses the five checked-in JSON artifacts. It asserts exact
 UAT-001 through UAT-018 coverage, safe statuses and references, reasons for every
-blocked/non-executable scenario, no initial human pass/reviewer/timestamp,
-`NOT_APPROVED` human and security gates, and absence of secret-shaped material.
-It is read-only and deterministic: it creates no evidence and can never mark a
-scenario or approval complete.
+blocked/non-executable scenario, cross-document readiness/result consistency,
+UTC human timestamps, safe evidence and complete approval preconditions. The
+current `PENDING` package must have no human pass/reviewer/timestamp and both
+gates remain `NOT_APPROVED`; valid later human states are structurally supported
+without coupling UAT approval to `SECURITY-READINESS`. The validator is read-only
+and deterministic: it creates no evidence and can never mark a scenario or
+approval complete.

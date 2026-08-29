@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Hardened the KS-11-07 validator from a preparation-only snapshot check into a
+  coherent UAT lifecycle validator. Legitimate future human results and complete
+  UAT approval are structurally supported, contradictory readiness/results,
+  incomplete approval, malformed UTC timestamps and unsafe evidence fail closed,
+  while the checked-in UAT and `SECURITY-READINESS` states remain unapproved.
+
 - Added KS-11-07's deterministic UAT preparation package with UAT-001 through
   UAT-018, an honest browser-surface readiness inventory, practical human
   checklist, safe test/evidence guidance, explicit residual risks and a

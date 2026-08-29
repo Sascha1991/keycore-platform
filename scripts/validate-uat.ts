@@ -22,6 +22,12 @@ const UI_STATUSES = new Set([
   "NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY",
 ]);
 const APPROVAL_STATUSES = new Set(["NOT_APPROVED", "APPROVED", "REJECTED"]);
+const HUMAN_ACCEPTANCE_STATUSES = new Set([
+  "PENDING",
+  "IN_REVIEW",
+  "APPROVED",
+  "REJECTED",
+]);
 const REQUIRED_SCENARIO_FIELDS = [
   "id",
   "title",
@@ -57,6 +63,10 @@ const FORBIDDEN_DATA_KEYS = new Set([
 ]);
 const SAFE_REFERENCE = /^(?:docs|artifacts)\/[A-Za-z0-9._/-]+$/u;
 const SAFE_IDENTIFIER = /^(?:EVIDENCE|UAT)-[A-Z0-9-]+$/u;
+const RAW_PRODUCT_KEY_REFERENCE =
+  /\b(?:TEST-)?[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}(?:-[A-Z0-9]{5})?\b/u;
+const ISO_UTC_TIMESTAMP =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{3})?Z$/u;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -96,6 +106,82 @@ function hasNonEmptyStringArray(record: JsonRecord, field: string): boolean {
     value.length > 0 &&
     value.every((item) => typeof item === "string" && item.trim().length > 0)
   );
+}
+
+function isValidUtcTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const match = ISO_UTC_TIMESTAMP.exec(value);
+  if (match === null) {
+    return false;
+  }
+  const parts = match.slice(1, 7).map(Number);
+  if (parts.some((part) => !Number.isInteger(part))) {
+    return false;
+  }
+  const [year, month, day, hour, minute, second] = parts;
+  if (
+    year === undefined ||
+    month === undefined ||
+    day === undefined ||
+    hour === undefined ||
+    minute === undefined ||
+    second === undefined
+  ) {
+    return false;
+  }
+  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second
+  );
+}
+
+function isSafeEvidenceReference(reference: string): boolean {
+  if (
+    RAW_PRODUCT_KEY_REFERENCE.test(reference) ||
+    scanSecretText(reference).length > 0
+  ) {
+    return false;
+  }
+  if (SAFE_IDENTIFIER.test(reference)) {
+    return true;
+  }
+  if (!SAFE_REFERENCE.test(reference)) {
+    return false;
+  }
+  const segments = reference.split("/");
+  return segments.every(
+    (segment) => segment !== "" && segment !== "." && segment !== "..",
+  );
+}
+
+function validateEvidence(
+  evidence: unknown,
+  label: string,
+  required: boolean,
+  issues: string[],
+): void {
+  if (!Array.isArray(evidence)) {
+    issues.push(`${label} must be an array`);
+    return;
+  }
+  if (required && evidence.length === 0) {
+    issues.push(`${label} must contain safe human evidence`);
+  }
+  if (
+    evidence.some(
+      (reference) =>
+        typeof reference !== "string" || !isSafeEvidenceReference(reference),
+    )
+  ) {
+    issues.push(`${label} contains an unsafe evidence reference`);
+  }
 }
 
 function findForbiddenDataKeys(value: unknown, location = "root"): string[] {
@@ -158,9 +244,13 @@ async function loadPackage(root: string): Promise<UatPackage> {
   };
 }
 
-function validateScenarios(readiness: JsonRecord, issues: string[]): void {
+function validateScenarios(
+  readiness: JsonRecord,
+  issues: string[],
+): Map<string, JsonRecord> {
   const scenarios = records(readiness.scenarios, "readiness.scenarios", issues);
   const ids = scenarios.map((scenario) => scenario.id);
+  const scenariosById = new Map<string, JsonRecord>();
 
   if (ids.length !== SCENARIO_IDS.length || new Set(ids).size !== ids.length) {
     issues.push("UAT scenario IDs must occur exactly once");
@@ -175,6 +265,9 @@ function validateScenarios(readiness: JsonRecord, issues: string[]): void {
   for (const scenario of scenarios) {
     const id =
       typeof scenario.id === "string" ? scenario.id : "unknown scenario";
+    if (SCENARIO_ID_SET.has(id) && !scenariosById.has(id)) {
+      scenariosById.set(id, scenario);
+    }
     for (const field of REQUIRED_SCENARIO_FIELDS) {
       if (!(field in scenario)) {
         issues.push(`${id} is missing ${field}`);
@@ -215,6 +308,14 @@ function validateScenarios(readiness: JsonRecord, issues: string[]): void {
     ) {
       issues.push(`${id} requires a reason and target dependency`);
     }
+    if (
+      scenario.uiReadiness === "EXECUTABLE_NOW" &&
+      (scenario.reason !== undefined || scenario.targetDependency !== undefined)
+    ) {
+      issues.push(
+        `${id} executable readiness must not retain a blocking reason or dependency`,
+      );
+    }
     const evidence = Array.isArray(scenario.automatedEvidence)
       ? scenario.automatedEvidence
       : [];
@@ -227,11 +328,20 @@ function validateScenarios(readiness: JsonRecord, issues: string[]): void {
       issues.push(`${id} contains a malformed automated evidence identifier`);
     }
   }
+  return scenariosById;
 }
 
-function validateResults(resultsDocument: JsonRecord, issues: string[]): void {
+function validateResults(
+  resultsDocument: JsonRecord,
+  scenariosById: Map<string, JsonRecord>,
+  issues: string[],
+): Map<string, JsonRecord> {
+  if (resultsDocument.scope !== "KS-11-07") {
+    issues.push("UAT results scope must be KS-11-07");
+  }
   const results = records(resultsDocument.results, "results.results", issues);
   const ids = results.map((result) => result.scenario);
+  const resultsById = new Map<string, JsonRecord>();
   if (
     ids.length !== SCENARIO_IDS.length ||
     new Set(ids).size !== ids.length ||
@@ -244,29 +354,66 @@ function validateResults(resultsDocument: JsonRecord, issues: string[]): void {
   for (const result of results) {
     const id =
       typeof result.scenario === "string" ? result.scenario : "unknown result";
+    if (SCENARIO_ID_SET.has(id) && !resultsById.has(id)) {
+      resultsById.set(id, result);
+    }
     for (const field of REQUIRED_RESULT_FIELDS) {
       if (!(field in result)) {
         issues.push(`${id} result is missing ${field}`);
       }
     }
     const status = String(result.status);
+    const scenario = scenariosById.get(id);
+    const uiReadiness = scenario?.uiReadiness;
     if (!RESULT_STATUSES.has(status)) {
       issues.push(`${id} has invalid result status`);
     }
-    if (
-      status === "PASS" &&
-      (!hasNonEmptyString(result, "reviewer") ||
-        !hasNonEmptyString(result, "reviewedAt"))
-    ) {
-      issues.push(`${id} PASS requires a human reviewer and reviewedAt`);
+    const isHumanResult =
+      status === "PASS" || status === "FAIL" || status === "BLOCKED";
+    if (isHumanResult) {
+      if (!hasNonEmptyString(result, "reviewer")) {
+        issues.push(`${id} ${status} requires a human reviewer`);
+      }
+      if (!isValidUtcTimestamp(result.reviewedAt)) {
+        issues.push(`${id} ${status} requires a valid ISO-8601 UTC reviewedAt`);
+      }
+    } else if (result.reviewer !== null || result.reviewedAt !== null) {
+      issues.push(`${id} ${status} must not contain reviewer or reviewedAt`);
     }
-    if (result.reviewer !== null || result.reviewedAt !== null) {
+    validateEvidence(
+      result.evidence,
+      `${id}.evidence`,
+      status === "PASS" || status === "FAIL",
+      issues,
+    );
+    if (status === "PASS") {
+      if (uiReadiness !== "EXECUTABLE_NOW") {
+        issues.push(`${id} PASS requires EXECUTABLE_NOW UI readiness`);
+      }
+      if (
+        result.reason !== undefined ||
+        result.targetDependency !== undefined
+      ) {
+        issues.push(
+          `${id} PASS must not retain a blocking reason or dependency`,
+        );
+      }
+    }
+    if (
+      (status === "PENDING" || status === "FAIL") &&
+      (result.reason !== undefined || result.targetDependency !== undefined)
+    ) {
       issues.push(
-        `${id} initial result must not fabricate reviewer or reviewedAt`,
+        `${id} ${status} must not retain a blocking reason or dependency`,
       );
     }
-    if (status === "PASS") {
-      issues.push(`${id} initial repository result must not be PASS`);
+    if (status === "FAIL") {
+      if (!hasNonEmptyString(result, "notes")) {
+        issues.push(`${id} FAIL requires non-empty notes`);
+      }
+      if (uiReadiness === "NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY") {
+        issues.push(`${id} FAIL contradicts non-executable UI readiness`);
+      }
     }
     if (
       (status === "BLOCKED" ||
@@ -278,37 +425,121 @@ function validateResults(resultsDocument: JsonRecord, issues: string[]): void {
         `${id} blocked/non-executable result requires reason and targetDependency`,
       );
     }
-    if (!Array.isArray(result.evidence)) {
-      issues.push(`${id}.evidence must be an array`);
+    if (status === "BLOCKED" && !hasNonEmptyString(result, "notes")) {
+      issues.push(`${id} BLOCKED requires non-empty notes`);
+    }
+    if (
+      status === "NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY" &&
+      uiReadiness !== "NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY"
+    ) {
+      issues.push(
+        `${id} non-executable result must match non-executable UI readiness`,
+      );
+    }
+    if (
+      uiReadiness === "NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY" &&
+      status !== "NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY"
+    ) {
+      issues.push(
+        `${id} non-executable UI readiness requires a matching result`,
+      );
     }
   }
+  return resultsById;
 }
 
 function validateApproval(
   approval: JsonRecord,
   readiness: JsonRecord,
+  resultsById: Map<string, JsonRecord>,
   issues: string[],
 ): void {
+  const approvalState = String(approval.approval);
+  const humanAcceptance = String(readiness.humanAcceptance);
   if (!APPROVAL_STATUSES.has(String(approval.approval))) {
     issues.push("Human approval has an invalid state");
   }
-  if (
-    approval.scope !== "KS-11-07" ||
-    approval.approval !== "NOT_APPROVED" ||
-    approval.reviewer !== null ||
-    approval.approvedAt !== null
-  ) {
-    issues.push(
-      "Human approval must remain NOT_APPROVED with no reviewer or timestamp",
-    );
+  if (!HUMAN_ACCEPTANCE_STATUSES.has(humanAcceptance)) {
+    issues.push("Human acceptance has an invalid state");
+  }
+  if (!APPROVAL_STATUSES.has(String(readiness.securityReadiness))) {
+    issues.push("Security readiness has an invalid independent state");
+  }
+  if (approval.scope !== "KS-11-07" || readiness.scope !== "KS-11-07") {
+    issues.push("UAT readiness and human approval scope must be KS-11-07");
   }
   if (
-    readiness.securityReadiness !== "NOT_APPROVED" ||
-    readiness.humanAcceptance !== "PENDING"
+    approval.notes !== null &&
+    (typeof approval.notes !== "string" || approval.notes.trim().length === 0)
   ) {
+    issues.push("Human approval notes must be null or a non-empty string");
+  }
+
+  const results = [...resultsById.values()];
+  const humanResults = results.filter((result) =>
+    ["PASS", "FAIL", "BLOCKED"].includes(String(result.status)),
+  );
+  const allPass =
+    results.length === SCENARIO_IDS.length &&
+    results.every((result) => result.status === "PASS");
+  const uat018Pass = resultsById.get("UAT-018")?.status === "PASS";
+  const hasFail = results.some((result) => result.status === "FAIL");
+
+  if (approvalState === "NOT_APPROVED") {
+    if (approval.reviewer !== null || approval.approvedAt !== null) {
+      issues.push(
+        "NOT_APPROVED human approval must not have reviewer or approvedAt",
+      );
+    }
+    if (humanAcceptance !== "PENDING" && humanAcceptance !== "IN_REVIEW") {
+      issues.push(
+        "NOT_APPROVED human approval requires PENDING or IN_REVIEW acceptance",
+      );
+    }
+  } else {
+    if (!hasNonEmptyString(approval, "reviewer")) {
+      issues.push(`${approvalState} human approval requires a reviewer`);
+    }
+    if (!isValidUtcTimestamp(approval.approvedAt)) {
+      issues.push(
+        `${approvalState} human approval requires a valid ISO-8601 UTC approvedAt`,
+      );
+    }
+  }
+
+  if (humanAcceptance === "PENDING" && humanResults.length > 0) {
     issues.push(
-      "Security readiness must be NOT_APPROVED and human acceptance PENDING",
+      "PENDING human acceptance must not contain recorded human results",
     );
+  }
+  if (humanAcceptance === "IN_REVIEW" && humanResults.length === 0) {
+    issues.push(
+      "IN_REVIEW human acceptance requires at least one recorded human result",
+    );
+  }
+  if (humanAcceptance === "APPROVED") {
+    if (approvalState !== "APPROVED") {
+      issues.push("APPROVED human acceptance requires APPROVED human approval");
+    }
+    if (!allPass) {
+      issues.push("APPROVED human UAT requires every scenario to PASS");
+    }
+    if (!uat018Pass) {
+      issues.push("APPROVED human UAT requires UAT-018 to PASS");
+    }
+  }
+  if (approvalState === "APPROVED" && humanAcceptance !== "APPROVED") {
+    issues.push("APPROVED human approval requires APPROVED human acceptance");
+  }
+  if (humanAcceptance === "REJECTED") {
+    if (approvalState !== "REJECTED" || !hasFail) {
+      issues.push(
+        "REJECTED human acceptance requires REJECTED approval and a FAIL result",
+      );
+    }
+  }
+  if (approvalState === "REJECTED" && humanAcceptance !== "REJECTED") {
+    issues.push("REJECTED human approval requires REJECTED human acceptance");
   }
 }
 
@@ -335,7 +566,7 @@ function validateSupportingEvidence(
     }
     if (
       !hasNonEmptyString(source, "path") ||
-      !SAFE_REFERENCE.test(String(source.path))
+      !isSafeEvidenceReference(String(source.path))
     ) {
       issues.push("Supporting evidence has an unsafe path");
     }
@@ -390,9 +621,18 @@ export async function validateUatPackage(
   const packageData = await loadPackage(root);
   const issues: string[] = [];
 
-  validateScenarios(packageData.readiness, issues);
-  validateResults(packageData.results, issues);
-  validateApproval(packageData.approval, packageData.readiness, issues);
+  const scenariosById = validateScenarios(packageData.readiness, issues);
+  const resultsById = validateResults(
+    packageData.results,
+    scenariosById,
+    issues,
+  );
+  validateApproval(
+    packageData.approval,
+    packageData.readiness,
+    resultsById,
+    issues,
+  );
   validateSupportingEvidence(packageData.supportingEvidence, issues);
   validateResidualRisks(packageData.residualRisks, issues);
 
