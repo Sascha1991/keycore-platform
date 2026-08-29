@@ -649,7 +649,7 @@ const exerciseRedisLoss = async (
 const resumeContinuationControls = async (
   repository: PostgresOperationsControlRepository,
 ): Promise<void> => {
-  const now = new Date("2026-08-29T19:30:00.000Z");
+  const now = new Date();
   const service = new OperationsControlService(repository, {
     authority: {
       authorize: async () => ({
@@ -1197,9 +1197,9 @@ INSERT INTO supplier_claim_submission_operations(id,claim_id,order_id,supplier_i
 INSERT INTO supplier_claim_events(id,claim_id,event_type,actor_type,actor_reference,to_status,occurred_at) VALUES
   (gen_random_uuid(),'00000000-0000-4000-8000-000000000702','CLAIM_CREATED','SYSTEM','RECOVERY_EXERCISE','READY_FOR_SUBMISSION','2026-08-29T18:13:00Z');
 
-UPDATE operations_controls SET state='PAUSED',reason_code='INCIDENT_RESPONSE',record_version=2,updated_at='2026-08-29T18:15:00Z';
+UPDATE operations_controls SET state='PAUSED',reason_code='INCIDENT_RESPONSE',record_version=2,updated_at=created_at;
 INSERT INTO operations_control_events(id,capability,event_type,from_state,to_state,reason_code,actor_reference,operation_id,correlation_id,occurred_at)
-SELECT gen_random_uuid(),capability,'CONTROL_PAUSED','ENABLED','PAUSED','INCIDENT_RESPONSE','RECOVERY_EXERCISE','recovery:pause:'||lower(capability),'recovery-controls','2026-08-29T18:15:00Z' FROM operations_controls;
+SELECT gen_random_uuid(),capability,'CONTROL_PAUSED','ENABLED','PAUSED','INCIDENT_RESPONSE','RECOVERY_EXERCISE','recovery:pause:'||lower(capability),'recovery-controls',updated_at FROM operations_controls;
 
 INSERT INTO outbox_events(event_type,aggregate_type,aggregate_id,payload,correlation_id,event_deduplication_key,status,retry_count,next_attempt_at,dispatched_at) VALUES
   ('ORDER_RECOVERED','ORDER','${ids.successOrder}','{}','recovery-success','recovery:processed','DISPATCHED',0,'2026-08-29T18:16:00Z','2026-08-29T18:16:00Z'),
