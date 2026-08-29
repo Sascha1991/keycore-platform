@@ -250,24 +250,22 @@ describePostgres("KS-11-03 catalog scale validation", () => {
       ]),
     );
     const plans = await lookupPlans();
-    expect(plans.supplierProduct).toContain(
+    expect(JSON.stringify(plans.supplierProduct)).toContain(
       "supplier_products_supplier_external_unique",
     );
-    expect(plans.supplierOffer).toContain(
+    expect(JSON.stringify(plans.supplierOffer)).toContain(
       "supplier_offers_supplier_external_unique",
     );
-    expect(plans.publication).toContain(
+    expect(JSON.stringify(plans.publication)).toContain(
       "storefront_publications_product_storefront_unique",
     );
-    expect(plans.regionEvidence).toContain(
+    expect(JSON.stringify(plans.regionEvidence)).toContain(
       "region_evidence_offer_version_captured_idx",
     );
-    expect(plans.regionEvidenceResolution).toContain(
+    expect(JSON.stringify(plans.regionEvidenceResolution)).toContain(
       "region_evidence_offer_version_captured_idx",
     );
-    expect(plans.regionDecision).toContain(
-      "region_decisions_snapshot_identity_idx",
-    );
+    expectRegionDecisionPlanIsBounded(plans.regionDecision);
   });
 
   it("SCALE-010 PERFORMANCE_TARGETS", async () => {
@@ -721,13 +719,85 @@ const lookupPlans = async () => {
 const explain = async (
   sql: string,
   values: readonly unknown[],
-): Promise<string> => {
+): Promise<unknown> => {
   const result = await query<{ "QUERY PLAN": unknown }>(
     `EXPLAIN (FORMAT JSON) ${sql}`,
     values,
   );
-  return JSON.stringify(result.rows[0]?.["QUERY PLAN"] ?? null);
+  return result.rows[0]?.["QUERY PLAN"] ?? null;
 };
+
+interface ExplainPlanNode {
+  readonly Filter?: string;
+  readonly "Index Cond"?: string;
+  readonly "Index Name"?: string;
+  readonly "Node Type"?: string;
+  readonly "Plan Rows"?: number;
+  readonly Plans?: readonly ExplainPlanNode[];
+  readonly "Relation Name"?: string;
+}
+
+const expectRegionDecisionPlanIsBounded = (explainJson: unknown): void => {
+  const nodes = explainPlanNodes(explainJson);
+  const relationAccess = nodes.find(
+    (node) =>
+      node["Relation Name"] === "region_decisions" &&
+      ["Index Scan", "Index Only Scan"].includes(node["Node Type"] ?? ""),
+  );
+  const bitmapHeap = nodes.find(
+    (node) =>
+      node["Relation Name"] === "region_decisions" &&
+      node["Node Type"] === "Bitmap Heap Scan",
+  );
+  const bitmapIndex = bitmapHeap
+    ? flattenPlanNodes(bitmapHeap).find(
+        (node) => node["Node Type"] === "Bitmap Index Scan",
+      )
+    : undefined;
+  const indexAccess = relationAccess ?? bitmapIndex;
+
+  expect(
+    indexAccess,
+    "region_decisions must use an index-backed path",
+  ).toBeDefined();
+  expect([
+    "idx_region_decisions_offer",
+    "region_decisions_snapshot_identity_idx",
+  ]).toContain(indexAccess?.["Index Name"]);
+  expect(
+    bitmapHeap?.["Plan Rows"] ?? relationAccess?.["Plan Rows"],
+  ).toBeLessThanOrEqual(scalePageSize);
+
+  const predicates = JSON.stringify([relationAccess, bitmapHeap, bitmapIndex]);
+  for (const predicate of [
+    "offer_id",
+    "region_evidence_id",
+    "decision",
+    "reason_code",
+    "policy_version",
+  ]) {
+    expect(predicates).toContain(predicate);
+  }
+};
+
+const explainPlanNodes = (explainJson: unknown): readonly ExplainPlanNode[] => {
+  if (!Array.isArray(explainJson) || !isRecord(explainJson[0])) {
+    throw new Error("PostgreSQL EXPLAIN JSON is invalid");
+  }
+  const plan = explainJson[0]["Plan"];
+  if (!isRecord(plan)) throw new Error("PostgreSQL EXPLAIN plan is missing");
+  return flattenPlanNodes(plan as ExplainPlanNode);
+};
+
+const flattenPlanNodes = (
+  node: ExplainPlanNode,
+): readonly ExplainPlanNode[] => [
+  node,
+  ...(node.Plans ?? []).flatMap(flattenPlanNodes),
+];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const remoteCounts = (storefront: DeterministicScaleStorefront) => ({
   create: storefront.createCalls,
