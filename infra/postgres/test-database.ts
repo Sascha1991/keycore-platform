@@ -1,5 +1,6 @@
 import { Client, type QueryResult, type QueryResultRow } from "pg";
 
+import type { Queryable, TransactionalQueryable } from "./client.js";
 import { loadMigrations, type Migration } from "./migrations.js";
 
 const pgcryptoAdvisoryLockKey = [0x4b435052, 0x0503] as const;
@@ -9,7 +10,7 @@ export interface PostgresTestDatabaseOptions {
   readonly schemaName: string;
 }
 
-export class PostgresTestDatabase {
+export class PostgresTestDatabase implements TransactionalQueryable {
   private readonly client: Client;
   private readonly appliedMigrations: Migration[] = [];
   private queryQueue: Promise<unknown> = Promise.resolve();
@@ -48,6 +49,20 @@ export class PostgresTestDatabase {
     );
     this.queryQueue = query.catch(() => undefined);
     return query;
+  }
+
+  public async transaction<TResult>(
+    callback: (client: Queryable) => Promise<TResult>,
+  ): Promise<TResult> {
+    await this.query("BEGIN");
+    try {
+      const result = await callback(this);
+      await this.query("COMMIT");
+      return result;
+    } catch (error) {
+      await this.query("ROLLBACK");
+      throw error;
+    }
   }
 
   public async applyAllMigrations(): Promise<void> {

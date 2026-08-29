@@ -54,9 +54,7 @@ describePostgres("PostgreSQL catalog synchronization persistence", () => {
       seed: "pg-catalog",
     });
     const supplier = new MockSupplier(fixtures);
-    const repository = new PostgresCatalogSyncRepository({
-      query,
-    });
+    const repository = new PostgresCatalogSyncRepository(requiredDatabase());
     const service = new CatalogSyncService({
       eligibilityEngine: new GermanyEligibilityEngine(),
       offerDiscovery: new StaticCatalogOfferDiscovery(
@@ -107,7 +105,7 @@ describePostgres("PostgreSQL catalog synchronization persistence", () => {
       seed: "pg-map",
     });
     const supplier = new MockSupplier(fixtures);
-    const repository = new PostgresCatalogSyncRepository({ query });
+    const repository = new PostgresCatalogSyncRepository(requiredDatabase());
     const normalized = await normalizedOffers(supplier, fixtures.offers);
     await new CatalogSyncService({
       eligibilityEngine: new GermanyEligibilityEngine(),
@@ -217,4 +215,9 @@ const requiredFixture = <TFixture>(fixture: TFixture | undefined): TFixture => {
     throw new Error("Expected generated fixture");
   }
   return fixture;
+};
+
+const requiredDatabase = (): PostgresTestDatabase => {
+  if (!database) throw new Error("PostgreSQL client is not initialized");
+  return database;
 };

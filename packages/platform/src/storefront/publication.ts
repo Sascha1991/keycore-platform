@@ -522,6 +522,20 @@ export class StorefrontPublicationService {
     readonly existing: StorefrontPublicationRecord | null;
     readonly reasonCode: StorefrontPublicationReasonCode;
   }): Promise<StorefrontPublicationResult> {
+    if (
+      input.existing &&
+      !input.existing.reconciliationRequired &&
+      (input.existing.state === "UNPUBLISHED" ||
+        input.existing.state === "BLOCKED" ||
+        input.existing.state === "REVIEW_REQUIRED")
+    ) {
+      return {
+        outcome: "NO_OP",
+        reasonCode: input.reasonCode,
+        record: input.existing,
+        state: input.existing.state,
+      };
+    }
     if (input.existing?.remoteProductId) {
       const pending = await this.options.repository.savePublication({
         ...input.existing,

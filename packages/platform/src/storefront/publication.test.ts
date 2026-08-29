@@ -285,6 +285,32 @@ describe("Storefront publication foundation", () => {
     expect(fixture.remote.deletes).toHaveLength(0);
   });
 
+  it("treats repeated blocked publication evaluation as a side-effect-free no-op", async () => {
+    const fixture = createFixture();
+    await fixture.service.publish({
+      correlationId: corr,
+      productId: fixture.product.productId,
+      storefront,
+    });
+    fixture.repository.putSnapshot(
+      snapshot({ offers: [offer({ germanyCompatibility: "BLOCKED" })] }),
+    );
+    await fixture.service.publish({
+      correlationId: corr,
+      productId: fixture.product.productId,
+      storefront,
+    });
+    const replay = await fixture.service.publish({
+      correlationId: corr,
+      productId: fixture.product.productId,
+      storefront,
+    });
+
+    expect(replay.outcome).toBe("NO_OP");
+    expect(replay.state).toBe("UNPUBLISHED");
+    expect(fixture.remote.unpublishes).toHaveLength(1);
+  });
+
   it("unpublishes when canonical product is disabled", async () => {
     const fixture = createFixture();
     await fixture.service.publish({

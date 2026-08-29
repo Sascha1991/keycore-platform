@@ -8,8 +8,8 @@ detailed acceptance tasks below and does not make any detailed task disappear.
 | Task     | Acceptance checkpoint       | Status                                | Umbrella coverage                                                     |
 | -------- | --------------------------- | ------------------------------------- | --------------------------------------------------------------------- |
 | KS-11-01 | Staging deployment          | Complete and merged                   | Safe environment needed by every umbrella validation area             |
-| KS-11-02 | End-to-end acceptance suite | Implemented, pending review and merge | E2E sandbox checkout, fulfillment, refund, support and evidence       |
-| KS-11-03 | Catalog scale test          | Not started                           | Load/performance with at least 50,000 synthetic products and offers   |
+| KS-11-02 | End-to-end acceptance suite | Complete and merged                   | E2E sandbox checkout, fulfillment, refund, support and evidence       |
+| KS-11-03 | Catalog scale test          | Implemented, pending review and merge | Load/performance with at least 50,000 synthetic products and offers   |
 | KS-11-04 | Order concurrency test      | Not started                           | Concurrent replay and duplicate-mutation prevention                   |
 | KS-11-05 | Security assessment         | Not started                           | Static, dependency, authorization and key-exposure assessment         |
 | KS-11-06 | Recovery exercise           | Not started                           | Supplier outage, Redis loss, database restore and runbook evidence    |

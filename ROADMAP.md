@@ -155,11 +155,12 @@ detailed task.
 Load, security, recovery and end-to-end testing with synthetic and sandbox transactions.
 
 Phase 11 is tracked in `docs/phase-11-acceptance-matrix.md` as seven distinct
-checkpoints. KS-11-01 staging is complete and merged. KS-11-02 implements the
-deterministic application/persistence E2E suite and is pending review and merge.
-KS-11-03 catalog scale, KS-11-04 order concurrency, KS-11-05 security
-assessment, KS-11-06 recovery exercise and KS-11-07 owner UAT remain not
-started. Phase 11 is not complete and `SECURITY-READINESS` remains unapproved.
+checkpoints. KS-11-01 staging and KS-11-02 deterministic E2E acceptance are
+complete and merged. KS-11-03 implements the release-blocking 50k PostgreSQL
+catalog import, refresh, replay and publication validation and is pending review
+and merge. KS-11-04 order concurrency, KS-11-05 security assessment, KS-11-06
+recovery exercise and KS-11-07 owner UAT remain not started. Phase 11 is not
+complete and `SECURITY-READINESS` remains unapproved.
 
 ## Phase 12 – Production Readiness
 

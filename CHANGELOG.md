@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added KS-11-03 release-blocking catalog scale validation with 50,000
+  deterministic paged synthetic products, 60,000 baseline offers, PostgreSQL
+  baseline/refresh/replay coverage, Germany fail-closed publication checks,
+  stable canonical identity, duplicate/data-loss/orphan/index assertions and
+  omission-first CI evidence. Added bounded transactional PostgreSQL page
+  upserts and side-effect-free blocked publication replay without a migration
+  or external supplier/storefront request; KS-11-04 through KS-11-07 remain
+  open.
+
 - Added KS-11-02 deterministic E2E acceptance coverage for 15 critical
   customer/order scenarios, a real-PostgreSQL coherence journey, omission-first
   JSON/Markdown evidence and release-blocking CI artifact archival. The suite
