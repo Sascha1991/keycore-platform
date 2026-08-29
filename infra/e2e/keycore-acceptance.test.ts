@@ -6,12 +6,14 @@ import { InMemoryCustomerAccountReadRepository } from "../customers/in-memory-cu
 import { InMemoryCustomerOrderIdentityRepository } from "../customers/in-memory-customer-order-identity-repository.js";
 import { InMemoryCustomerRegistrationChallengeRepository } from "../customers/in-memory-customer-registration-repository.js";
 import { InMemoryGuestOrderClaimRepository } from "../customers/in-memory-guest-order-claim-repository.js";
+import { InMemorySupplierClaimRepository } from "../claims/in-memory-supplier-claim-repository.js";
 import { InMemoryFraudRiskRepository } from "../fraud/in-memory-fraud-risk-repository.js";
 import { InMemoryCustomerKeyDeliveryRepository } from "../fulfillment/in-memory-customer-key-delivery-repository.js";
 import { InMemoryFulfillmentRepository } from "../fulfillment/in-memory-fulfillment-repository.js";
 import { DevelopmentKeyManagementProvider } from "../key-management/development-provider.js";
 import { InMemoryOrderRepository } from "../orders/in-memory-order-repository.js";
 import { InMemoryPaymentRepository } from "../payments/in-memory-payment-repository.js";
+import { InMemoryProcurementOperationRepository } from "../procurement/in-memory-procurement-repository.js";
 import { InMemoryPriceLockRepository } from "../pricing/in-memory-pricing-repository.js";
 import { InMemorySupportCaseRepository } from "../support/in-memory-support-case-repository.js";
 import {
@@ -24,11 +26,16 @@ import {
   FakeGuestOrderClaimDeliveryPort,
   FraudRiskService,
   GuestOrderClaimService,
+  OperationsControlService,
   OrderOrchestrationService,
   PersistedGuestOrderClaimAuthority,
   PersistedGuestOrderClaimIssuanceAuthority,
   PersistedCustomerOrderAuthorizationPort,
   PriceLockService,
+  SecureKeyFulfillmentService,
+  SupplierClaimService,
+  SupplierProcurementService,
+  SupplierRegistry,
   SupportCaseService,
   correlationId,
   currency,
@@ -37,10 +44,13 @@ import {
   encryptProductKeyMaterial,
   fulfillmentEncryptionContext,
   money,
+  offerId,
   orderId,
   orderLineId,
   productId,
   supplierId,
+  supplierOfferId,
+  supplierProductId,
   type AuditEvent,
   type AuditEventPort,
   type AuthenticatedCustomerPrincipal,
@@ -54,15 +64,26 @@ import {
   type EmailVerificationAuthorityPort,
   type FraudManualReviewAuthorityPort,
   type FulfillmentOperation,
+  type FulfillmentProcurementEvidencePort,
   type KeyCoreOrder,
+  type KeyManagementProvider,
   type OperationsCapability,
+  type OperationsControl,
   type OperationsControlGate,
+  type OperationsControlRepository,
   type OrderId,
   type OrderOwnershipBindingAuthorityPort,
   type PricingService,
   type ProductId,
   type ProductPriceSelection,
   type SellPriceQuote,
+  type SupplierClaimAuthorityPort,
+  type SupplierClaimSubmissionPort,
+  type SupplierPort,
+  type SupplierRoutingCandidate,
+  type SupplierRoutingPolicy,
+  type SupplierRoutingService,
+  type SupplierKeyRetrievalPort,
   type SupportOperatorAuthorityPort,
 } from "../../packages/platform/src/contracts.js";
 import {
@@ -261,27 +282,90 @@ describe("KS-11-02 end-to-end acceptance", () => {
 
   it("E2E-005 SUPPLIER_AMBIGUOUS", async () => {
     const journey = await createOrderJourney("supplier-ambiguous");
-    let order = await captureAndApprove(journey);
-    order = await mustUpdate(
-      journey.orders.markProcurementPending(command(order)),
-    );
-    order = await mustUpdate(journey.orders.beginProcurement(command(order)));
-    order = await mustUpdate(
-      journey.orders.recordProcurementResult({
-        ...command(order),
-        procurementStatus: "AMBIGUOUS",
+    await captureAndApprove(journey);
+    const procurement = procurementHarness(journey, {
+      reconciliationOutcomes: ["STILL_AMBIGUOUS", "RESOLVED"],
+    });
+
+    const first = await procurement.service.startProcurement({
+      correlationId: correlationId("e2e-005-dispatch"),
+      orderId: journey.order.id,
+    });
+    expect(first).toMatchObject({
+      reasonCode: "SUPPLIER_NETWORK_AMBIGUOUS",
+      status: "AMBIGUOUS",
+    });
+    expect(procurement.original.purchaseDispatchCount).toBe(1);
+    expect(procurement.fallback.purchaseDispatchCount).toBe(0);
+
+    await expect(
+      procurement.service.startProcurement({
+        correlationId: correlationId("e2e-005-replay"),
+        orderId: journey.order.id,
       }),
+    ).resolves.toMatchObject({
+      reasonCode: "PROCUREMENT_AMBIGUOUS",
+      status: "AMBIGUOUS",
+    });
+    expect(procurement.original.purchaseDispatchCount).toBe(1);
+    expect(procurement.fallback.purchaseDispatchCount).toBe(0);
+
+    const operationId = requiredOperation(first.operation?.id);
+    await expect(
+      procurement.service.reconcileOperation({
+        correlationId: correlationId("e2e-005-reconcile-unresolved"),
+        operationId,
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "PROCUREMENT_AMBIGUOUS",
+      status: "AMBIGUOUS",
+    });
+    expect(procurement.original.reconciliationLookupCount).toBe(1);
+    expect(procurement.original.purchaseDispatchCount).toBe(1);
+    expect(procurement.fallback.purchaseDispatchCount).toBe(0);
+
+    await expect(
+      procurement.service.reconcileOperation({
+        correlationId: correlationId("e2e-005-reconcile-resolved"),
+        operationId,
+      }),
+    ).resolves.toMatchObject({ status: "SUCCEEDED" });
+    expect(procurement.original.reconciliationLookupCount).toBe(2);
+    expect(procurement.original.purchaseDispatchCount).toBe(1);
+    expect(procurement.fallback.purchaseDispatchCount).toBe(0);
+    await expect(
+      procurement.service.startProcurement({
+        correlationId: correlationId("e2e-005-after-resolution"),
+        orderId: journey.order.id,
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "PROCUREMENT_ALREADY_SUCCEEDED",
+      status: "BLOCKED",
+    });
+
+    const operations = await procurement.repository.listByOrder(
+      journey.order.id,
     );
-    expect(order).toMatchObject({
+    expect(operations).toHaveLength(1);
+    expect(operations[0]).toMatchObject({ status: "SUCCEEDED" });
+    expect(procurement.fulfillments.operations.size).toBe(0);
+    expect(procurement.fulfillments.secrets.size).toBe(0);
+    await expect(
+      journey.orders.getOrder(journey.order.id),
+    ).resolves.toMatchObject({
       fulfillmentStatus: "NOT_STARTED",
       procurementStatus: "AMBIGUOUS",
       status: "MANUAL_REVIEW",
     });
-    await expect(journey.orders.getOrder(order.id)).resolves.toMatchObject({
-      fulfillmentStatus: "NOT_STARTED",
-      procurementStatus: "AMBIGUOUS",
-      status: "MANUAL_REVIEW",
-    });
+    assertSensitiveAbsent(
+      {
+        audit: journey.audit.events,
+        history: await journey.repository.listHistory(journey.order.id),
+        operationCount: operations.length,
+      },
+      sensitiveCanary,
+      "ambiguous procurement safe metadata",
+    );
   });
 
   it("E2E-006 PAYMENT_FAILURE", async () => {
@@ -498,23 +582,9 @@ describe("KS-11-02 end-to-end acceptance", () => {
   });
 
   it("E2E-012 EMERGENCY_CONTROLS", async () => {
-    const capabilities: OperationsCapability[] = [
-      "CHECKOUT_CREATE",
-      "GLOBAL_COMMERCE_MUTATIONS",
-      "PROCUREMENT_CREATE",
-      "SUPPLIER_KEY_RETRIEVAL",
-      "CUSTOMER_KEY_DELIVERY",
-      "SUPPLIER_CLAIM_SUBMISSION",
-    ];
-    for (const capability of capabilities) {
-      const gate = new SelectivePauseGate(capability);
-      await expect(gate.evaluate(capability)).resolves.toEqual({
-        reasonCode: "OPERATIONS_CONTROL_PAUSED",
-        status: "DENIED",
-      });
-    }
+    const checkoutControls = operationsGate({ paused: "CHECKOUT_CREATE" });
     const checkout = await createOrderJourney("paused-checkout", {
-      operationsControlGate: new SelectivePauseGate("CHECKOUT_CREATE"),
+      operationsControlGate: checkoutControls.gate,
     });
     expect(checkout.createResult).toMatchObject({
       reasonCode: "OPERATIONS_CONTROL_BLOCKED",
@@ -523,6 +593,139 @@ describe("KS-11-02 end-to-end acceptance", () => {
     expect(
       await checkout.repository.findByIdempotencyKey("order-paused-checkout"),
     ).toBeNull();
+
+    const globalControls = operationsGate({
+      paused: "GLOBAL_COMMERCE_MUTATIONS",
+    });
+    const globallyPaused = await createOrderJourney("paused-global", {
+      operationsControlGate: globalControls.gate,
+    });
+    expect(globallyPaused.createResult).toMatchObject({
+      reasonCode: "OPERATIONS_CONTROL_BLOCKED",
+      status: "BLOCKED",
+    });
+    expect(
+      await globallyPaused.repository.findByIdempotencyKey(
+        "order-paused-global",
+      ),
+    ).toBeNull();
+
+    const procurementJourney = await createOrderJourney("paused-procurement");
+    await captureAndApprove(procurementJourney);
+    const pausedProcurement = procurementHarness(procurementJourney, {
+      operationsControlGate: operationsGate({ paused: "PROCUREMENT_CREATE" })
+        .gate,
+    });
+    await expect(
+      pausedProcurement.service.startProcurement({
+        correlationId: correlationId("e2e-012-procurement"),
+        orderId: procurementJourney.order.id,
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "OPERATIONS_CONTROL_PAUSED",
+      status: "BLOCKED",
+    });
+    expect(pausedProcurement.original.purchaseDispatchCount).toBe(0);
+    expect(pausedProcurement.fallback.purchaseDispatchCount).toBe(0);
+    await expect(
+      pausedProcurement.repository.listByOrder(procurementJourney.order.id),
+    ).resolves.toMatchObject([
+      { dispatchState: "NOT_DISPATCHED", status: "READY" },
+    ]);
+
+    const retrieval = await exercisePausedSupplierKeyRetrieval(
+      operationsGate({ paused: "SUPPLIER_KEY_RETRIEVAL" }).gate,
+    );
+    expect(retrieval).toMatchObject({
+      encryptedSecretCount: 0,
+      retrievalCallCount: 0,
+      retrievalState: "NOT_STARTED",
+      status: "BLOCKED",
+    });
+
+    const deliveryJourney = await createOrderJourney("paused-delivery");
+    const completed = await completePaidOrder(deliveryJourney);
+    const deliveryIdentity = await createVerifiedOwnedIdentity(completed);
+    const pausedDelivery = await exerciseSecureCustomerDelivery(
+      completed,
+      deliveryIdentity,
+      {
+        operationsControlGate: operationsGate({
+          paused: "CUSTOMER_KEY_DELIVERY",
+        }).gate,
+        paused: true,
+      },
+    );
+    expect(pausedDelivery).toMatchObject({
+      deliveryCount: 0,
+      encryptedSecretCount: 1,
+      executeStatus: "DENIED",
+      unwrapCount: 0,
+    });
+
+    const supplierClaim = await exercisePausedSupplierClaim(
+      operationsGate({ paused: "SUPPLIER_CLAIM_SUBMISSION" }).gate,
+    );
+    expect(supplierClaim).toMatchObject({
+      dispatchCount: 0,
+      status: "FAILED",
+      submissionStatus: "PREPARED",
+    });
+
+    const enabledButUnpaid = await createOrderJourney("enabled-not-authority", {
+      operationsControlGate: operationsGate().gate,
+    });
+    const unauthorizedProcurement = procurementHarness(enabledButUnpaid, {
+      operationsControlGate: operationsGate().gate,
+    });
+    await expect(
+      unauthorizedProcurement.service.startProcurement({
+        correlationId: correlationId("e2e-012-enabled-not-authority"),
+        orderId: enabledButUnpaid.order.id,
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "PAYMENT_NOT_CAPTURED",
+      status: "BLOCKED",
+    });
+    expect(unauthorizedProcurement.original.purchaseDispatchCount).toBe(0);
+
+    for (const unavailableMode of ["MISSING", "MALFORMED"] as const) {
+      const unavailable = await createOrderJourney(
+        `unavailable-${unavailableMode.toLowerCase()}`,
+        {
+          operationsControlGate: operationsGate({ unavailableMode }).gate,
+        },
+      );
+      expect(unavailable.createResult).toMatchObject({
+        reasonCode: "OPERATIONS_CONTROL_BLOCKED",
+        status: "BLOCKED",
+      });
+    }
+
+    const webhookControls = operationsGate();
+    const webhookJourney = await createOrderJourney("global-webhook", {
+      operationsControlGate: webhookControls.gate,
+    });
+    const payment = paymentHarness(webhookJourney);
+    await payment.service.initializePayment({
+      correlationId: correlationId("e2e-012-payment-init"),
+      orderId: webhookJourney.order.id,
+    });
+    webhookControls.repository.pause("GLOBAL_COMMERCE_MUTATIONS");
+    payment.verifier.event = paymentEvent(webhookJourney.order, "succeeded");
+    await expect(
+      payment.service.processWebhook({
+        correlationId: correlationId("e2e-012-payment-webhook"),
+        rawBody: "synthetic-e2e-event",
+        signatureHeader: "valid-synthetic-signature",
+      }),
+    ).resolves.toMatchObject({
+      reasonCode: "PAYMENT_CAPTURE_CONFIRMED",
+      status: "INITIALIZED",
+    });
+    await expect(
+      webhookJourney.orders.getOrder(webhookJourney.order.id),
+    ).resolves.toMatchObject({ paymentStatus: "CAPTURED" });
   });
 
   it("E2E-013 EMAIL_SAFETY", async () => {
@@ -616,6 +819,8 @@ interface OrderJourney {
   >;
   readonly order: KeyCoreOrder;
   readonly orders: OrderOrchestrationService;
+  readonly priceLocks: PriceLockService;
+  readonly pricing: StaticPricingService;
   readonly repository: InMemoryOrderRepository;
 }
 
@@ -658,7 +863,16 @@ const createOrderJourney = async (
   const createResult = await orders.createOrder(createInput);
   const order =
     createResult.order ?? syntheticBlockedOrder(name, quote.productId);
-  return { audit, createInput, createResult, order, orders, repository };
+  return {
+    audit,
+    createInput,
+    createResult,
+    order,
+    orders,
+    priceLocks,
+    pricing,
+    repository,
+  };
 };
 
 const captureAndApprove = async (
@@ -856,15 +1070,217 @@ class AllowAllGate implements OperationsControlGate {
   }
 }
 
-class SelectivePauseGate implements OperationsControlGate {
-  public constructor(private readonly paused: OperationsCapability) {}
+const operationsGate = (
+  options: {
+    readonly paused?: OperationsCapability;
+    readonly unavailableMode?: "MISSING" | "MALFORMED";
+  } = {},
+) => {
+  const repository = new AcceptanceOperationsControlRepository(options);
+  return {
+    gate: new OperationsControlService(repository, { now: () => now }),
+    repository,
+  };
+};
 
-  public async evaluate(capability: OperationsCapability) {
-    return capability === this.paused
-      ? ({ reasonCode: "OPERATIONS_CONTROL_PAUSED", status: "DENIED" } as const)
-      : ({ status: "ALLOWED" } as const);
+class AcceptanceOperationsControlRepository implements OperationsControlRepository {
+  private readonly controls = new Map<
+    OperationsCapability,
+    OperationsControl
+  >();
+
+  public constructor(
+    private readonly options: {
+      readonly paused?: OperationsCapability;
+      readonly unavailableMode?: "MISSING" | "MALFORMED";
+    },
+  ) {
+    for (const capability of [
+      "GLOBAL_COMMERCE_MUTATIONS",
+      "CHECKOUT_CREATE",
+      "PROCUREMENT_CREATE",
+      "SUPPLIER_KEY_RETRIEVAL",
+      "CUSTOMER_KEY_DELIVERY",
+      "SUPPLIER_CLAIM_SUBMISSION",
+    ] as const) {
+      const paused = capability === options.paused;
+      this.controls.set(capability, {
+        capability,
+        createdAt: now,
+        reasonCode: paused ? "MANUAL_OPERATIONS_PAUSE" : null,
+        recordVersion: 1,
+        state: paused ? "PAUSED" : "ENABLED",
+        updatedAt: now,
+      });
+    }
+  }
+
+  public async findControl(
+    capability: OperationsCapability,
+  ): Promise<OperationsControl | null> {
+    if (this.options.unavailableMode === "MISSING") return null;
+    const control = this.controls.get(capability) ?? null;
+    return this.options.unavailableMode === "MALFORMED" && control
+      ? ({ ...control, recordVersion: 0 } as OperationsControl)
+      : control;
+  }
+
+  public async changeControl(): Promise<never> {
+    throw new Error("Acceptance controls are immutable");
+  }
+
+  public pause(capability: OperationsCapability): void {
+    const current = this.controls.get(capability);
+    if (!current) throw new Error("Acceptance control missing");
+    this.controls.set(capability, {
+      ...current,
+      reasonCode: "MANUAL_OPERATIONS_PAUSE",
+      recordVersion: current.recordVersion + 1,
+      state: "PAUSED",
+      updatedAt: new Date(now.getTime() + 1_000),
+    });
   }
 }
+
+const procurementHarness = (
+  journey: OrderJourney,
+  options: {
+    readonly operationsControlGate?: OperationsControlGate;
+    readonly reconciliationOutcomes?: readonly (
+      "STILL_AMBIGUOUS" | "RESOLVED"
+    )[];
+  } = {},
+) => {
+  const repository = new InMemoryProcurementOperationRepository();
+  const fulfillments = new InMemoryFulfillmentRepository();
+  const original = new AcceptanceSupplier(
+    supplierId("mock-supplier"),
+    "AMBIGUOUS",
+    options.reconciliationOutcomes ?? ["RESOLVED"],
+  );
+  const fallback = new AcceptanceSupplier(
+    supplierId("mock-fallback"),
+    "FULFILLED",
+    ["RESOLVED"],
+  );
+  const registry = new SupplierRegistry();
+  registry.register(original as unknown as SupplierPort);
+  registry.register(fallback as unknown as SupplierPort);
+  const candidates = [
+    procurementCandidate(original.identity.supplierId, "primary"),
+    procurementCandidate(fallback.identity.supplierId, "fallback"),
+  ];
+  const service = new SupplierProcurementService({
+    audit: journey.audit,
+    environment: "CI",
+    executionLeaseStaleAfterMs: 60_000,
+    executionMode: "FAKE_SUPPLIER_ONLY",
+    now: () => now,
+    operationsControlGate: options.operationsControlGate ?? new AllowAllGate(),
+    orders: journey.orders,
+    priceLocks: journey.priceLocks,
+    pricing: journey.pricing as unknown as PricingService,
+    repository,
+    routing: {
+      selectSupplier: async () => ({
+        correlationId: correlationId("e2e-procurement-routing"),
+        evaluatedAt: now,
+        evaluatedCandidates: candidates,
+        failures: [],
+        policyVersion: "e2e-routing-v1",
+        rejectionReasons: [],
+        selectedCandidate: candidates[0],
+        status: "SELECTED",
+      }),
+    } as unknown as SupplierRoutingService,
+    routingPolicy: {
+      allowDegradedSuppliers: false,
+      allowReviewRequired: false,
+      allowUnknownHealth: false,
+      allowedCurrencies: [eur],
+      maxPriceAgeMs: 300_000,
+      requiredCapabilities: ["PURCHASE", "PRICE_LOOKUP", "REGION_EVIDENCE"],
+      requiredHealth: "HEALTHY",
+      version: "e2e-routing-v1",
+    } as SupplierRoutingPolicy,
+    suppliers: registry,
+  });
+  return { fallback, fulfillments, original, repository, service };
+};
+
+class AcceptanceSupplier {
+  public purchaseDispatchCount = 0;
+  public reconciliationLookupCount = 0;
+  private readonly reconciliationOutcomes: ("STILL_AMBIGUOUS" | "RESOLVED")[];
+  public readonly capabilities = {
+    supportsDelayedFulfillment: true,
+    supportsDeltaCatalog: false,
+    supportsFullCatalog: false,
+    supportsHealthRateLimitInfo: false,
+    supportsKeyRetrieval: false,
+    supportsPriceLookup: true,
+    supportsPurchase: true,
+    supportsPurchaseStatusReconciliation: true,
+    supportsRefundClaims: false,
+    supportsRegionEvidence: true,
+  };
+  public readonly identity;
+
+  public constructor(
+    supplier: ReturnType<typeof supplierId>,
+    private readonly purchaseState: "AMBIGUOUS" | "FULFILLED",
+    reconciliationOutcomes: readonly ("STILL_AMBIGUOUS" | "RESOLVED")[],
+  ) {
+    this.identity = {
+      contractVersion: { major: 1, minor: 0 },
+      displayName: "Synthetic Acceptance Supplier",
+      supplierId: supplier,
+    };
+    this.reconciliationOutcomes = [...reconciliationOutcomes];
+  }
+
+  public async submitPurchase() {
+    this.purchaseDispatchCount += 1;
+    return {
+      acceptedAt: now,
+      state: this.purchaseState,
+      supplierPurchaseReference: "synthetic-ambiguous-order",
+    } as const;
+  }
+
+  public async reconcilePurchase() {
+    this.reconciliationLookupCount += 1;
+    const outcome = this.reconciliationOutcomes.shift() ?? "RESOLVED";
+    return {
+      observedAt: now,
+      outcome,
+      reason:
+        outcome === "RESOLVED"
+          ? "SYNTHETIC_PURCHASE_OBSERVED"
+          : "SYNTHETIC_PURCHASE_STILL_AMBIGUOUS",
+    } as const;
+  }
+}
+
+const procurementCandidate = (
+  supplier: ReturnType<typeof supplierId>,
+  suffix: string,
+): SupplierRoutingCandidate =>
+  ({
+    offer: {
+      offer: { offerId: offerId("synthetic-offer") },
+    },
+    price: money(1_000n, eur),
+    status: "ELIGIBLE",
+    supplierId: supplier,
+    supplierOfferId: supplierOfferId(`e2e-${suffix}-offer`),
+    supplierProductId: supplierProductId(`e2e-${suffix}-product`),
+  }) as SupplierRoutingCandidate;
+
+const requiredOperation = (operationIdValue: string | undefined): string => {
+  if (!operationIdValue) throw new Error("Acceptance operation missing");
+  return operationIdValue;
+};
 
 class AuditSink implements AuditEventPort {
   public readonly events: AuditEvent[] = [];
@@ -916,12 +1332,16 @@ const createVerifiedOwnedIdentity = async (order: KeyCoreOrder) => {
 const exerciseSecureCustomerDelivery = async (
   order: KeyCoreOrder,
   identity: Awaited<ReturnType<typeof createVerifiedOwnedIdentity>>,
+  options: {
+    readonly operationsControlGate?: OperationsControlGate;
+    readonly paused?: boolean;
+  } = {},
 ) => {
   const fulfillmentRepository = new InMemoryFulfillmentRepository();
   const deliveryRepository = new InMemoryCustomerKeyDeliveryRepository(
     fulfillmentRepository,
   );
-  const provider = syntheticKeyProvider();
+  const provider = new CountingKeyProvider(syntheticKeyProvider());
   const fulfillment: FulfillmentOperation = {
     approvalExpiresAt: new Date(now.getTime() + 300_000),
     controlledProcurementApprovalId: null,
@@ -1008,7 +1428,7 @@ const exerciseSecureCustomerDelivery = async (
     fulfillmentRepository,
     keyManagementProvider: provider,
     now: () => now,
-    operationsControlGate: new AllowAllGate(),
+    operationsControlGate: options.operationsControlGate ?? new AllowAllGate(),
     orderAuthorization: new PersistedCustomerOrderAuthorizationPort({
       environment: "CI",
       principalProvider,
@@ -1047,14 +1467,23 @@ const exerciseSecureCustomerDelivery = async (
     orderId: order.id,
     principal: principal(identity.customer),
   } as const;
-  await expect(access.executeKeyAccess(executeInput)).resolves.toMatchObject({
-    status: "DELIVERED",
-  });
-  const replay = await access.executeKeyAccess(executeInput);
+  const executed = await access.executeKeyAccess(executeInput);
+  if (options.paused) {
+    expect(executed).toEqual({
+      code: "KEY_ACCESS_NOT_AVAILABLE",
+      status: "DENIED",
+    });
+  } else {
+    expect(executed).toMatchObject({ status: "DELIVERED" });
+  }
+  const replay = options.paused
+    ? null
+    : await access.executeKeyAccess(executeInput);
   return {
     deliveryCount: deliveryPort.deliveryCount,
     encryptedSecretCount: fulfillmentRepository.secrets.size,
-    replayStatus: replay.status,
+    executeStatus: executed.status,
+    replayStatus: replay?.status ?? null,
     safeSurface: {
       approvalCount: deliveryRepository.approvals.size,
       attemptCount: deliveryRepository.attempts.size,
@@ -1062,8 +1491,35 @@ const exerciseSecureCustomerDelivery = async (
       fulfillmentId: retrieved.id,
       orderId: order.id,
     },
+    unwrapCount: provider.unwrapCount,
   };
 };
+
+class CountingKeyProvider implements KeyManagementProvider {
+  public unwrapCount = 0;
+
+  public constructor(private readonly delegate: KeyManagementProvider) {}
+
+  public activeMasterKeyVersion(): Promise<string> {
+    return this.delegate.activeMasterKeyVersion();
+  }
+
+  public wrapDataKey(request: { readonly dataKey: Uint8Array }) {
+    return this.delegate.wrapDataKey(request);
+  }
+
+  public unwrapDataKey(request: {
+    readonly wrappedDataKey: Uint8Array;
+    readonly keyVersion: string;
+  }): Promise<Uint8Array> {
+    this.unwrapCount += 1;
+    return this.delegate.unwrapDataKey(request);
+  }
+
+  public getKeyVersionMetadata(keyVersion: string) {
+    return this.delegate.getKeyVersionMetadata(keyVersion);
+  }
+}
 
 class FixedPrincipalProvider implements AuthenticatedCustomerPrincipalProvider {
   public constructor(
@@ -1092,6 +1548,181 @@ class CanaryDeliveryPort implements CustomerKeyDeliveryPort {
       deliveredAt: now,
       deliveryReference: `synthetic-delivery-${this.deliveryCount}`,
       status: "DELIVERED",
+    };
+  }
+}
+
+const exercisePausedSupplierKeyRetrieval = async (
+  operationsControlGate: OperationsControlGate,
+) => {
+  const repository = new InMemoryFulfillmentRepository();
+  const keyRetrieval = new CountingSupplierKeyRetrieval();
+  const service = new SecureKeyFulfillmentService({
+    approvalTtlMs: 300_000,
+    controlledKeyRetrievalEnabled: true,
+    controlledKeyRetrievalMode: "CONTROLLED_VERIFICATION_ONE_TIME",
+    environment: "CI",
+    keyManagementProvider: syntheticKeyProvider(),
+    keyRetrieval,
+    now: () => now,
+    operationsControlGate,
+    procurementEvidence: new SyntheticProcurementEvidence(),
+    repository,
+    retrievalLeaseStaleAfterMs: 60_000,
+  });
+  const prepared = await service.prepareControlledRetrieval({
+    controlledProcurementApprovalId: "10000000-0000-4000-8000-000000000121",
+    correlationId: correlationId("e2e-012-key-prepare"),
+  });
+  const result = await service.executeControlledRetrieval({
+    correlationId: correlationId("e2e-012-key-execute"),
+    executionToken: prepared.oneTimeExecutionToken ?? "",
+    fulfillmentApprovalId: prepared.fulfillmentApprovalId ?? "",
+  });
+  const operation = await repository.findById(
+    prepared.fulfillmentApprovalId ?? "",
+  );
+  return {
+    encryptedSecretCount: repository.secrets.size,
+    retrievalCallCount: keyRetrieval.calls,
+    retrievalState: operation?.retrievalState,
+    status: result.status,
+  };
+};
+
+class SyntheticProcurementEvidence implements FulfillmentProcurementEvidencePort {
+  public async getControlledProcurementEvidence(approvalId: string) {
+    return {
+      controlledProcurementApprovalId: approvalId,
+      expectedQuantity: 1,
+      externalSupplierOrderId: "synthetic-e2e-procurement-order",
+      status: "CONFIRMED" as const,
+      supplierId: supplierId("kinguin"),
+    };
+  }
+}
+
+class CountingSupplierKeyRetrieval implements SupplierKeyRetrievalPort {
+  public calls = 0;
+
+  public async retrievePurchasedKeys() {
+    this.calls += 1;
+    return {
+      reasonCode: "FULFILLMENT_KEY_NOT_AVAILABLE_YET" as const,
+      status: "PENDING" as const,
+    };
+  }
+}
+
+const exercisePausedSupplierClaim = async (
+  operationsControlGate: OperationsControlGate,
+) => {
+  const repository = new InMemorySupplierClaimRepository();
+  const claimOrderId = orderId("10000000-0000-4000-8000-000000000131");
+  const supportCaseId = "10000000-0000-4000-8000-000000000132";
+  const procurementOperationId = "10000000-0000-4000-8000-000000000133";
+  const fulfillmentId = "10000000-0000-4000-8000-000000000134";
+  repository.setOrder({ orderId: claimOrderId });
+  repository.setSupportCase({
+    category: "ACTIVATION_PROBLEM",
+    id: supportCaseId,
+    orderId: claimOrderId,
+    status: "OPEN",
+  });
+  repository.setProcurement({
+    dispatchState: "DISPATCH_CONFIRMED",
+    externalSupplierOrderId: "synthetic-e2e-supplier-order",
+    id: procurementOperationId,
+    orderId: claimOrderId,
+    status: "SUCCEEDED",
+    supplierId: "mock-supplier",
+  });
+  repository.setFulfillment({
+    deliveryState: "PENDING",
+    id: fulfillmentId,
+    orderId: claimOrderId,
+    procurementOperationId,
+    retrievalState: "RETRIEVED",
+    status: "DELIVERY_PENDING",
+  });
+  const submissionPort = new CountingSupplierClaimSubmissionPort();
+  const service = new SupplierClaimService({
+    authority: new TrustedSupplierClaimAuthority(),
+    environment: "CI",
+    now: () => now,
+    operationsControlGate,
+    repository,
+    submissionPort,
+  });
+  const created = await service.createClaim({
+    category: "KEY_NOT_WORKING",
+    correlationId: correlationId("e2e-012-claim-create"),
+    fulfillmentId,
+    idempotencyKey: "e2e-012-supplier-claim",
+    orderId: claimOrderId,
+    procurementOperationId,
+    source: "SUPPORT",
+    supportCaseId,
+  });
+  if (created.status === "FAILED") {
+    throw new Error("Synthetic supplier claim creation failed");
+  }
+  const claimId = created.detail.claim.id;
+  await service.transitionClaim({
+    claimId,
+    correlationId: correlationId("e2e-012-claim-review"),
+    expectedVersion: 1,
+    nextStatus: "UNDER_REVIEW",
+  });
+  await service.transitionClaim({
+    claimId,
+    correlationId: correlationId("e2e-012-claim-ready"),
+    expectedVersion: 2,
+    nextStatus: "READY_FOR_SUBMISSION",
+  });
+  await service.prepareSubmission({
+    claimId,
+    correlationId: correlationId("e2e-012-claim-prepare"),
+  });
+  const result = await service.executeSubmission({
+    claimId,
+    correlationId: correlationId("e2e-012-claim-submit"),
+    expectedSubmissionVersion: 1,
+  });
+  const persisted = await repository.findClaim(claimId);
+  return {
+    dispatchCount: submissionPort.calls,
+    status: result.status,
+    submissionStatus: persisted?.submission?.status,
+  };
+};
+
+class TrustedSupplierClaimAuthority implements SupplierClaimAuthorityPort {
+  public async authorize() {
+    return {
+      actorReference: "operator:e2e-acceptance",
+      status: "AUTHORIZED" as const,
+    };
+  }
+}
+
+class CountingSupplierClaimSubmissionPort implements SupplierClaimSubmissionPort {
+  public calls = 0;
+
+  public async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  public async submit(): Promise<{
+    readonly responseType: "ACCEPTED";
+    readonly status: "CONFIRMED";
+    readonly supplierClaimReference: string;
+  }> {
+    this.calls += 1;
+    return {
+      responseType: "ACCEPTED",
+      status: "CONFIRMED",
+      supplierClaimReference: "synthetic-claim-reference",
     };
   }
 }
