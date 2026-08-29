@@ -29,6 +29,7 @@ Critical business rules are release-blocking. A release cannot proceed while req
 | Staging production isolation            | preflight configuration guards           | clean migrations and seed                   | mock/sandbox only                   | staging preflight regression | secret-free fail-closed scan                       |
 | Critical customer/order journeys        | service state guards                     | migrated PostgreSQL coherence               | supplier-neutral synthetic outcomes | E2E-001 through E2E-015      | leakage canary and safe evidence                   |
 | Catalog scale and publication integrity | deterministic 50k source and eligibility | paged PostgreSQL import, refresh and replay | synthetic supplier pages only       | not applicable               | no data loss, unsafe publication or duplicate rows |
+| Order concurrency and durable ownership | optimistic state and lease guards        | CONC-001 through CONC-017 on PostgreSQL     | synthetic outcomes only             | replay and competing actors  | no duplicate commercial effect or stale overwrite  |
 
 ## Release Rule
 

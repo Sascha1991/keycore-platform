@@ -44,22 +44,31 @@ describe.skipIf(!connectionString)("PostgresFulfillmentRepository", () => {
         controlledProcurementApprovalId: approval.approvalId,
       });
 
-      const created = await withRepository(database.schemaName, (repository) =>
-        repository.createIdempotent({ now, operation }),
+      const results = await Promise.all(
+        Array.from({ length: 10 }, (_value, index) =>
+          withRepository(database.schemaName, (repository) =>
+            repository.createIdempotent({
+              now,
+              operation:
+                index === 0
+                  ? operation
+                  : operationFixture({
+                      controlledProcurementApprovalId: approval.approvalId,
+                      id: randomUUID(),
+                    }),
+            }),
+          ),
+        ),
       );
-      const repeated = await withRepository(database.schemaName, (repository) =>
-        repository.createIdempotent({
-          now,
-          operation: operationFixture({
-            controlledProcurementApprovalId: approval.approvalId,
-            id: randomUUID(),
-          }),
-        }),
+      expect(
+        results.filter((result) => result.status === "CREATED"),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "EXISTING"),
+      ).toHaveLength(9);
+      expect(new Set(results.map((result) => result.operation.id)).size).toBe(
+        1,
       );
-
-      expect(created.status).toBe("CREATED");
-      expect(repeated.status).toBe("EXISTING");
-      expect(repeated.operation.id).toBe(created.operation.id);
     });
   });
 

@@ -29,6 +29,7 @@ const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
 const describePostgres = connectionString ? describe : describe.skip;
 const now = new Date("2026-08-26T15:00:00.000Z");
 const claimCode = "pg-claim-code-with-enough-entropy-842913";
+const competingClaimCode = "pg-competing-claim-code-with-entropy-719245";
 
 describePostgres("PostgresGuestOrderClaimRepository", () => {
   it("persists hash-only claim credentials, reissues safely and consumes once under concurrency", async () => {
@@ -117,6 +118,59 @@ describePostgres("PostgresGuestOrderClaimRepository", () => {
         database.query(
           "SELECT customer_id::text FROM keycore_orders WHERE id = $1",
           [guestOrder],
+        ),
+      ).resolves.toMatchObject({
+        rows: [expect.objectContaining({ customer_id: buyer })],
+      });
+
+      const competingOrder = await insertGuestOrder(
+        database,
+        "pg-guest@example.com",
+      );
+      const attacker = await createVerifiedCustomer(
+        identityRepository,
+        "different-customer@example.com",
+      );
+      const competingClaimService = new GuestOrderClaimService({
+        claimTtlMs: 604_800_000,
+        delivery: claimDelivery,
+        issuanceAuthority: new PersistedGuestOrderClaimIssuanceAuthority(
+          identityRepository,
+        ),
+        now: () => now,
+        repository: claimRepository,
+        tokenFactory: () => competingClaimCode,
+      });
+      await expect(
+        competingClaimService.issueGuestOrderClaim({
+          checkoutEmail: "pg-guest@example.com",
+          correlationId: correlationId("ks0805-pg-competing-issue"),
+          orderId: competingOrder,
+        }),
+      ).resolves.toEqual({ status: "ISSUED" });
+
+      const competingRace = await Promise.all(
+        Array.from({ length: 10 }, (_, index) =>
+          registrationService.claimGuestOrder({
+            claimCode: competingClaimCode,
+            correlationId: correlationId(`ks0805-pg-competing-claim-${index}`),
+            principal: {
+              authenticationContext: {
+                assurance: "AUTHENTICATED",
+                provider: "TEST",
+              },
+              customerId: index % 2 === 0 ? buyer : attacker,
+            },
+          }),
+        ),
+      );
+      expect(
+        competingRace.filter((result) => result.status === "CLAIMED"),
+      ).toHaveLength(1);
+      await expect(
+        database.query(
+          "SELECT customer_id::text FROM keycore_orders WHERE id = $1",
+          [competingOrder],
         ),
       ).resolves.toMatchObject({
         rows: [expect.objectContaining({ customer_id: buyer })],
