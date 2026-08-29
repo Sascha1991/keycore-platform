@@ -40,6 +40,8 @@ Open `START_HERE.md` first.
 - `docs/acceptance-test-matrix.md`
 - `docs/staging-deployment.md`
 - `docs/phase-11-acceptance-matrix.md`
+- `docs/e2e-acceptance-suite.md`
+- `docs/testing/test-strategy.md`
 - `docs/specification-review-v1.0.md`
 - `docs/specification-review-v1.0.2.md`
 - `decisions/architecture-decisions/`

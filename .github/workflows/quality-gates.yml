@@ -48,6 +48,16 @@ jobs:
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm run check
+      - name: Run KS-11-02 acceptance suite
+        run: npm run e2e:acceptance
+      - name: Archive safe KS-11-02 acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ks-11-02-e2e-acceptance-evidence
+          path: artifacts/e2e-acceptance/
+          if-no-files-found: error
+          retention-days: 14
 
   php:
     name: PHP foundation checks
