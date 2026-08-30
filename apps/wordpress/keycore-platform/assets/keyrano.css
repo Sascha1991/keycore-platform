@@ -6,6 +6,18 @@
   --keyrano-line: #d9dee5;
 }
 
+.wp-site-blocks > header.wp-block-template-part {
+  display: none;
+}
+
+.wc-block-mini-cart__drawer {
+  display: none !important;
+}
+
+.woocommerce-shop .wp-block-query-title {
+  display: none;
+}
+
 .keyrano-brand {
   align-items: center;
   background: #fff;
@@ -52,4 +64,10 @@
   .keyrano-brand nav { flex-wrap: wrap; }
   .keyrano-product-facts, .keyrano-detail-grid { grid-template-columns: 1fr; }
   .keyrano-purchase { align-items: start; grid-template-columns: 1fr; }
+  .woocommerce-shop .wp-block-group:has(> .wc-block-product-results-count) { align-items: stretch; flex-direction: column; }
+  .woocommerce-shop .wc-block-product-results-count,
+  .woocommerce-shop .wc-block-catalog-sorting { width: 100%; }
+  .woocommerce .woocommerce-result-count,
+  .woocommerce .woocommerce-ordering { float: none; width: 100%; }
+  .woocommerce .woocommerce-ordering select { max-width: 100%; width: 100%; }
 }

@@ -6,9 +6,9 @@
     <p class="keyrano-kicker"><?php echo esc_html__('Kaufdetails', 'keycore-platform'); ?></p>
     <h2><?php echo esc_html((string) ($order['productTitle'] ?? __('Digitales Produkt', 'keycore-platform'))); ?></h2>
     <dl class="keyrano-detail-grid">
-        <div><dt><?php echo esc_html__('Status', 'keycore-platform'); ?></dt><dd><?php echo esc_html((string) ($order['status'] ?? '')); ?></dd></div>
-        <div><dt><?php echo esc_html__('Zahlung', 'keycore-platform'); ?></dt><dd><?php echo esc_html((string) ($order['paymentStatus'] ?? '')); ?></dd></div>
-        <div><dt><?php echo esc_html__('Rechnung', 'keycore-platform'); ?></dt><dd><?php echo esc_html((string) ($order['invoice']['status'] ?? __('Nicht verfügbar', 'keycore-platform'))); ?></dd></div>
+        <div><dt><?php echo esc_html__('Status', 'keycore-platform'); ?></dt><dd><?php echo esc_html(\KeyRaNo\Storefront\Plugin::status_label((string) ($order['status'] ?? 'PENDING'))); ?></dd></div>
+        <div><dt><?php echo esc_html__('Zahlung', 'keycore-platform'); ?></dt><dd><?php echo esc_html(\KeyRaNo\Storefront\Plugin::status_label((string) ($order['paymentStatus'] ?? 'PENDING'))); ?></dd></div>
+        <div><dt><?php echo esc_html__('Rechnung', 'keycore-platform'); ?></dt><dd><?php echo esc_html(\KeyRaNo\Storefront\Plugin::status_label((string) ($order['invoice']['status'] ?? 'NOT_AVAILABLE'))); ?></dd></div>
         <div><dt><?php echo esc_html__('Aktivierung', 'keycore-platform'); ?></dt><dd><?php echo esc_html((string) ($order['activationInstructions']['instructionCode'] ?? __('Noch nicht verfügbar', 'keycore-platform'))); ?></dd></div>
     </dl>
     <?php if (true === ($order['fulfillment']['keyAccessAvailable'] ?? false)) : ?>

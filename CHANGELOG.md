@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Corrected local visible-storefront UAT setup: WP-CLI now uses the WordPress
+  volume owner, local HTTP admin transport requires an explicit fail-closed
+  override, and bootstrap reproducibly configures German WordPress/WooCommerce,
+  Germany/EUR formatting and navigation cleanup. Technical order statuses are
+  translated only at the customer presentation boundary; reveal and ownership
+  controls are unchanged.
+
 - Added the first browser-visible KeyRaNo WooCommerce staging storefront with a
   branded responsive shop, deterministic Germany-safe synthetic catalog,
   idempotent fail-closed product publisher, cart/checkout shell, mapped account

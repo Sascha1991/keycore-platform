@@ -106,6 +106,12 @@ foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_acco
     assert_true(in_array($hook, $GLOBALS['keyrano_test_actions'], true), 'Missing hook: ' . $hook);
 }
 assert_true(in_array('woocommerce_account_menu_items', $GLOBALS['keyrano_test_filters'], true), 'Missing account menu filter');
+assert_true(in_array('render_block_core/navigation', $GLOBALS['keyrano_test_filters'], true), 'Theme navigation is not suppressed');
+assert_true(in_array('woocommerce_show_page_title', $GLOBALS['keyrano_test_filters'], true), 'Default shop title is not suppressed');
+assert_true('' === \KeyRaNo\Storefront\Plugin::hide_theme_navigation('<nav>duplicate</nav>'), 'Theme navigation remained visible');
+assert_true(false === \KeyRaNo\Storefront\Plugin::hide_shop_page_title(), 'Default shop title remained visible');
+assert_true('Bezahlt' === \KeyRaNo\Storefront\Plugin::status_label('CAPTURED'), 'Captured status was not localized');
+assert_true('In Bearbeitung' === \KeyRaNo\Storefront\Plugin::status_label('UNKNOWN_INTERNAL_STATE'), 'Unknown status did not use a safe customer label');
 
 $bridge = new FakeBridge();
 $publisher = new Publisher($bridge);

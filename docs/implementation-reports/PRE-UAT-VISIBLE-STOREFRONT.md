@@ -43,7 +43,7 @@ test; blocker map; Dockerfile, build-context exclusions and follow-up task.
 
 ## Verification
 
-Local Windows verification:
+Initial local Windows verification:
 
 - `npm run check`: passed; 743 tests passed, 124 environment-dependent tests
   skipped; format, lint, typecheck and secret scan passed.
@@ -60,9 +60,8 @@ Local Windows verification:
 - `npm run secrets:scan`: passed.
 - `git diff --check`: passed.
 
-PHP and Docker executables are not installed in the local shell. `composer
-check`, PHP 8.3 syntax/tests, Compose configuration and PostgreSQL-backed gates
-must therefore be confirmed by GitHub Actions before review completion.
+The original implementation run did not have local PHP or Docker executables;
+those checks were subsequently covered by GitHub Actions.
 
 ## Acceptance Status
 
@@ -103,3 +102,56 @@ pending, Phase 11 remains incomplete and Phase 12 remains not started.
   expected user IDs; conflicts fail closed.
 - Human review must verify responsive rendering, all smoke-test steps and that
   evidence fully redacts the revealed synthetic value.
+
+## Local Staging UAT Corrections
+
+Follow-up manual UAT found three presentation/bootstrap defects while secure
+reveal and cross-owner isolation behaved correctly. The WP-CLI image ran as
+UID/GID `82` against WordPress-owned files from UID/GID `33`, local HTTP was
+forced to HTTPS, and the default English/USD WooCommerce setup remained visible.
+
+The bootstrap now runs as `33:33` without a manual CLI flag and retains the
+repository plugin's read-only mount. `FORCE_SSL_ADMIN` is controlled by an
+exact boolean environment value, defaults to `true`, and can be explicitly set
+to `false` only for isolated local HTTP staging. Bootstrap activates `de_DE`,
+configures Germany/EUR and German price formatting, removes the sample page and
+disables WooCommerce's staging-only coming-soon screen, and the plugin suppresses
+the duplicate theme navigation. Customer-facing order, payment and invoice
+status codes are mapped to German labels without changing their internal values.
+
+No production behavior, database schema, price calculation, owner isolation,
+HMAC, nonce, origin, rate-limit or vault rule changed. Repeated human UAT must
+still use only the synthetic staging key; Security Readiness and all human UAT
+results remain unapproved/pending.
+
+Correction verification on the local isolated Docker stack:
+
+- `npm run check`: passed; 746 tests passed and 124 environment-dependent tests
+  skipped; format, lint, typecheck and secret scan passed.
+- Focused staging tests: 38 passed and one PostgreSQL-dependent test skipped in
+  the no-database run; the focused PostgreSQL run separately passed all six
+  staging deployment/seed tests.
+- PHP 8.3 container syntax checks: all plugin PHP files passed; deterministic
+  adapter test passed.
+- `docker compose ... config --quiet`: passed for local HTTP and committed HTTPS
+  example configurations, including the bootstrap profile.
+- Full stack recreation: seven services started; PostgreSQL, Redis, MariaDB and
+  staging bridge became healthy.
+- Bootstrap without manual `--user`: passed twice idempotently; effective UID
+  and GID were both 33, customer IDs remained 2 and 3, six products were
+  published, and the sample page count was zero.
+- Browser checks: shop/product/account/cart/checkout returned HTTP 200, German
+  customer text and EUR prices were visible, USD/English shop controls were not
+  visible, one KeyRaNo header remained, and desktop plus 390 px layouts had no
+  horizontal overflow after correction.
+- Synthetic owner reveal: matched the configured synthetic fixture without an
+  HTTPS redirect; cross-owner detail access returned the safe unavailable state
+  and no synthetic value.
+- `npm audit --audit-level=low`: zero vulnerabilities.
+- `git diff --check`: passed.
+
+The branch is technically ready for repeated Human-UAT. Remaining human work is
+the formal evidence capture and disposition of the prepared UAT scenarios;
+placeholders remain acceptable, checkout remains intentionally non-live, guest
+claim and invoice-document delivery remain outside this correction, and neither
+Human-UAT nor Security Readiness is approved by this report.

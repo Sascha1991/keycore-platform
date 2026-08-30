@@ -14,7 +14,7 @@
                 <article class="keyrano-purchase">
                     <div><p class="keyrano-purchase__date"><?php echo esc_html(wp_date('d.m.Y', strtotime((string) ($order['createdAt'] ?? '')))); ?></p>
                     <h3><?php echo esc_html((string) ($order['productTitle'] ?? __('Digitales Produkt', 'keycore-platform'))); ?></h3></div>
-                    <p class="keyrano-status"><?php echo esc_html((string) ($order['status'] ?? __('In Bearbeitung', 'keycore-platform'))); ?></p>
+                    <p class="keyrano-status"><?php echo esc_html(\KeyRaNo\Storefront\Plugin::status_label((string) ($order['status'] ?? 'PENDING'))); ?></p>
                     <a class="button" href="<?php echo esc_url(wc_get_account_endpoint_url('kauf-details') . rawurlencode((string) ($order['orderId'] ?? '')) . '/'); ?>"><?php echo esc_html__('Details', 'keycore-platform'); ?></a>
                 </article>
             <?php endforeach; ?>

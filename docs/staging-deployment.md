@@ -87,11 +87,22 @@ valid staging deployment ID.
 
 The optional `wordpress-bootstrap` profile activates pinned WooCommerce 11.0.0
 and the KeyCore plugin after WordPress has been initialized through the normal
-trusted staging administration process:
+trusted staging administration process. The container runs as UID/GID `33:33`
+to match the mounted WordPress volume owner; do not add a manual `--user`
+argument or broaden permissions:
 
 ```sh
 docker compose --env-file infra/docker/staging.env -f infra/docker/compose.staging.yaml --profile bootstrap run --rm wordpress-bootstrap
 ```
+
+The bootstrap activates the German WordPress and WooCommerce language packs,
+configures Germany/EUR storefront defaults and removes the sample page. For an
+isolated local origin such as `http://localhost:18080`, explicitly set
+`KEYRANO_STAGING_FORCE_SSL_ADMIN=false`. Hosted TLS staging keeps it `true`.
+The default is `true`, and invalid values fail during WordPress configuration;
+`false` also fails unless the configured origin is local HTTP on an explicit
+loopback host. This local transport exception does not weaken reveal
+authorization or request integrity controls.
 
 The committed example is a template only. Ordinary PR CI validates it with
 synthetic placeholders and never receives staging or production credentials.

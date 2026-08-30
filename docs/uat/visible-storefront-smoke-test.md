@@ -4,11 +4,16 @@ Use only the isolated synthetic staging environment. Never record passwords or
 the revealed value in evidence.
 
 1. Start Compose and run the bootstrap command from
-   `docs/storefront/staging-setup.md`.
+   `docs/storefront/staging-setup.md`. Do not add a manual `--user` argument;
+   the service is already configured as UID/GID `33:33`.
 2. Open the configured origin (`http://localhost:18080` locally).
+   Local HTTP requires the explicit ignored-environment setting
+   `KEYRANO_STAGING_FORCE_SSL_ADMIN=false`; hosted HTTPS keeps it `true`.
 3. Confirm the KeyRaNo header and claim “Dein Key. Direkt. Ohne Warten.”
 4. Confirm six synthetic products are visible; blocked, review and unavailable
-   fixtures are not purchasable.
+   fixtures are not purchasable. Standard customer text must be German, prices
+   must use EUR/German formatting, and no sample page or duplicate theme header
+   may be visible.
 5. Open a product and verify price, platform, region and activation facts.
 6. Add it to the cart and open checkout. Confirm the staging/no-live-payment
    notice. Do not submit a live payment.

@@ -22,6 +22,8 @@ final class Plugin
         add_action('admin_post_nopriv_keyrano_reveal', [$account, 'handle_reveal']);
         add_action('wp_enqueue_scripts', [self::class, 'assets']);
         add_action('wp_body_open', [self::class, 'brand_bar']);
+        add_filter('render_block_core/navigation', [self::class, 'hide_theme_navigation']);
+        add_filter('woocommerce_show_page_title', [self::class, 'hide_shop_page_title']);
         add_action('woocommerce_before_shop_loop', [self::class, 'shop_intro'], 5);
         add_action('woocommerce_single_product_summary', [self::class, 'product_facts'], 25);
         add_action('woocommerce_before_checkout_form', [self::class, 'checkout_notice'], 5);
@@ -36,11 +38,12 @@ final class Plugin
 
     public static function assets(): void
     {
+        $asset_path = KEYRANO_PLUGIN_DIR . '/assets/keyrano.css';
         wp_enqueue_style(
             'keyrano-storefront',
             plugins_url('assets/keyrano.css', KEYRANO_PLUGIN_FILE),
             [],
-            KEYCORE_PLATFORM_VERSION
+            is_file($asset_path) ? (string) filemtime($asset_path) : KEYCORE_PLATFORM_VERSION
         );
     }
 
@@ -52,6 +55,35 @@ final class Plugin
         echo '<a href="' . esc_url(wc_get_page_permalink('shop')) . '">' . esc_html__('Produkte', 'keycore-platform') . '</a>';
         echo '<a href="' . esc_url(wc_get_cart_url()) . '">' . esc_html__('Warenkorb', 'keycore-platform') . '</a>';
         echo '<a href="' . esc_url(wc_get_page_permalink('myaccount')) . '">' . esc_html__('Mein Konto', 'keycore-platform') . '</a></nav></header>';
+    }
+
+    public static function hide_theme_navigation(string $content): string
+    {
+        return '';
+    }
+
+    public static function hide_shop_page_title(): bool
+    {
+        return false;
+    }
+
+    public static function status_label(string $status): string
+    {
+        $labels = [
+            'AVAILABLE' => __('Verfügbar', 'keycore-platform'),
+            'CAPTURED' => __('Bezahlt', 'keycore-platform'),
+            'DELIVERY_PENDING' => __('Lieferung wird vorbereitet', 'keycore-platform'),
+            'FULFILLMENT_PENDING' => __('Key wird vorbereitet', 'keycore-platform'),
+            'NOT_AVAILABLE' => __('Nicht verfügbar', 'keycore-platform'),
+            'PAYMENT_CAPTURED' => __('Zahlung bestätigt', 'keycore-platform'),
+            'PENDING' => __('In Bearbeitung', 'keycore-platform'),
+            'PROCESSING' => __('In Bearbeitung', 'keycore-platform'),
+            'READY' => __('Bereit', 'keycore-platform'),
+            'RETRIEVED' => __('Sicher hinterlegt', 'keycore-platform'),
+            'SUCCEEDED' => __('Abgeschlossen', 'keycore-platform'),
+        ];
+
+        return $labels[$status] ?? __('In Bearbeitung', 'keycore-platform');
     }
 
     public static function shop_intro(): void
