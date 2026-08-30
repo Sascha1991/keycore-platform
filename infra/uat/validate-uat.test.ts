@@ -194,7 +194,7 @@ describe("KS-11-07 UAT package lifecycle validator", () => {
 
   it("rejects PASS while the UI remains non-executable", async () => {
     const root = await packageCopy();
-    await setHumanResult(root, "UAT-001", "PASS");
+    await setHumanResult(root, "UAT-008", "PASS");
     await setHumanAcceptance(root, "IN_REVIEW");
 
     const issues = (await validateUatPackage(root)).join("\n");

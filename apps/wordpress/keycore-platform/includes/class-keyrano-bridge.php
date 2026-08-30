@@ -1,0 +1,20 @@
+<?php
+
+declare(strict_types=1);
+
+namespace KeyRaNo\Storefront;
+
+interface Bridge
+{
+    /** @return array<string, mixed>|null */
+    public function catalog(): ?array;
+
+    /** @return array<string, mixed>|null */
+    public function orders(int $wp_user_id, string $customer_id): ?array;
+
+    /** @return array<string, mixed>|null */
+    public function order(int $wp_user_id, string $customer_id, string $order_id): ?array;
+
+    /** @return array<string, mixed>|null */
+    public function reveal(int $wp_user_id, string $customer_id, string $order_id): ?array;
+}

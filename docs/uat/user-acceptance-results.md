@@ -10,10 +10,10 @@
 - Phase 11: incomplete.
 
 The machine-readable source is
-`artifacts/user-acceptance/uat-results.json`. All 18 scenarios are initially
-`NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY` because the repository has no composed
-KeyCore browser surface. This classification is a blocker report, not a test
-failure and not acceptance.
+`artifacts/user-acceptance/uat-results.json`. The visible storefront remediation
+makes UAT-001, UAT-006 and UAT-015 executable and several related journeys
+partially executable. Every changed result remains `PENDING`; unchanged browser
+gaps remain `NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY`. Readiness is not acceptance.
 
 ## Allowed Results
 

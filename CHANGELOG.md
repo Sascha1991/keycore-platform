@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added the first browser-visible KeyRaNo WooCommerce staging storefront with a
+  branded responsive shop, deterministic Germany-safe synthetic catalog,
+  idempotent fail-closed product publisher, cart/checkout shell, mapped account
+  pages, owner-filtered Meine Käufe and an explicit synthetic vault reveal. The
+  staging-only HMAC bridge enforces exact identity mapping, origin, CSRF,
+  response integrity, rate limiting, no-store delivery and safe audit omission;
+  live payment, supplier calls, real keys, human UAT and Security Readiness
+  remain disabled or unapproved.
+
 - Hardened the KS-11-07 validator from a preparation-only snapshot check into a
   coherent UAT lifecycle validator. Legitimate future human results and complete
   UAT approval are structurally supported, contradictory readiness/results,
