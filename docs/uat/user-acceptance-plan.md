@@ -2,22 +2,22 @@
 
 ## Purpose
 
-This plan prepares the human User Acceptance Review for KeyRaNo. It does not
-claim that a customer journey has been accepted. Automated evidence proves
-technical properties only; a product owner must execute and judge the actual
-customer and operator experience.
+This plan governs the human User Acceptance Review for KeyRaNo. Automated
+evidence proves technical properties only; a product owner must execute and
+judge the actual customer and operator experience.
 
 ## Current Decision
 
-The repository has no KeyCore-backed browser surface. The WordPress plugin is a
-metadata-only foundation shell, and the account, checkout, secure delivery,
-invoice, support, fraud, refund and operations capabilities stop at domain,
-persistence or transport-neutral application boundaries. UAT-001 through
-UAT-018 are therefore initially
-`NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY`.
+The repository now has a synthetic staging browser surface for catalog, product,
+cart, checkout shell, mapped account purchases and explicit secure reveal.
+Human review on 2026-08-30 passed UAT-001 and UAT-006. Tested portions of the
+checkout and account journeys were also accepted, but their complete scenarios
+remain pending because payment/order creation, guest claim and invoice documents
+were outside scope.
 
-KS-11-07 preparation is complete when this package validates. Human UAT,
-Phase 11 and `SECURITY-READINESS` remain incomplete and not approved.
+Human acceptance is therefore `IN_REVIEW`, not `APPROVED`. Phase 11 remains
+incomplete, Phase 12 is not started and `SECURITY-READINESS` remains
+`NOT_APPROVED`.
 
 ## Roles
 
@@ -73,8 +73,9 @@ The machine-readable lifecycle is:
 
 The validator supports all four states and rejects contradictory combinations.
 It checks consistency but cannot determine who edited Git. Git/PR review is the
-human authority record; Codex and automation are forbidden from recording the
-decision.
+human authority record. Codex and automation must not originate a human
+decision; they may transcribe an explicit product-owner result without widening
+its scope.
 
 ## Exit And Approval Criteria
 

@@ -29,3 +29,15 @@ the revealed value in evidence.
     confirm denial.
 14. Record only redacted page/status evidence and the human result. Human PASS
     and SECURITY-READINESS remain separate approvals.
+
+## Execution Record
+
+The product owner completed the tested smoke-test scope on 2026-08-30. The
+Germany-first storefront, product detail, cart, no-live-payment checkout shell,
+owned READY purchase, pre-reveal omission, synthetic secure reveal, local HTTP
+behavior and cross-owner denial all passed. The revealed synthetic value was not
+recorded. See `docs/uat/human-uat-2026-08-30.md`.
+
+This execution passes UAT-001 and UAT-006 only. It does not approve complete
+checkout/order creation, guest claim, invoice documents, UAT-015, UAT-018,
+overall human UAT or `SECURITY-READINESS`.

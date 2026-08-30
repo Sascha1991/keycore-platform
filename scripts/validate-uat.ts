@@ -671,7 +671,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log("KS-11-07 UAT package is structurally valid.");
-  console.log("Human acceptance: PENDING; human approval: NOT_APPROVED.");
+  console.log("Human acceptance: IN_REVIEW; human approval: NOT_APPROVED.");
   console.log(
     "Validated 18 scenarios and 5 omission-first evidence artifacts.",
   );

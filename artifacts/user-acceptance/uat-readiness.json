@@ -1,7 +1,7 @@
 {
   "scope": "KS-11-07",
   "securityReadiness": "NOT_APPROVED",
-  "humanAcceptance": "PENDING",
+  "humanAcceptance": "IN_REVIEW",
   "roles": [
     { "id": "ROLE-UAT-01", "name": "Anonymous or guest customer" },
     { "id": "ROLE-UAT-02", "name": "Registered and verified customer" },

@@ -54,8 +54,8 @@ Initial local Windows verification:
 - `npm run security:assessment`: 36 passed, 366 intentionally filtered or
   PostgreSQL-dependent tests skipped.
 - `npm run recovery:exercise`: 1 passed, 1 PostgreSQL exercise skipped.
-- `npm run uat:validate`: passed; human acceptance remains `PENDING` and human
-  approval remains `NOT_APPROVED`.
+- `npm run uat:validate`: passed in the implementation run; human acceptance was
+  subsequently updated by the 2026-08-30 scoped review.
 - `npm audit --audit-level=low`: zero vulnerabilities.
 - `npm run secrets:scan`: passed.
 - `git diff --check`: passed.
@@ -83,13 +83,16 @@ those checks were subsequently covered by GitHub Actions.
 
 ## UAT and Approvals
 
-UAT-001, UAT-006 and UAT-015 move to `EXECUTABLE_NOW`. UAT-002, UAT-003,
-UAT-004, UAT-007, UAT-012, UAT-016 and UAT-018 move to
-`PARTIALLY_EXECUTABLE`. Other scenarios remain non-executable. Every changed
-result remains `PENDING`; no human PASS was fabricated.
+UAT-001, UAT-006 and UAT-015 moved to `EXECUTABLE_NOW`. UAT-002, UAT-003,
+UAT-004, UAT-007, UAT-012, UAT-016 and UAT-018 moved to
+`PARTIALLY_EXECUTABLE`; other scenarios remained non-executable.
 
-`SECURITY-READINESS` remains `NOT_APPROVED`, KS-11-07 human review remains
-pending, Phase 11 remains incomplete and Phase 12 remains not started.
+On 2026-08-30 the product owner passed UAT-001 and UAT-006 using the isolated
+synthetic staging fixture. Checkout-shell and direct owned-purchase observations
+were accepted, but UAT-002, UAT-015 and UAT-018 remain `PENDING` because their
+complete steps were not executed. Human acceptance is `IN_REVIEW`; overall human
+approval and `SECURITY-READINESS` remain `NOT_APPROVED`, Phase 11 remains
+incomplete and Phase 12 remains not started.
 
 ## Known Limitations and Human Review
 
@@ -121,8 +124,8 @@ status codes are mapped to German labels without changing their internal values.
 
 No production behavior, database schema, price calculation, owner isolation,
 HMAC, nonce, origin, rate-limit or vault rule changed. Repeated human UAT must
-still use only the synthetic staging key; Security Readiness and all human UAT
-results remain unapproved/pending.
+still use only the synthetic staging key; Security Readiness and complete human
+UAT approval remain withheld.
 
 Correction verification on the local isolated Docker stack:
 
@@ -150,8 +153,9 @@ Correction verification on the local isolated Docker stack:
 - `npm audit --audit-level=low`: zero vulnerabilities.
 - `git diff --check`: passed.
 
-The branch is technically ready for repeated Human-UAT. Remaining human work is
-the formal evidence capture and disposition of the prepared UAT scenarios;
-placeholders remain acceptable, checkout remains intentionally non-live, guest
-claim and invoice-document delivery remain outside this correction, and neither
-Human-UAT nor Security Readiness is approved by this report.
+The visible-storefront Human-UAT scope was accepted on 2026-08-30. UAT-001 and
+UAT-006 are recorded as `PASS`; all broader or untested scenarios retain their
+prior pending/non-executable status. Placeholder images remain acceptable,
+checkout remains intentionally non-live, guest claim and invoice-document
+delivery remain outside scope, and neither complete Human-UAT nor Security
+Readiness is approved by this report.
