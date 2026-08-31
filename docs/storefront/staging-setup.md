@@ -39,9 +39,10 @@ small synthetic catalog and sets Shop as the front page. It runs as UID/GID
 world-writable permission change is required. It also activates `de_DE`, sets
 WooCommerce to Germany and EUR, uses German price separators and removes the
 WordPress sample page. WooCommerce's default coming-soon screen is disabled for
-this isolated synthetic storefront so anonymous UAT reaches the actual shop. A
-non-clean database with conflicting IDs fails instead of silently changing
-identity authority.
+this isolated synthetic storefront so anonymous UAT reaches the actual shop.
+The persisted WooCommerce account page is idempotently titled `Mein Konto`
+while its stable `/my-account/` slug remains unchanged. A non-clean database
+with conflicting IDs fails instead of silently changing identity authority.
 
 Passwords are supplied from the ignored environment file. No credentials are
 committed or printed by the documented commands.

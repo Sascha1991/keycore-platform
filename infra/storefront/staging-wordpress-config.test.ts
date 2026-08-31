@@ -46,6 +46,8 @@ describe("staging WordPress configuration", () => {
       "wp option update woocommerce_default_customer_address base",
       "wp option update woocommerce_specific_allowed_countries '[\"DE\"]' --format=json",
       "wp option update woocommerce_coming_soon no",
+      'wp post update "$$(wp option get woocommerce_myaccount_page_id',
+      "--post_title='Mein Konto'",
       "--name=sample-page",
     ]) {
       expect(compose).toContain(expected);

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Localized the persisted WooCommerce account page title to `Mein Konto` during
+  the idempotent Germany-first staging bootstrap. The stable `/my-account/` URL,
+  account ownership, secure reveal and all UAT/security gates remain unchanged.
+
 - Reconciled every remaining step of UAT-002, UAT-015 and UAT-018 against the
   actual PRE-UAT browser boundary. Existing synthetic checkout/idempotency and
   Guest Claim tests pass, but the human scenarios remain pending behind named
