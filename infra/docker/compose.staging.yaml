@@ -194,6 +194,7 @@ services:
         wp user meta update keyrano-customer-b _keyrano_customer_id 10000000-0000-4000-8000-000000000002 --path=/var/www/html;
         wp rewrite structure '/%postname%/' --hard --path=/var/www/html;
         wp option update timezone_string Europe/Berlin --path=/var/www/html;
+        wp option update date_format 'd-m-Y' --path=/var/www/html;
         wp option update woocommerce_currency EUR --path=/var/www/html;
         wp option update woocommerce_currency_pos right_space --path=/var/www/html;
         wp option update woocommerce_price_thousand_sep '.' --path=/var/www/html;

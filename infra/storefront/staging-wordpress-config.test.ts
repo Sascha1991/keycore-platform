@@ -41,6 +41,7 @@ describe("staging WordPress configuration", () => {
       "wp language core install de_DE --activate",
       "wp language plugin install woocommerce de_DE",
       "WP_CLI_CACHE_DIR: /tmp/wp-cli-cache",
+      "wp option update date_format 'd-m-Y'",
       "wp option update woocommerce_currency EUR",
       "wp option update woocommerce_default_country DE",
       "wp option update woocommerce_default_customer_address base",
