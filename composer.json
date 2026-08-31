@@ -9,10 +9,12 @@
   "scripts": {
     "check": [
       "@validate",
-      "@lint"
+      "@lint",
+      "@test"
     ],
     "validate": "composer validate --strict",
-    "lint": "find apps -name '*.php' -print0 | xargs -0 -n1 php -l"
+    "lint": "find apps -name '*.php' -print0 | xargs -0 -n1 php -l",
+    "test": "php apps/wordpress/keycore-platform/tests/plugin-test.php"
   },
   "config": {
     "allow-plugins": false,

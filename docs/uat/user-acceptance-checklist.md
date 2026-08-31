@@ -1,9 +1,16 @@
 # KS-11-07 Human UAT Checklist
 
-All scenarios are currently blocked at the browser boundary. Execute a row only
-after its named dependency in `docs/uat-ui-readiness.md` is available in the
-approved staging environment. Detailed prerequisites and full human steps are
-authoritative in `artifacts/user-acceptance/uat-readiness.json`.
+Several synthetic storefront/account scenarios are now executable or partially
+executable; the remaining scenarios are still blocked at their named browser
+boundary. Execute only the portions classified in `docs/uat-ui-readiness.md` in
+the approved staging environment. Detailed prerequisites and full human steps
+are authoritative in `artifacts/user-acceptance/uat-readiness.json`.
+
+On 2026-08-30 the product owner completed and passed UAT-001 and UAT-006 using
+the synthetic staging fixture. Checkout-shell and direct-purchase-history
+observations were accepted, but UAT-002, UAT-015 and UAT-018 remain pending
+because their unexecuted steps are outside that review. The redacted record is
+`docs/uat/human-uat-2026-08-30.md`.
 
 | ID      | Where to go                                   | What to do                                                           | What should happen                                                   | Failure                                                         | Safe evidence                          |
 | ------- | --------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------- |

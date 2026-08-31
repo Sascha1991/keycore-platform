@@ -2,18 +2,22 @@
 
 ## Current State
 
-- Preparation: complete in this change.
-- Human review: pending.
+- Preparation: complete.
+- Human review: `IN_REVIEW`; scoped visible-storefront review completed on
+  2026-08-30.
 - Human approval: `NOT_APPROVED`.
 - `SECURITY-READINESS`: `NOT_APPROVED`.
-- Human `PASS` results: zero.
+- Human `PASS` results: two (`UAT-001`, `UAT-006`).
 - Phase 11: incomplete.
 
 The machine-readable source is
-`artifacts/user-acceptance/uat-results.json`. All 18 scenarios are initially
-`NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY` because the repository has no composed
-KeyCore browser surface. This classification is a blocker report, not a test
-failure and not acceptance.
+`artifacts/user-acceptance/uat-results.json`. The visible storefront remediation
+makes UAT-001, UAT-006 and UAT-015 executable and several related journeys
+partially executable. The product owner accepted UAT-001 and UAT-006 on
+2026-08-30 using only synthetic staging data. UAT-002, UAT-015 and UAT-018 retain
+accepted observations in their notes but remain `PENDING` because their complete
+scenario steps were not executed. Unchanged browser gaps remain
+`NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY`. Readiness is not acceptance.
 
 ## Allowed Results
 
@@ -42,8 +46,9 @@ the lifecycle:
   or review time; and
 - result and readiness scenario IDs/statuses must agree.
 
-The checked-in preparation package remains `PENDING`, has zero `PASS` results
-and contains no human reviewer or timestamp.
+The checked-in package is `IN_REVIEW`. Its two scoped `PASS` results identify the
+product-owner role, a date-normalized UTC timestamp and the redacted record at
+`docs/uat/human-uat-2026-08-30.md`. No overall approval is recorded.
 
 ## Acceptance Record
 
@@ -58,3 +63,13 @@ including UAT-018, are human `PASS` results with safe evidence and the readiness
 state is also `APPROVED`. `SECURITY-READINESS` may remain `NOT_APPROVED` because
 it is a separate gate. The validator provides consistency checks, not proof of
 human identity; ROLE-UAT-05 and Git/PR review provide that authority boundary.
+The current scoped acceptance does not satisfy these complete-approval rules.
+
+## Open Scenario Reconciliation
+
+The 2026-08-31 review in
+`docs/uat/open-scenario-reconciliation-2026-08-31.md` maps every required step
+for UAT-002, UAT-015 and UAT-018 to human evidence, automated evidence and its
+remaining browser gate. All three remain `PENDING`. Their missing payment/order,
+Guest Claim and invoice composition belongs to named Phase-12 integrations and
+must not be added to PR #46 merely to manufacture complete Human-UAT results.

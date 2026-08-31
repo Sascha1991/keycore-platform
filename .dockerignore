@@ -1,0 +1,10 @@
+.git
+.github
+.env
+.env.*
+artifacts
+coverage
+node_modules
+vendor
+.wordpress
+.docker-data

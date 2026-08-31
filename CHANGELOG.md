@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- Localized the persisted WooCommerce account page title to `Mein Konto` during
+  the idempotent Germany-first staging bootstrap. The stable `/my-account/` URL,
+  account ownership, secure reveal and all UAT/security gates remain unchanged.
+
+- Reconciled every remaining step of UAT-002, UAT-015 and UAT-018 against the
+  actual PRE-UAT browser boundary. Existing synthetic checkout/idempotency and
+  Guest Claim tests pass, but the human scenarios remain pending behind named
+  Phase-12 browser integrations; no payment, claim or invoice feature was added
+  to PR #46 and no approval gate was weakened.
+
+- Recorded the product owner's 2026-08-30 Human-UAT result for the tested
+  visible-storefront scope. UAT-001 and UAT-006 passed with synthetic staging
+  data; checkout-shell and direct purchase-history observations were accepted
+  without widening UAT-002, UAT-015 or UAT-018. Overall human approval and
+  `SECURITY-READINESS` remain `NOT_APPROVED`, and Phase 12 remains not started.
+
+- Corrected local visible-storefront UAT setup: WP-CLI now uses the WordPress
+  volume owner, local HTTP admin transport requires an explicit fail-closed
+  override, and bootstrap reproducibly configures German WordPress/WooCommerce,
+  Germany/EUR formatting and navigation cleanup. Technical order statuses are
+  translated only at the customer presentation boundary; reveal and ownership
+  controls are unchanged.
+
+- Added the first browser-visible KeyRaNo WooCommerce staging storefront with a
+  branded responsive shop, deterministic Germany-safe synthetic catalog,
+  idempotent fail-closed product publisher, cart/checkout shell, mapped account
+  pages, owner-filtered Meine Käufe and an explicit synthetic vault reveal. The
+  staging-only HMAC bridge enforces exact identity mapping, origin, CSRF,
+  response integrity, rate limiting, no-store delivery and safe audit omission;
+  live payment, supplier calls and real keys remain disabled; complete human UAT
+  and Security Readiness remain unapproved.
+
 - Hardened the KS-11-07 validator from a preparation-only snapshot check into a
   coherent UAT lifecycle validator. Legitimate future human results and complete
   UAT approval are structurally supported, contradictory readiness/results,
@@ -11,9 +43,10 @@
 - Added KS-11-07's deterministic UAT preparation package with UAT-001 through
   UAT-018, an honest browser-surface readiness inventory, practical human
   checklist, safe test/evidence guidance, explicit residual risks and a
-  release-blocking read-only validator. No scenario is marked passed, human UAT
-  and Phase 11 remain incomplete, and human and `SECURITY-READINESS` approvals
-  remain not approved.
+  release-blocking read-only validator. The preparation package was initially
+  unreviewed; its later scoped human results are recorded above. Human UAT and
+  Phase 11 remain incomplete, and human and `SECURITY-READINESS` approvals remain
+  not approved.
 
 - Hardened concurrent guest-order claims so a mismatched contender holding the
   claim row cannot cause all verified matching contenders to fail through

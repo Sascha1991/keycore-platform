@@ -144,22 +144,24 @@ describe("KS-11-07 UAT package lifecycle validator", () => {
     await expect(validateUatPackage()).resolves.toEqual([]);
   });
 
-  it("keeps the checked-in package pending and not approved", async () => {
+  it("keeps the checked-in package in scoped review and not approved", async () => {
     const readiness = await readJson(process.cwd(), "uat-readiness.json");
     const approval = await readJson(process.cwd(), "human-approval.json");
     const resultsDocument = await readJson(process.cwd(), "uat-results.json");
     const results = resultsDocument.results as Record<string, unknown>[];
 
-    expect(readiness.humanAcceptance).toBe("PENDING");
+    expect(readiness.humanAcceptance).toBe("IN_REVIEW");
     expect(readiness.securityReadiness).toBe("NOT_APPROVED");
     expect(approval).toMatchObject({
       approval: "NOT_APPROVED",
       approvedAt: null,
       reviewer: null,
     });
-    expect(results.filter((result) => result.status === "PASS")).toHaveLength(
-      0,
-    );
+    expect(
+      results
+        .filter((result) => result.status === "PASS")
+        .map((result) => result.scenario),
+    ).toEqual(["UAT-001", "UAT-006"]);
   });
 
   it("rejects PASS with a null reviewer", async () => {
@@ -194,7 +196,7 @@ describe("KS-11-07 UAT package lifecycle validator", () => {
 
   it("rejects PASS while the UI remains non-executable", async () => {
     const root = await packageCopy();
-    await setHumanResult(root, "UAT-001", "PASS");
+    await setHumanResult(root, "UAT-008", "PASS");
     await setHumanAcceptance(root, "IN_REVIEW");
 
     const issues = (await validateUatPackage(root)).join("\n");

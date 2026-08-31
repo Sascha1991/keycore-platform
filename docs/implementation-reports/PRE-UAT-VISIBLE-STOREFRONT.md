@@ -1,0 +1,176 @@
+# PRE-UAT Visible Storefront Implementation Report
+
+## Scope
+
+Implemented the first browser-visible KeyRaNo WordPress/WooCommerce staging
+surface. No Phase-12 task, production deployment, live payment, live supplier
+call or real Product Key operation was started.
+
+## Implementation
+
+- Expanded the WordPress plugin into bridge, publisher, account, templates,
+  assets and deterministic PHP hook/publication tests.
+- Added KeyRaNo branding, catalog/product facts, cart/checkout navigation,
+  staging payment warning, account navigation, Meine Käufe, purchase detail,
+  pending/error states, invoice/activation metadata and guest-claim shell.
+- Added a staging-only Node HTTP bridge using fresh HMAC-authenticated requests,
+  request-bound signed responses, exact allowed origin, immutable synthetic
+  identity mappings and existing KeyCore account/vault services.
+- Added nine synthetic catalog inputs, of which six are positively eligible,
+  available and publishable. Blocked, review-required and unavailable inputs do
+  not enter the WooCommerce manifest.
+- Added encrypted synthetic-only reveal with exact owner authorization, nonce
+  and same-origin enforcement, bounded rate limiting, safe audit, no-store
+  response and omission tests.
+- Added a reproducible staging service image and bootstrap for WooCommerce,
+  synthetic users, identity mappings, front page, permalinks and catalog sync.
+- Added `PRE-UAT-KEY-REAL-01` as an unexecuted, separately gated follow-up.
+
+## Files
+
+Changed repository governance/CI, Compose and UAT files plus `ROADMAP.md` and
+`CHANGELOG.md`. Added the WordPress `includes/`, `templates/`, `assets/` and
+`tests/` trees; staging storefront TypeScript modules/tests; an in-memory
+encrypted-key adapter; the staging server; storefront documentation; smoke
+test; blocker map; Dockerfile, build-context exclusions and follow-up task.
+
+## Dependencies and Migration
+
+- New dependency versions: none.
+- Database migration: none. Baseline remains migration 027.
+- Images remain pinned to the existing WordPress 7.0.3, WooCommerce 11.0.0,
+  Node 22.22.0, PostgreSQL 16.10, Redis 7.4 and Mailpit versions.
+
+## Verification
+
+Initial local Windows verification:
+
+- `npm run check`: passed; 743 tests passed, 124 environment-dependent tests
+  skipped; format, lint, typecheck and secret scan passed.
+- focused storefront/UAT: 24 passed; storefront tests pass repeatedly.
+- `npm run e2e:acceptance`: 15 passed, 1 PostgreSQL test skipped.
+- `npm run catalog:scale`: 10 PostgreSQL tests skipped locally.
+- `npm run order:concurrency`: 38 PostgreSQL tests skipped locally.
+- `npm run security:assessment`: 36 passed, 366 intentionally filtered or
+  PostgreSQL-dependent tests skipped.
+- `npm run recovery:exercise`: 1 passed, 1 PostgreSQL exercise skipped.
+- `npm run uat:validate`: passed in the implementation run; human acceptance was
+  subsequently updated by the 2026-08-30 scoped review.
+- `npm audit --audit-level=low`: zero vulnerabilities.
+- `npm run secrets:scan`: passed.
+- `git diff --check`: passed.
+
+The original implementation run did not have local PHP or Docker executables;
+those checks were subsequently covered by GitHub Actions.
+
+## Acceptance Status
+
+- Visible KeyRaNo storefront and responsive branded shell: implemented.
+- Product catalog/detail, cart and checkout shell: implemented with synthetic
+  data and no live payment.
+- Publisher create/update/unpublish/idempotency/fail-closed rules: implemented
+  and covered by PHP plus TypeScript tests.
+- Account, Meine Käufe and purchase detail: implemented with exact mapped
+  identity and owner-filtered KeyCore reads.
+- Synthetic Key anzeigen: implemented with existing vault authorization and no
+  WordPress plaintext storage.
+- Cross-owner, anonymous, CSRF, rate, no-store and omission coverage:
+  implemented.
+- Guest claim mutation: deliberately not implemented; safe shell only.
+- Invoice document: deliberately not implemented; authorized metadata shell
+  only.
+- Real payment/order creation and real Product Key retrieval: not implemented.
+
+## UAT and Approvals
+
+UAT-001, UAT-006 and UAT-015 moved to `EXECUTABLE_NOW`. UAT-002, UAT-003,
+UAT-004, UAT-007, UAT-012, UAT-016 and UAT-018 moved to
+`PARTIALLY_EXECUTABLE`; other scenarios remained non-executable.
+
+On 2026-08-30 the product owner passed UAT-001 and UAT-006 using the isolated
+synthetic staging fixture. Checkout-shell and direct owned-purchase observations
+were accepted, but UAT-002, UAT-015 and UAT-018 remain `PENDING` because their
+complete steps were not executed. Human acceptance is `IN_REVIEW`; overall human
+approval and `SECURITY-READINESS` remain `NOT_APPROVED`, Phase 11 remains
+incomplete and Phase 12 remains not started.
+
+## Known Limitations and Human Review
+
+- Browser screenshots and smoke-test evidence require a human-run staging
+  stack because Docker is unavailable locally.
+- The staging bridge uses in-memory synthetic projections and vault material;
+  production requires durable deployment composition and approved KMS.
+- Rate limiting is process-local and staging-only.
+- Synthetic WordPress identity bootstrap requires a clean database or the
+  expected user IDs; conflicts fail closed.
+- Human review must verify responsive rendering, all smoke-test steps and that
+  evidence fully redacts the revealed synthetic value.
+
+## Local Staging UAT Corrections
+
+Follow-up manual UAT found three presentation/bootstrap defects while secure
+reveal and cross-owner isolation behaved correctly. The WP-CLI image ran as
+UID/GID `82` against WordPress-owned files from UID/GID `33`, local HTTP was
+forced to HTTPS, and the default English/USD WooCommerce setup remained visible.
+
+The bootstrap now runs as `33:33` without a manual CLI flag and retains the
+repository plugin's read-only mount. `FORCE_SSL_ADMIN` is controlled by an
+exact boolean environment value, defaults to `true`, and can be explicitly set
+to `false` only for isolated local HTTP staging. Bootstrap activates `de_DE`,
+configures Germany/EUR and German price formatting, removes the sample page and
+disables WooCommerce's staging-only coming-soon screen, and the plugin suppresses
+the duplicate theme navigation. Customer-facing order, payment and invoice
+status codes are mapped to German labels without changing their internal values.
+
+No production behavior, database schema, price calculation, owner isolation,
+HMAC, nonce, origin, rate-limit or vault rule changed. Repeated human UAT must
+still use only the synthetic staging key; Security Readiness and complete human
+UAT approval remain withheld.
+
+Correction verification on the local isolated Docker stack:
+
+- `npm run check`: passed; 746 tests passed and 124 environment-dependent tests
+  skipped; format, lint, typecheck and secret scan passed.
+- Focused staging tests: 38 passed and one PostgreSQL-dependent test skipped in
+  the no-database run; the focused PostgreSQL run separately passed all six
+  staging deployment/seed tests.
+- PHP 8.3 container syntax checks: all plugin PHP files passed; deterministic
+  adapter test passed.
+- `docker compose ... config --quiet`: passed for local HTTP and committed HTTPS
+  example configurations, including the bootstrap profile.
+- Full stack recreation: seven services started; PostgreSQL, Redis, MariaDB and
+  staging bridge became healthy.
+- Bootstrap without manual `--user`: passed twice idempotently; effective UID
+  and GID were both 33, customer IDs remained 2 and 3, six products were
+  published, and the sample page count was zero.
+- Browser checks: shop/product/account/cart/checkout returned HTTP 200, German
+  customer text and EUR prices were visible, USD/English shop controls were not
+  visible, one KeyRaNo header remained, and desktop plus 390 px layouts had no
+  horizontal overflow after correction.
+- Synthetic owner reveal: matched the configured synthetic fixture without an
+  HTTPS redirect; cross-owner detail access returned the safe unavailable state
+  and no synthetic value.
+- `npm audit --audit-level=low`: zero vulnerabilities.
+- `git diff --check`: passed.
+
+The visible-storefront Human-UAT scope was accepted on 2026-08-30. UAT-001 and
+UAT-006 are recorded as `PASS`; all broader or untested scenarios retain their
+prior pending/non-executable status. Placeholder images remain acceptable,
+checkout remains intentionally non-live, guest claim and invoice-document
+delivery remain outside scope, and neither complete Human-UAT nor Security
+Readiness is approved by this report.
+
+## Open UAT Reconciliation
+
+The 2026-08-31 follow-up reviewed every normative step of UAT-002, UAT-015 and
+UAT-018. Existing synthetic E2E coverage confirms idempotent order/payment
+handling and secure Guest Claim behavior at the application boundary, but the
+PRE-UAT browser bridge still intentionally exposes neither payment/order
+creation nor Guest Claim mutation. All three scenarios therefore remain
+`PENDING`; their exact step matrix and named future gates are recorded in
+`docs/uat/open-scenario-reconciliation-2026-08-31.md`.
+
+Those pending scenarios are later acceptance gates and are not implementation
+requirements for this PRE-UAT shell PR. The remaining PR-specific repository
+expectation is human attachment of redacted visible-UI screenshots. This does
+not alter Phase 11, Phase 12, production or `SECURITY-READINESS` status.

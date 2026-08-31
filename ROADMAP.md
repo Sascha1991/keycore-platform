@@ -156,10 +156,12 @@ Load, security, recovery and end-to-end testing with synthetic and sandbox trans
 
 Phase 11 is tracked in `docs/phase-11-acceptance-matrix.md` as seven distinct
 checkpoints. KS-11-01 through KS-11-06 are complete and merged. KS-11-07 has a
-prepared, machine-validated UAT package, but the repository has no composed
-KeyCore browser surface and human review remains pending. Phase 11 is not
-complete and `SECURITY-READINESS` remains unapproved. Automated evidence and PR
-merge cannot satisfy either human gate.
+prepared, machine-validated UAT package. The pre-UAT visible-storefront
+remediation adds the first composed KeyRaNo browser paths for synthetic catalog,
+account history and secure reveal, while payment/order creation, guest claim,
+invoice documents and operator surfaces remain incomplete. Human review remains
+pending, Phase 11 is not complete and `SECURITY-READINESS` remains unapproved.
+Automated evidence and PR merge cannot satisfy either human gate.
 
 ## Phase 12 – Production Readiness
 
