@@ -91,8 +91,11 @@ added. The detailed boundary is in `docs/storefront/design-editability.md`.
 UAT-002 is `PASS`: the product owner authenticated as Customer A, completed the
 synthetic checkout, inspected the resulting account purchase and confirmed
 Customer B denial on 2026-08-31. The safe textual evidence is recorded in
-`docs/uat/open-scenario-reconciliation-2026-08-31.md`; this report does not claim
-that new human screenshots were committed or attached.
+`docs/uat/open-scenario-reconciliation-2026-08-31.md`. A separate 2026-09-01
+human repeat with `Arena Eleven` added security-reviewed confirmation, owned-purchase and
+cross-owner-denial screenshots under
+`docs/screenshots/phase-12-customer-checkout/`; it does not replace the accepted
+2026-08-31 `Lumen Grid` execution.
 
 UAT-015 still lacks the secure Guest Claim browser adapter. UAT-018 additionally
 lacks the composed procurement/fulfillment observation and invoice-document
@@ -100,6 +103,8 @@ transport. KS-11-07 therefore remains incomplete and `SECURITY-READINESS`
 remains `NOT_APPROVED`.
 
 No live Stripe or Kinguin call, production credential/data, real Product Key,
-production email/invoice or production deployment was used. PR review and human
-screenshots/actions are required before merge. The PR must not be merged by the
-implementing agent.
+production email/invoice or production deployment was used. The visible
+checkout, owned-purchase and cross-owner-denial screenshot requirement is now
+covered by supplied human evidence. Remaining scenario and approval gates still
+require human review before merge. The PR must not be merged by the implementing
+agent.

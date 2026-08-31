@@ -43,6 +43,27 @@ payment-webhook replay and exact owned-order binding. It supports the exact-one
 and persistence invariants; it is not represented as a human database
 inspection.
 
+### Additional Repeat Evidence - 2026-09-01
+
+An independent human repeat verification used a separate synthetic order. It
+does not replace or alter the accepted 2026-08-31 `Lumen Grid` / EUR 7.99
+UAT-002 result. Customer A instead purchased `Arena Eleven`, quantity one, for
+EUR 21.99. The resulting confirmation showed order 21, the German date
+`01-09-2026`, the synthetic successful payment and no Product Key. Customer A's
+purchase detail showed `In Bearbeitung`, `Bezahlt`, `Nicht verfügbar`,
+`GENERIC_SAFE_ACTIVATION` and `Dein Key ist noch nicht verfügbar.` Customer B's
+direct access failed closed with `Dieser Kauf ist nicht verfügbar.` and exposed
+no foreign purchase details.
+
+The supplied screenshots contain only approved synthetic fixture identity and
+address values. They show no URL, private purchase-detail identifier,
+order-received capability, session or CSRF value, credential, payment/claim
+secret, production data or Product Key plaintext:
+
+- [Repeat order confirmation](../screenshots/phase-12-customer-checkout/uat-002-repeat-order-confirmation-2026-09-01.png)
+- [Repeat owned purchase](../screenshots/phase-12-customer-checkout/uat-002-repeat-owned-purchase-2026-09-01.png)
+- [Repeat cross-owner denial](../screenshots/phase-12-customer-checkout/uat-002-repeat-cross-owner-denial-2026-09-01.png)
+
 ## UAT-015 - Account Purchase History
 
 Overall status: `PENDING`.

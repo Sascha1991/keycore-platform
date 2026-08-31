@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added supplied security-reviewed screenshots from the independent 2026-09-01 UAT-002
+  repeat using `Arena Eleven`. The evidence reconfirms synthetic checkout,
+  `DD-MM-YYYY` presentation, owner-visible safe state, Product Key omission and
+  cross-owner denial without replacing the accepted 2026-08-31 `Lumen Grid`
+  result or changing any approval gate.
+
 - Recorded the KeyRaNo product owner's successful 2026-08-31 UAT-002 execution
   for the complete synthetic registered-customer checkout, resulting owned
   purchase, ordinary-confirmation key omission and cross-owner denial. UAT-015,
