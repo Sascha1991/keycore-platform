@@ -19,7 +19,7 @@ remain absent.
 | Journey                     | Classification                          | Browser capability                                                                        | Remaining dependency                                        |
 | --------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | Catalog discovery           | `EXECUTABLE_NOW` / `PASS`               | Branded catalog, product, price, cart and eligibility-filtered fixtures                   | None for scoped UAT-001 result                              |
-| Registered purchase         | `EXECUTABLE_NOW`                        | Login, catalog, cart, synthetic payment, authoritative owned order and account projection | Human UAT and redacted evidence                             |
+| Registered purchase         | `EXECUTABLE_NOW` / `PASS`               | Login, catalog, cart, synthetic payment, authoritative owned order and account projection | None for scoped UAT-002 result                              |
 | Guest purchase/messaging    | `PARTIALLY_EXECUTABLE`                  | Woo guest checkout shell                                                                  | KeyCore guest completion and safe messaging                 |
 | Guest purchase claim        | `PARTIALLY_EXECUTABLE`                  | Kauf hinzufügen shell                                                                     | One-time verified-same-email adapter                        |
 | Product Key reveal          | `EXECUTABLE_NOW` / `PASS`               | Owner-only explicit synthetic reveal                                                      | Real-key task remains gated                                 |
@@ -34,7 +34,7 @@ remain absent.
 | Full browser walkthrough    | `PARTIALLY_EXECUTABLE`                  | Discovery through resulting synthetic paid order and existing account shell               | Procurement/fulfillment linkage, claim and invoice document |
 
 The machine-readable `uat-readiness.json` and `uat-results.json` remain the
-binding status sources. Human acceptance is `IN_REVIEW`; UAT-001 and UAT-006 are
-`PASS`, while UAT-002 is executable but has not been human-run and purchase
-history does not complete the broader Guest Claim scenario. Phase 11 remains
-incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`.
+binding status sources. Human acceptance is `IN_REVIEW`; UAT-001, UAT-002 and
+UAT-006 are `PASS`, while purchase history does not complete the broader Guest
+Claim scenario. Phase 11 remains incomplete and `SECURITY-READINESS` remains
+`NOT_APPROVED`.

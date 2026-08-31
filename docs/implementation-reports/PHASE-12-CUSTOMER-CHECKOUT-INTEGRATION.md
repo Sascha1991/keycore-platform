@@ -2,9 +2,9 @@
 
 ## Status
 
-Implementation complete on the feature branch. Human UAT and PR review remain
-pending. This work does not approve KS-11-07, `SECURITY-READINESS` or any
-production release.
+Implementation complete on the feature branch. UAT-002 passed human review on
+2026-08-31; broader Human-UAT and PR review remain pending. This work does not
+approve KS-11-07, `SECURITY-READINESS` or any production release.
 
 ## Implemented Browser Path
 
@@ -79,8 +79,8 @@ added. The detailed boundary is in `docs/storefront/design-editability.md`.
 - Docker Compose configuration and checkout bootstrap: passed; migrations 001
   through 027 and six synthetic products were verified idempotently.
 - Browser smoke: native-theme shop, six products, cart and Germany-first
-  checkout shell rendered successfully. Authenticated payment execution and
-  evidence capture remain human actions.
+  checkout shell rendered successfully. The product owner subsequently
+  completed and accepted UAT-002 with the synthetic checkout on 2026-08-31.
 - `npm audit --audit-level=low`: zero vulnerabilities.
 - UAT artifact validation and `git diff --check`: passed; human acceptance is
   still `IN_REVIEW` and human approval is `NOT_APPROVED`.
@@ -88,11 +88,11 @@ added. The detailed boundary is in `docs/storefront/design-editability.md`.
 
 ## Human Gates And Limitations
 
-UAT-002 remains `PENDING` even though its UI boundary is now executable. A human
-must authenticate as customer A, complete the synthetic checkout, inspect the
-resulting account order, verify customer B denial and attach redacted
-screenshots. The current automated/browser screenshot is supporting PR evidence,
-not human acceptance.
+UAT-002 is `PASS`: the product owner authenticated as Customer A, completed the
+synthetic checkout, inspected the resulting account purchase and confirmed
+Customer B denial on 2026-08-31. The safe textual evidence is recorded in
+`docs/uat/open-scenario-reconciliation-2026-08-31.md`; this report does not claim
+that new human screenshots were committed or attached.
 
 UAT-015 still lacks the secure Guest Claim browser adapter. UAT-018 additionally
 lacks the composed procurement/fulfillment observation and invoice-document

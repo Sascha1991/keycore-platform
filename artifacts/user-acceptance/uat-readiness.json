@@ -37,7 +37,7 @@
       "validatedRule": "Order ownership is exact and cross-customer access is denied.",
       "automatedEvidence": ["EVIDENCE-01", "EVIDENCE-03", "EVIDENCE-04"],
       "uiReadiness": "EXECUTABLE_NOW",
-      "humanActionRequired": "Execute the registered synthetic checkout, resulting account view and cross-owner denial in approved staging; capture redacted evidence.",
+      "humanActionRequired": "Completed on 2026-08-31; retain only safe redacted evidence and do not record checkout capabilities, sessions, private identifiers or Product Keys.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {

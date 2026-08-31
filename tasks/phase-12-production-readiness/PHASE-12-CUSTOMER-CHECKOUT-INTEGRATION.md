@@ -62,7 +62,8 @@ payment, supplier purchase, fulfillment or Product Key.
 - [x] Header, footer, navigation, global styling, typography, page content and
       general layout remain editable through native WordPress/WooCommerce
       mechanisms without changing KeyCore security code.
-- [x] UAT-002, UAT-015 and UAT-018 remain `PENDING` until human execution.
+- [x] UAT-002 remained `PENDING` until its successful human execution on
+      2026-08-31; UAT-015 and UAT-018 remain `PENDING`.
 - [x] KS-11-07 and `SECURITY-READINESS` remain unapproved.
 
 ## Required Tests
@@ -79,8 +80,8 @@ payment, supplier purchase, fulfillment or Product Key.
 
 ## Human Gates
 
-Codex and CI provide supporting evidence only. A human must attach redacted
-screenshots and execute the complete UAT-002 browser scenario before changing
-its result. UAT-015 still depends on `PHASE_12_ACCOUNT_TRANSPORT`; UAT-018 also
-depends on Guest Claim and invoice-document transport. Production requires the
-independent approval gates defined by ADR-0010.
+Codex and CI provide supporting evidence only. The product owner completed and
+accepted UAT-002 on 2026-08-31; no agent or CI inferred that result. UAT-015
+still depends on `PHASE_12_ACCOUNT_TRANSPORT`; UAT-018 also depends on Guest
+Claim, composed fulfillment and invoice-document transport. Production requires
+the independent approval gates defined by ADR-0010.

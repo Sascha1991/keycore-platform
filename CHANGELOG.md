@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Recorded the KeyRaNo product owner's successful 2026-08-31 UAT-002 execution
+  for the complete synthetic registered-customer checkout, resulting owned
+  purchase, ordinary-confirmation key omission and cross-owner denial. UAT-015,
+  UAT-018, KS-11-07 and `SECURITY-READINESS` remain pending or unapproved; no
+  production approval or live external operation was introduced.
+
 - Added the staging-only registered-customer checkout composition from a native
   WooCommerce product/cart/checkout through explicit synthetic success, failure
   and cancellation outcomes to an idempotent authoritative KeyCore PriceLock,
