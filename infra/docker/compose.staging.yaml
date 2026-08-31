@@ -43,12 +43,34 @@ services:
       - wordpress-data:/var/www/html
       - ../../apps/wordpress/keycore-platform:/var/www/html/wp-content/plugins/keycore-platform:ro
 
+  keycore-checkout-bootstrap:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.staging-storefront
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KEYCORE_ENV: STAGING
+      KEYCORE_DEPLOYMENT_ID: ${KEYCORE_DEPLOYMENT_ID:?staging deployment ID is required}
+      KEYCORE_STAGING_POSTGRES_PASSWORD: ${KEYCORE_STAGING_POSTGRES_PASSWORD:?staging PostgreSQL password is required}
+    command:
+      ["node", "--import", "tsx", "scripts/staging-checkout-bootstrap.ts"]
+    restart: "no"
+
   keycore-storefront:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.staging-storefront
+    depends_on:
+      keycore-checkout-bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     environment:
       KEYCORE_ENV: STAGING
+      KEYCORE_DEPLOYMENT_ID: ${KEYCORE_DEPLOYMENT_ID:?staging deployment ID is required}
+      KEYCORE_STAGING_POSTGRES_PASSWORD: ${KEYCORE_STAGING_POSTGRES_PASSWORD:?staging PostgreSQL password is required}
       KEYRANO_STAGING_BRIDGE_PORT: 3000
       KEYRANO_STAGING_BRIDGE_SECRET: ${KEYRANO_STAGING_BRIDGE_SECRET:?staging bridge secret is required}
       KEYRANO_STAGING_ORIGIN: ${KEYRANO_STAGING_ORIGIN:?explicit staging origin is required}

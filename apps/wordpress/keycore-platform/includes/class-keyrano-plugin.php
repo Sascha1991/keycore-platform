@@ -20,11 +20,9 @@ final class Plugin
         add_action('woocommerce_account_kauf-hinzufuegen_endpoint', [$account, 'render_claim_shell']);
         add_action('admin_post_keyrano_reveal', [$account, 'handle_reveal']);
         add_action('admin_post_nopriv_keyrano_reveal', [$account, 'handle_reveal']);
+        add_filter('woocommerce_payment_gateways', [Checkout_Registration_Loader::class, 'gateways']);
+        add_action('woocommerce_blocks_loaded', [Checkout_Registration_Loader::class, 'blocks_loaded']);
         add_action('wp_enqueue_scripts', [self::class, 'assets']);
-        add_action('wp_body_open', [self::class, 'brand_bar']);
-        add_filter('render_block_core/navigation', [self::class, 'hide_theme_navigation']);
-        add_filter('woocommerce_show_page_title', [self::class, 'hide_shop_page_title']);
-        add_action('woocommerce_before_shop_loop', [self::class, 'shop_intro'], 5);
         add_action('woocommerce_single_product_summary', [self::class, 'product_facts'], 25);
         add_action('woocommerce_before_checkout_form', [self::class, 'checkout_notice'], 5);
         register_activation_hook(KEYRANO_PLUGIN_FILE, [self::class, 'activate']);
@@ -47,26 +45,6 @@ final class Plugin
         );
     }
 
-    public static function brand_bar(): void
-    {
-        echo '<header class="keyrano-brand"><a class="keyrano-brand__name" href="' . esc_url(home_url('/')) . '">KeyRaNo</a>';
-        echo '<span class="keyrano-brand__claim">' . esc_html__('Dein Key. Direkt. Ohne Warten.', 'keycore-platform') . '</span>';
-        echo '<nav aria-label="' . esc_attr__('KeyRaNo Navigation', 'keycore-platform') . '">';
-        echo '<a href="' . esc_url(wc_get_page_permalink('shop')) . '">' . esc_html__('Produkte', 'keycore-platform') . '</a>';
-        echo '<a href="' . esc_url(wc_get_cart_url()) . '">' . esc_html__('Warenkorb', 'keycore-platform') . '</a>';
-        echo '<a href="' . esc_url(wc_get_page_permalink('myaccount')) . '">' . esc_html__('Mein Konto', 'keycore-platform') . '</a></nav></header>';
-    }
-
-    public static function hide_theme_navigation(string $content): string
-    {
-        return '';
-    }
-
-    public static function hide_shop_page_title(): bool
-    {
-        return false;
-    }
-
     public static function status_label(string $status): string
     {
         $labels = [
@@ -84,13 +62,6 @@ final class Plugin
         ];
 
         return $labels[$status] ?? __('In Bearbeitung', 'keycore-platform');
-    }
-
-    public static function shop_intro(): void
-    {
-        echo '<div class="keyrano-shop-intro"><p class="keyrano-kicker">Key · Rapid Access · No Waiting</p>';
-        echo '<h1>' . esc_html__('Digitale Games. Klar ausgewählt.', 'keycore-platform') . '</h1>';
-        echo '<p>' . esc_html__('Nur für Deutschland freigegebene, verfügbare Angebote werden angezeigt.', 'keycore-platform') . '</p></div>';
     }
 
     public static function product_facts(): void
@@ -119,5 +90,22 @@ final class Plugin
                 'notice'
             );
         }
+    }
+}
+
+final class Checkout_Registration_Loader
+{
+    /** @param array<int, class-string> $gateways @return array<int, class-string> */
+    public static function gateways(array $gateways): array
+    {
+        require_once KEYRANO_PLUGIN_DIR . '/includes/class-keyrano-checkout-gateway.php';
+        return Checkout_Registration::gateways($gateways);
+    }
+
+    public static function blocks_loaded(): void
+    {
+        require_once KEYRANO_PLUGIN_DIR . '/includes/class-keyrano-checkout-gateway.php';
+        require_once KEYRANO_PLUGIN_DIR . '/includes/class-keyrano-checkout-blocks.php';
+        Checkout_Blocks_Registration::blocks_loaded();
     }
 }

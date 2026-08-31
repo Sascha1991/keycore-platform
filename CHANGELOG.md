@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Added the staging-only registered-customer checkout composition from a native
+  WooCommerce product/cart/checkout through explicit synthetic success, failure
+  and cancellation outcomes to an idempotent authoritative KeyCore PriceLock,
+  order, payment and ownership record. Resulting purchases use the existing
+  owner-filtered account projection; no procurement, fulfillment, Product Key,
+  live Stripe or Kinguin operation is introduced.
+
+- Restored native WordPress/WooCommerce ownership of storefront presentation:
+  the active block theme and Site Editor now control global color, typography,
+  buttons, header, footer, navigation, content and general layout, while the
+  KeyCore plugin retains only functional account/reveal/checkout styling and
+  all security-sensitive authority.
+
 - Localized the persisted WooCommerce account page title to `Mein Konto` during
   the idempotent Germany-first staging bootstrap. The stable `/my-account/` URL,
   account ownership, secure reveal and all UAT/security gates remain unchanged.

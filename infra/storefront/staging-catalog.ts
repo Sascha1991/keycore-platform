@@ -2,6 +2,7 @@ export type StagingCatalogEligibility =
   "ALLOWED" | "BLOCKED" | "REVIEW_REQUIRED";
 
 export interface StagingCatalogProduct {
+  readonly productId: string;
   readonly publicReference: string;
   readonly title: string;
   readonly platform: string;
@@ -23,6 +24,7 @@ export const stagingCatalog: readonly StagingCatalogProduct[] = [
     eligibility: "ALLOWED",
     platform: "PC",
     priceMinor: 1299,
+    productId: "00000000-0000-4000-8000-000000120101",
     publicReference: "synthetic-de-adventure",
     region: "Deutschland",
     title: "Neonpfad: Berlin",
@@ -35,6 +37,7 @@ export const stagingCatalog: readonly StagingCatalogProduct[] = [
     eligibility: "ALLOWED",
     platform: "PC",
     priceMinor: 1899,
+    productId: "00000000-0000-4000-8000-000000120102",
     publicReference: "synthetic-global-strategy",
     region: "Global",
     title: "Orbital Tactics",
@@ -47,6 +50,7 @@ export const stagingCatalog: readonly StagingCatalogProduct[] = [
     eligibility: "ALLOWED",
     platform: "PC",
     priceMinor: 999,
+    productId: "00000000-0000-4000-8000-000000120103",
     publicReference: "synthetic-eu-racing",
     region: "EU",
     title: "Velocity Circuit",
@@ -59,6 +63,7 @@ export const stagingCatalog: readonly StagingCatalogProduct[] = [
     eligibility: "ALLOWED",
     platform: "PC",
     priceMinor: 1499,
+    productId: "00000000-0000-4000-8000-000000120104",
     publicReference: "synthetic-de-coop",
     region: "Deutschland",
     title: "Signal Brigade",
@@ -71,6 +76,7 @@ export const stagingCatalog: readonly StagingCatalogProduct[] = [
     eligibility: "ALLOWED",
     platform: "Xbox",
     priceMinor: 2199,
+    productId: "00000000-0000-4000-8000-000000120105",
     publicReference: "synthetic-de-sports",
     region: "Deutschland",
     title: "Arena Eleven",
@@ -83,6 +89,7 @@ export const stagingCatalog: readonly StagingCatalogProduct[] = [
     eligibility: "ALLOWED",
     platform: "PlayStation",
     priceMinor: 799,
+    productId: "00000000-0000-4000-8000-000000120106",
     publicReference: "synthetic-global-puzzle",
     region: "Global",
     title: "Lumen Grid",
@@ -95,6 +102,7 @@ export const stagingCatalog: readonly StagingCatalogProduct[] = [
     eligibility: "BLOCKED",
     platform: "PC",
     priceMinor: 1099,
+    productId: "00000000-0000-4000-8000-000000120107",
     publicReference: "synthetic-region-blocked",
     region: "Nicht DE-kompatibel",
     title: "Blocked Region Fixture",
@@ -107,6 +115,7 @@ export const stagingCatalog: readonly StagingCatalogProduct[] = [
     eligibility: "REVIEW_REQUIRED",
     platform: "PC",
     priceMinor: 1199,
+    productId: "00000000-0000-4000-8000-000000120108",
     publicReference: "synthetic-region-review",
     region: "Unbekannt",
     title: "Review Required Fixture",
@@ -119,6 +128,7 @@ export const stagingCatalog: readonly StagingCatalogProduct[] = [
     eligibility: "ALLOWED",
     platform: "PC",
     priceMinor: 1599,
+    productId: "00000000-0000-4000-8000-000000120109",
     publicReference: "synthetic-unavailable",
     region: "Deutschland",
     title: "Unavailable Fixture",

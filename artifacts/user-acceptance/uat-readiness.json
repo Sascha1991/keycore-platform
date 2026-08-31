@@ -36,10 +36,8 @@
       "expectedResult": "The order belongs only to customer A, messaging is coherent, and ordinary confirmation contains no Product Key.",
       "validatedRule": "Order ownership is exact and cross-customer access is denied.",
       "automatedEvidence": ["EVIDENCE-01", "EVIDENCE-03", "EVIDENCE-04"],
-      "uiReadiness": "PARTIALLY_EXECUTABLE",
-      "reason": "Catalog, cart, checkout shell, synthetic login and account pages exist, but sandbox payment and order creation are not composed.",
-      "targetDependency": "PHASE_12_CUSTOMER_CHECKOUT_INTEGRATION",
-      "humanActionRequired": "Execute with synthetic payment after staging browser integration exists.",
+      "uiReadiness": "EXECUTABLE_NOW",
+      "humanActionRequired": "Execute the registered synthetic checkout, resulting account view and cross-owner denial in approved staging; capture redacted evidence.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {

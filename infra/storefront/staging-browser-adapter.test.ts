@@ -15,6 +15,10 @@ import {
   stagingCustomerBId,
   stagingFulfilledOrderId,
 } from "./staging-storefront-runtime.js";
+import type {
+  StagingCheckoutCommand,
+  StagingCheckoutPort,
+} from "./staging-checkout.js";
 
 const now = new Date("2026-08-30T12:00:00.000Z");
 const origin = "https://staging.keyrano.de";
@@ -163,20 +167,87 @@ describe("staging storefront browser adapter", () => {
       ),
     );
   });
+
+  it("accepts only an authenticated CSRF-protected exact checkout command", async () => {
+    const checkout = new CapturingCheckout();
+    const runtime = await harness(checkout);
+    const body = JSON.stringify({
+      checkoutCreatedAt: now.toISOString(),
+      checkoutToken: "a".repeat(64),
+      currency: "EUR",
+      expectedTotalMinor: "1299",
+      outcome: "SUCCESS",
+      productReference: "synthetic-de-adventure",
+      quantity: 1,
+    });
+    const response = await runtime.bridge.handle(
+      signed({
+        body,
+        csrfVerified: true,
+        customerId: stagingCustomerAId,
+        method: "POST",
+        path: "/v1/checkout",
+        wpUserId: "20",
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(json(response.body)).toMatchObject({
+      orderId: "20000000-0000-4000-8000-000000000099",
+      status: "CAPTURED",
+    });
+    expect(checkout.commands).toEqual([
+      expect.objectContaining({ customerId: stagingCustomerAId }),
+    ]);
+    expect(response.body).not.toContain(syntheticValue);
+
+    for (const invalid of [
+      signed({
+        body,
+        customerId: stagingCustomerAId,
+        method: "POST",
+        path: "/v1/checkout",
+        wpUserId: "20",
+      }),
+      signed({
+        body: JSON.stringify({ ...JSON.parse(body), unexpected: true }),
+        csrfVerified: true,
+        customerId: stagingCustomerAId,
+        method: "POST",
+        path: "/v1/checkout",
+        wpUserId: "20",
+      }),
+      signed({
+        body: "not-json",
+        csrfVerified: true,
+        customerId: stagingCustomerAId,
+        method: "POST",
+        path: "/v1/checkout",
+        wpUserId: "20",
+      }),
+    ]) {
+      expect(
+        (await runtime.bridge.handle(invalid)).statusCode,
+      ).toBeGreaterThanOrEqual(400);
+    }
+  });
 });
 
 const revealPath = `/v1/account/orders/${stagingFulfilledOrderId}/reveal`;
 
-const harness = () =>
-  createStagingStorefrontRuntime({
-    allowedOrigin: origin,
-    customerAWpUserId: "20",
-    customerBWpUserId: "21",
-    masterKeyMaterialBase64,
-    now: () => now,
-    sharedSecret,
-    syntheticKey: syntheticValue,
-  });
+const harness = (checkout?: StagingCheckoutPort) =>
+  createStagingStorefrontRuntime(
+    {
+      allowedOrigin: origin,
+      customerAWpUserId: "20",
+      customerBWpUserId: "21",
+      masterKeyMaterialBase64,
+      now: () => now,
+      sharedSecret,
+      syntheticKey: syntheticValue,
+    },
+    checkout ? { checkout } : {},
+  );
 
 const signed = (
   input: Partial<Omit<StagingStorefrontRequest, "signature">> &
@@ -209,3 +280,16 @@ const ownerReveal = () =>
 
 const json = (value: string): Readonly<Record<string, unknown>> =>
   JSON.parse(value) as Readonly<Record<string, unknown>>;
+
+class CapturingCheckout implements StagingCheckoutPort {
+  public readonly commands: StagingCheckoutCommand[] = [];
+
+  public async checkout(command: StagingCheckoutCommand) {
+    this.commands.push(command);
+    return {
+      orderId: "20000000-0000-4000-8000-000000000099",
+      reasonCode: "CHECKOUT_PAYMENT_CAPTURED",
+      status: "CAPTURED" as const,
+    };
+  }
+}

@@ -17,6 +17,12 @@ credential, production data, production DNS change or deployment was used.
 
 Overall status: `PENDING`.
 
+Follow-up: `PHASE_12_CUSTOMER_CHECKOUT_INTEGRATION` now provides the previously
+missing synthetic registered-customer payment and authoritative order
+composition. The table below records the PR #46 baseline; UAT-002 is now
+`EXECUTABLE_NOW`, but none of its pending steps become a human pass until the
+product owner runs the new path and attaches redacted evidence.
+
 | Acceptance step                                                          | Status    | Evidence and result                                                                                                                                                     |
 | ------------------------------------------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Sign in as synthetic customer A and select a synthetic offer             | `PASS`    | Human review on 2026-08-30 covered the storefront, product, cart and mapped account.                                                                                    |

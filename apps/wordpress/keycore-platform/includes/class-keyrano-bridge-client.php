@@ -23,6 +23,12 @@ final class Bridge_Client implements Bridge
         return $this->request('GET', '/v1/catalog');
     }
 
+    /** @param array<string, int|string> $command @return array<string, mixed>|null */
+    public function checkout(int $wp_user_id, string $customer_id, array $command): ?array
+    {
+        return $this->request('POST', '/v1/checkout', $wp_user_id, $customer_id, true, $command);
+    }
+
     /** @return array<string, mixed>|null */
     public function orders(int $wp_user_id, string $customer_id): ?array
     {
@@ -59,7 +65,8 @@ final class Bridge_Client implements Bridge
         string $path,
         ?int $wp_user_id = null,
         ?string $customer_id = null,
-        bool $csrf_verified = false
+        bool $csrf_verified = false,
+        array $payload = []
     ): ?array {
         if (
             '' === $this->base_url ||
@@ -69,7 +76,12 @@ final class Bridge_Client implements Bridge
         ) {
             return null;
         }
-        $body = '';
+        $body = [] === $payload
+            ? ''
+            : json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (! is_string($body)) {
+            return null;
+        }
         $timestamp = gmdate('c');
         $canonical = implode("\n", [
             $timestamp,

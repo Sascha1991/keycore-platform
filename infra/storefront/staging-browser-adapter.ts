@@ -14,6 +14,10 @@ import {
   type ProductKeyVaultService,
 } from "../../packages/platform/src/contracts.js";
 import { publishableStagingCatalog } from "./staging-catalog.js";
+import {
+  type StagingCheckoutPort,
+  type StagingPaymentOutcome,
+} from "./staging-checkout.js";
 
 export interface StagingStorefrontRequest {
   readonly method: "GET" | "POST" | string;
@@ -37,6 +41,7 @@ export interface StagingStorefrontResponse {
 export interface StagingStorefrontBridgeOptions {
   readonly accountService: CustomerAccountService;
   readonly vaultService: ProductKeyVaultService;
+  readonly checkout: StagingCheckoutPort;
   readonly sharedSecret: string;
   readonly allowedOrigin: string;
   readonly identityMappings: ReadonlyMap<string, CustomerId>;
@@ -116,6 +121,34 @@ export class StagingStorefrontBridge {
       });
     }
     const requestCorrelationId = correlationId(`storefront-${randomUUID()}`);
+
+    if (request.method === "POST" && request.path === "/v1/checkout") {
+      if (!request.csrfVerified) {
+        return respond(403, { code: "ACCESS_DENIED", status: "ERROR" });
+      }
+      const command = parseCheckoutBody(request.body);
+      if (!command) {
+        return respond(400, {
+          code: "CHECKOUT_REQUEST_INVALID",
+          status: "ERROR",
+        });
+      }
+      const result = await this.options.checkout.checkout({
+        ...command,
+        customerId: principal.customerId,
+      });
+      const statusCode =
+        result.status === "CAPTURED" || result.status === "IDEMPOTENT"
+          ? 200
+          : result.status === "FAILED"
+            ? 402
+            : result.status === "CANCELLED"
+              ? 409
+              : result.status === "DENIED"
+                ? 422
+                : 503;
+      return respond(statusCode, result);
+    }
 
     if (request.method === "GET" && request.path === "/v1/account/orders") {
       const result = await this.options.accountService.listOwnedOrders({
@@ -344,3 +377,58 @@ const constantTimeEqual = (left: string, right: string): boolean => {
 };
 
 const unavailable = () => ({ code: "RESOURCE_NOT_AVAILABLE", status: "ERROR" });
+
+const parseCheckoutBody = (
+  body: string,
+): {
+  readonly checkoutCreatedAt: string;
+  readonly checkoutToken: string;
+  readonly currency: string;
+  readonly expectedTotalMinor: string;
+  readonly outcome: StagingPaymentOutcome;
+  readonly productReference: string;
+  readonly quantity: number;
+} | null => {
+  try {
+    const value = JSON.parse(body) as unknown;
+    if (!isRecord(value)) return null;
+    const expectedKeys = [
+      "checkoutCreatedAt",
+      "checkoutToken",
+      "currency",
+      "expectedTotalMinor",
+      "outcome",
+      "productReference",
+      "quantity",
+    ];
+    if (
+      Object.keys(value).sort().join("\n") !== expectedKeys.sort().join("\n") ||
+      typeof value.checkoutCreatedAt !== "string" ||
+      typeof value.checkoutToken !== "string" ||
+      typeof value.currency !== "string" ||
+      typeof value.expectedTotalMinor !== "string" ||
+      !isPaymentOutcome(value.outcome) ||
+      typeof value.productReference !== "string" ||
+      typeof value.quantity !== "number"
+    ) {
+      return null;
+    }
+    return {
+      checkoutCreatedAt: value.checkoutCreatedAt,
+      checkoutToken: value.checkoutToken,
+      currency: value.currency,
+      expectedTotalMinor: value.expectedTotalMinor,
+      outcome: value.outcome,
+      productReference: value.productReference,
+      quantity: value.quantity,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isPaymentOutcome = (value: unknown): value is StagingPaymentOutcome =>
+  value === "SUCCESS" || value === "FAILURE" || value === "CANCEL";
