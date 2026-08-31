@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reconciled every remaining step of UAT-002, UAT-015 and UAT-018 against the
+  actual PRE-UAT browser boundary. Existing synthetic checkout/idempotency and
+  Guest Claim tests pass, but the human scenarios remain pending behind named
+  Phase-12 browser integrations; no payment, claim or invoice feature was added
+  to PR #46 and no approval gate was weakened.
+
 - Recorded the product owner's 2026-08-30 Human-UAT result for the tested
   visible-storefront scope. UAT-001 and UAT-006 passed with synthetic staging
   data; checkout-shell and direct purchase-history observations were accepted

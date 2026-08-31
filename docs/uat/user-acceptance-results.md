@@ -64,3 +64,12 @@ state is also `APPROVED`. `SECURITY-READINESS` may remain `NOT_APPROVED` because
 it is a separate gate. The validator provides consistency checks, not proof of
 human identity; ROLE-UAT-05 and Git/PR review provide that authority boundary.
 The current scoped acceptance does not satisfy these complete-approval rules.
+
+## Open Scenario Reconciliation
+
+The 2026-08-31 review in
+`docs/uat/open-scenario-reconciliation-2026-08-31.md` maps every required step
+for UAT-002, UAT-015 and UAT-018 to human evidence, automated evidence and its
+remaining browser gate. All three remain `PENDING`. Their missing payment/order,
+Guest Claim and invoice composition belongs to named Phase-12 integrations and
+must not be added to PR #46 merely to manufacture complete Human-UAT results.

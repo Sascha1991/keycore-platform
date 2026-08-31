@@ -159,3 +159,18 @@ prior pending/non-executable status. Placeholder images remain acceptable,
 checkout remains intentionally non-live, guest claim and invoice-document
 delivery remain outside scope, and neither complete Human-UAT nor Security
 Readiness is approved by this report.
+
+## Open UAT Reconciliation
+
+The 2026-08-31 follow-up reviewed every normative step of UAT-002, UAT-015 and
+UAT-018. Existing synthetic E2E coverage confirms idempotent order/payment
+handling and secure Guest Claim behavior at the application boundary, but the
+PRE-UAT browser bridge still intentionally exposes neither payment/order
+creation nor Guest Claim mutation. All three scenarios therefore remain
+`PENDING`; their exact step matrix and named future gates are recorded in
+`docs/uat/open-scenario-reconciliation-2026-08-31.md`.
+
+Those pending scenarios are later acceptance gates and are not implementation
+requirements for this PRE-UAT shell PR. The remaining PR-specific repository
+expectation is human attachment of redacted visible-UI screenshots. This does
+not alter Phase 11, Phase 12, production or `SECURITY-READINESS` status.
