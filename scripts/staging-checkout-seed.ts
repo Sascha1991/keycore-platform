@@ -18,6 +18,7 @@ try {
     {
       deploymentId: process.env.KEYCORE_DEPLOYMENT_ID,
       environment: process.env.KEYCORE_ENV,
+      guestClaimCode: process.env.KEYRANO_STAGING_GUEST_CLAIM_CODE,
     },
   );
   process.stdout.write(`${JSON.stringify(result)}\n`);

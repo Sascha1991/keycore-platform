@@ -5,8 +5,8 @@ import {
   createPostgresPool,
 } from "../infra/postgres/client.js";
 import { PostgresCustomerAccountReadRepository } from "../infra/postgres/customer-account-repositories.js";
-import { seedSyntheticStagingCheckoutData } from "../infra/postgres/staging-checkout-seed.js";
 import { createPostgresStagingCheckout } from "../infra/storefront/staging-checkout.js";
+import { createPostgresStagingGuestOrderClaim } from "../infra/storefront/staging-guest-claim.js";
 import {
   createStagingStorefrontRuntime,
   handleStagingHttpRequest,
@@ -67,13 +67,10 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 
 async function dependencies() {
   const database = new PostgresTransactionBoundary(databasePool);
-  await seedSyntheticStagingCheckoutData(database, {
-    deploymentId: process.env.KEYCORE_DEPLOYMENT_ID,
-    environment: process.env.KEYCORE_ENV,
-  });
   return {
     accountRepository: new PostgresCustomerAccountReadRepository(database),
     checkout: createPostgresStagingCheckout(database),
+    guestOrderClaim: createPostgresStagingGuestOrderClaim(database),
   };
 }
 

@@ -14,7 +14,7 @@ details, supplier responses, credentials or real Product Keys.
 | Catalog eligibility | Eligible, blocked and unknown-region synthetic offers                 | UAT-001, UAT-018       |
 | Customer A          | Verified synthetic account with no real personal data                 | UAT-002, UAT-004..018  |
 | Customer B          | Separate verified synthetic account for denial checks                 | UAT-002, 005, 006, 012 |
-| Guest order         | Synthetic checkout email snapshot and unclaimed order                 | UAT-003..005, UAT-015  |
+| Guest order         | Deterministic synthetic snapshot/order and hash-only one-time claim   | UAT-003..005, UAT-015  |
 | Sandbox payment     | Provider-documented success and failure test methods                  | UAT-002, 003, 009, 018 |
 | Supplier outcomes   | Deterministic success, delayed, failure and ambiguous synthetic modes | UAT-007, 008, 018      |
 | Fraud outcomes      | Deterministic REVIEW and DENY synthetic signals                       | UAT-010, UAT-011       |

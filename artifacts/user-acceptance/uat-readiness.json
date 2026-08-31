@@ -254,7 +254,7 @@
       "validatedRule": "Account projections are ownership-scoped and do not disclose keys in list views.",
       "automatedEvidence": ["EVIDENCE-04"],
       "uiReadiness": "EXECUTABLE_NOW",
-      "humanActionRequired": "Execute after Meine Kaeufe is implemented on approved staging.",
+      "humanActionRequired": "Execute the synthetic claim, wrong-code, wrong-user, replay, cross-owner and later-session checks on approved staging; capture redacted evidence without the claim code.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {
@@ -303,7 +303,7 @@
       "validatedRule": "The composed customer journey satisfies critical business and security rules without production effects.",
       "automatedEvidence": ["EVIDENCE-01", "EVIDENCE-02", "EVIDENCE-03", "EVIDENCE-04", "EVIDENCE-05"],
       "uiReadiness": "PARTIALLY_EXECUTABLE",
-      "reason": "Catalog, cart, checkout shell, synthetic login, account and reveal are composed, but payment, order creation, guest claim and full invoice delivery are not.",
+      "reason": "Catalog, synthetic checkout/order creation, login, account, Guest Claim and reveal are composed, but claim human evidence, composed fulfillment and full invoice delivery remain outstanding.",
       "targetDependency": "PHASE_12_END_TO_END_STOREFRONT_INTEGRATION",
       "humanActionRequired": "Execute last, after all required staging transports and prior scenario blockers are resolved.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result and separate human approval artifact"

@@ -27,6 +27,7 @@ import { DevelopmentKeyManagementProvider } from "../key-management/development-
 import { InMemoryEncryptedKeyRepository } from "../vault/in-memory-encrypted-key-repository.js";
 import {
   StagingStorefrontBridge,
+  type StagingGuestOrderClaimPort,
   type StagingStorefrontRequest,
 } from "./staging-browser-adapter.js";
 import type {
@@ -73,6 +74,7 @@ export interface StagingStorefrontRuntime {
 export interface StagingStorefrontRuntimeDependencies {
   readonly accountRepository?: CustomerAccountReadRepository;
   readonly checkout?: StagingCheckoutPort;
+  readonly guestOrderClaim?: StagingGuestOrderClaimPort;
 }
 
 export const createStagingStorefrontRuntime = async (
@@ -148,6 +150,8 @@ export const createStagingStorefrontRuntime = async (
       }),
       allowedOrigin: config.allowedOrigin,
       checkout: dependencies.checkout ?? new FailClosedStagingCheckout(),
+      guestOrderClaim:
+        dependencies.guestOrderClaim ?? new FailClosedStagingGuestOrderClaim(),
       identityMappings: new Map([
         [config.customerAWpUserId, stagingCustomerAId],
         [config.customerBWpUserId, stagingCustomerBId],
@@ -286,6 +290,12 @@ class StagingVaultAuthorization implements KeyAccessAuthorizationPort {
 class FailClosedStagingCheckout implements StagingCheckoutPort {
   public async checkout(): Promise<StagingCheckoutResult> {
     return { reasonCode: "CHECKOUT_UNAVAILABLE", status: "DENIED" };
+  }
+}
+
+class FailClosedStagingGuestOrderClaim implements StagingGuestOrderClaimPort {
+  public async claimGuestOrder() {
+    return { status: "CLAIM_DENIED" as const };
   }
 }
 

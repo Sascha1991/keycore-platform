@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  correlationId,
   customerId,
   type CustomerId,
 } from "../../packages/platform/src/contracts.js";
@@ -12,12 +13,15 @@ import {
 } from "../storefront/staging-checkout.js";
 import { PostgresCustomerAccountReadRepository } from "./customer-account-repositories.js";
 import { seedSyntheticStagingCheckoutData } from "./staging-checkout-seed.js";
+import { stagingGuestOrderId } from "./staging-checkout-seed.js";
+import { createPostgresStagingGuestOrderClaim } from "../storefront/staging-guest-claim.js";
 import { PostgresTestDatabase } from "./test-database.js";
 
 const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
 const now = new Date("2026-08-31T18:00:00.000Z");
 const customerA = customerId("10000000-0000-4000-8000-000000000001");
 const customerB = customerId("10000000-0000-4000-8000-000000000002");
+const guestClaimCode = "SYNTHETIC_CLAIM_POSTGRES_UAT_015_123456";
 
 describe.skipIf(!connectionString)(
   "staging customer checkout persistence",
@@ -43,7 +47,7 @@ describe.skipIf(!connectionString)(
           reasonCode: "ORDER_IDEMPOTENCY_CONFLICT",
           status: "RECONCILIATION_REQUIRED",
         });
-        await expect(count(database, "keycore_orders")).resolves.toBe(1);
+        await expect(countCheckoutOrders(database)).resolves.toBe(1);
         await expect(count(database, "order_payments")).resolves.toBe(1);
         await expect(count(database, "external_event_receipts")).resolves.toBe(
           1,
@@ -98,7 +102,7 @@ describe.skipIf(!connectionString)(
         expect(results.some((result) => result.status === "CAPTURED")).toBe(
           true,
         );
-        await expect(count(database, "keycore_orders")).resolves.toBe(1);
+        await expect(countCheckoutOrders(database)).resolves.toBe(1);
         await expect(count(database, "order_payments")).resolves.toBe(1);
         const retry = await checkout.checkout(command);
         expect(retry.status).toBe("IDEMPOTENT");
@@ -129,7 +133,7 @@ describe.skipIf(!connectionString)(
             status: "DENIED",
           });
         }
-        await expect(count(database, "keycore_orders")).resolves.toBe(0);
+        await expect(countCheckoutOrders(database)).resolves.toBe(0);
 
         const failed = await checkout.checkout(
           checkoutCommand(customerA, "4", "FAILURE"),
@@ -147,8 +151,10 @@ describe.skipIf(!connectionString)(
           `
           SELECT payment_status, procurement_status, fulfillment_status
           FROM keycore_orders
+          WHERE id <> $1
           ORDER BY payment_status
         `,
+          [stagingGuestOrderId],
         );
         expect(rows.rows).toEqual([
           {
@@ -168,8 +174,97 @@ describe.skipIf(!connectionString)(
         await expect(count(database, "encrypted_key_records")).resolves.toBe(0);
       });
     }, 30_000);
+
+    it("claims the deterministic guest fixture once and persists ownership across adapters", async () => {
+      await withDatabase(async (database) => {
+        const firstAdapter = createPostgresStagingGuestOrderClaim(database);
+        await expect(
+          firstAdapter.claimGuestOrder({
+            claimCode: guestClaimCode,
+            correlationId: correlationId("staging-claim-wrong-customer"),
+            principal: principal(customerB),
+          }),
+        ).resolves.toEqual({ status: "CLAIM_DENIED" });
+
+        await expect(
+          firstAdapter.claimGuestOrder({
+            claimCode: guestClaimCode,
+            correlationId: correlationId("staging-claim-customer-a"),
+            principal: principal(customerA),
+          }),
+        ).resolves.toEqual({ orderId: stagingGuestOrderId, status: "CLAIMED" });
+
+        const account = new PostgresCustomerAccountReadRepository(database);
+        const customerAPage = await account.listOwnedOrders({
+          customerId: customerA,
+          limit: 20,
+        });
+        expect(customerAPage.orders.map((order) => order.orderId)).toContain(
+          stagingGuestOrderId,
+        );
+        await expect(
+          account.findOwnedOrderDetail({
+            customerId: customerB,
+            orderId: stagingGuestOrderId,
+          }),
+        ).resolves.toBeNull();
+
+        const laterSessionAdapter =
+          createPostgresStagingGuestOrderClaim(database);
+        await expect(
+          laterSessionAdapter.claimGuestOrder({
+            claimCode: guestClaimCode,
+            correlationId: correlationId("staging-claim-replay"),
+            principal: principal(customerA),
+          }),
+        ).resolves.toEqual({ status: "CLAIM_DENIED" });
+
+        const reseed = await seedSyntheticStagingCheckoutData(database, {
+          deploymentId: "staging-checkout-test",
+          environment: "STAGING",
+          guestClaimCode,
+        });
+        expect(reseed.guestClaimFixture).toBe("CONSUMED");
+        await expect(
+          seedSyntheticStagingCheckoutData(database, {
+            deploymentId: "staging-checkout-test",
+            environment: "STAGING",
+            guestClaimCode: "SYNTHETIC_DIFFERENT_CLAIM_CODE_654321",
+          }),
+        ).rejects.toThrow("STAGING_GUEST_CLAIM_FIXTURE_IDENTITY_CONFLICT");
+        await expect(
+          count(database, "guest_order_claim_challenges"),
+        ).resolves.toBe(1);
+        const persisted = await database.query<{
+          readonly customer_id: string;
+          readonly token_hash: string;
+          readonly audit: string;
+        }>(
+          `
+            SELECT o.customer_id::text, c.token_hash,
+              COALESCE((SELECT jsonb_agg(metadata)::text FROM audit_events), '[]') AS audit
+            FROM keycore_orders o
+            JOIN guest_order_claim_challenges c ON c.order_id = o.id
+            WHERE o.id = $1
+            GROUP BY o.customer_id, c.token_hash
+          `,
+          [stagingGuestOrderId],
+        );
+        expect(persisted.rows[0]?.customer_id).toBe(customerA);
+        expect(persisted.rows[0]?.token_hash).toMatch(/^[a-f0-9]{64}$/u);
+        expect(JSON.stringify(persisted.rows)).not.toContain(guestClaimCode);
+      });
+    }, 30_000);
   },
 );
+
+const principal = (customer: CustomerId) => ({
+  authenticationContext: {
+    assurance: "AUTHENTICATED" as const,
+    provider: "WOOCOMMERCE" as const,
+  },
+  customerId: customer,
+});
 
 const checkoutCommand = (
   customer: CustomerId,
@@ -202,6 +297,16 @@ const count = async (
   return Number.parseInt(result.rows[0]?.count ?? "0", 10);
 };
 
+const countCheckoutOrders = async (
+  database: PostgresTestDatabase,
+): Promise<number> => {
+  const result = await database.query<{ readonly count: string }>(
+    "SELECT count(*)::text AS count FROM keycore_orders WHERE id <> $1",
+    [stagingGuestOrderId],
+  );
+  return Number.parseInt(result.rows[0]?.count ?? "0", 10);
+};
+
 const withDatabase = async (
   callback: (database: PostgresTestDatabase) => Promise<void>,
 ): Promise<void> => {
@@ -213,6 +318,7 @@ const withDatabase = async (
     await seedSyntheticStagingCheckoutData(database, {
       deploymentId: "staging-checkout-test",
       environment: "STAGING",
+      guestClaimCode,
     });
     await callback(database);
   } finally {

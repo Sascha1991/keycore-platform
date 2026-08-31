@@ -9,7 +9,10 @@ import {
   correlationId,
   customerId,
   orderLineId,
+  type AuthenticatedCustomerPrincipal,
+  type CorrelationId,
   type CustomerAccountService,
+  type CustomerOrderClaimResult,
   type CustomerId,
   type ProductKeyVaultService,
 } from "../../packages/platform/src/contracts.js";
@@ -38,10 +41,19 @@ export interface StagingStorefrontResponse {
   readonly body: string;
 }
 
+export interface StagingGuestOrderClaimPort {
+  claimGuestOrder(input: {
+    readonly claimCode: string;
+    readonly correlationId: CorrelationId;
+    readonly principal: AuthenticatedCustomerPrincipal;
+  }): Promise<CustomerOrderClaimResult>;
+}
+
 export interface StagingStorefrontBridgeOptions {
   readonly accountService: CustomerAccountService;
   readonly vaultService: ProductKeyVaultService;
   readonly checkout: StagingCheckoutPort;
+  readonly guestOrderClaim: StagingGuestOrderClaimPort;
   readonly sharedSecret: string;
   readonly allowedOrigin: string;
   readonly identityMappings: ReadonlyMap<string, CustomerId>;
@@ -53,6 +65,8 @@ export interface StagingStorefrontBridgeOptions {
   readonly maxClockSkewMs?: number | undefined;
   readonly revealLimit?: number | undefined;
   readonly revealWindowMs?: number | undefined;
+  readonly claimLimit?: number | undefined;
+  readonly claimWindowMs?: number | undefined;
 }
 
 const privateHeaders = {
@@ -68,7 +82,13 @@ export class StagingStorefrontBridge {
   private readonly maxClockSkewMs: number;
   private readonly revealLimit: number;
   private readonly revealWindowMs: number;
+  private readonly claimLimit: number;
+  private readonly claimWindowMs: number;
   private readonly revealBuckets = new Map<
+    string,
+    { startsAt: number; count: number }
+  >();
+  private readonly claimBuckets = new Map<
     string,
     { startsAt: number; count: number }
   >();
@@ -85,6 +105,8 @@ export class StagingStorefrontBridge {
     this.maxClockSkewMs = options.maxClockSkewMs ?? 60_000;
     this.revealLimit = options.revealLimit ?? 5;
     this.revealWindowMs = options.revealWindowMs ?? 60_000;
+    this.claimLimit = options.claimLimit ?? 5;
+    this.claimWindowMs = options.claimWindowMs ?? 60_000;
   }
 
   public async handle(
@@ -148,6 +170,35 @@ export class StagingStorefrontBridge {
                 ? 422
                 : 503;
       return respond(statusCode, result);
+    }
+
+    if (request.method === "POST" && request.path === "/v1/account/claim") {
+      if (!request.csrfVerified) {
+        return respond(403, { code: "ACCESS_DENIED", status: "ERROR" });
+      }
+      const command = parseGuestClaimBody(request.body);
+      if (!command) {
+        return respond(400, { code: "CLAIM_INVALID", status: "ERROR" });
+      }
+      if (!this.claimAllowed(principal.customerId)) {
+        return respond(429, { code: "RATE_LIMITED", status: "ERROR" });
+      }
+      try {
+        const result = await this.options.guestOrderClaim.claimGuestOrder({
+          claimCode: command.claimCode,
+          correlationId: requestCorrelationId,
+          principal,
+        });
+        if (result.status !== "CLAIMED") {
+          return respond(409, { code: "CLAIM_INVALID", status: "ERROR" });
+        }
+        return respond(200, { status: "CLAIMED" });
+      } catch {
+        return respond(503, {
+          code: "TEMPORARILY_UNAVAILABLE",
+          status: "ERROR",
+        });
+      }
     }
 
     if (request.method === "GET" && request.path === "/v1/account/orders") {
@@ -293,6 +344,21 @@ export class StagingStorefrontBridge {
     return true;
   }
 
+  private claimAllowed(owner: CustomerId): boolean {
+    const now = this.now().getTime();
+    const current = this.claimBuckets.get(owner);
+    if (!current || now - current.startsAt >= this.claimWindowMs) {
+      this.claimBuckets.set(owner, { count: 1, startsAt: now });
+      return true;
+    }
+    if (current.count >= this.claimLimit) return false;
+    this.claimBuckets.set(owner, {
+      count: current.count + 1,
+      startsAt: current.startsAt,
+    });
+    return true;
+  }
+
   private respond(
     statusCode: number,
     payload: unknown,
@@ -317,6 +383,28 @@ export class StagingStorefrontBridge {
     };
   }
 }
+
+const parseGuestClaimBody = (
+  body: string,
+): { readonly claimCode: string } | null => {
+  try {
+    const value: unknown = JSON.parse(body);
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return null;
+    const record = value as Record<string, unknown>;
+    if (
+      Object.keys(record).length !== 1 ||
+      typeof record.claimCode !== "string" ||
+      record.claimCode.length < 16 ||
+      record.claimCode.length > 128
+    ) {
+      return null;
+    }
+    return { claimCode: record.claimCode };
+  } catch {
+    return null;
+  }
+};
 
 export const signStagingStorefrontRequest = (
   secret: string,

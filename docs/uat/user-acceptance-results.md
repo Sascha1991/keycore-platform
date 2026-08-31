@@ -7,7 +7,7 @@
   2026-08-30.
 - Human approval: `NOT_APPROVED`.
 - `SECURITY-READINESS`: `NOT_APPROVED`.
-- Human `PASS` results: two (`UAT-001`, `UAT-006`).
+- Human `PASS` results: three (`UAT-001`, `UAT-002`, `UAT-006`).
 - Phase 11: incomplete.
 
 The machine-readable source is
@@ -74,6 +74,6 @@ The 2026-08-31 review in
 `docs/uat/open-scenario-reconciliation-2026-08-31.md` maps every required step
 for UAT-002, UAT-015 and UAT-018 to human evidence, automated evidence and any
 remaining browser gate. UAT-002 is `PASS`; UAT-015 and UAT-018 remain `PENDING`.
-Their remaining Guest Claim, fulfillment and invoice composition belongs to
-named Phase-12 integrations and must not be inferred from the accepted
-registered-customer checkout.
+The Guest Claim transport is now technically executable but still lacks human
+UAT-015 evidence. Fulfillment and invoice composition remain named Phase-12
+gates and must not be inferred from the accepted registered-customer checkout.

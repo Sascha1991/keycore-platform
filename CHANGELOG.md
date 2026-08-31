@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added the secure staging-only `Kauf hinzufügen` transport by composing the
+  existing verified-same-email, one-time Guest Claim service behind the signed
+  WordPress bridge. The deterministic synthetic fixture stores only a claim
+  hash and preserves consumed ownership across bootstrap; UAT-015 and UAT-018
+  remain pending human review and all production/security gates stay closed.
+
 - Added supplied security-reviewed screenshots from the independent 2026-09-01 UAT-002
   repeat using `Arena Eleven`. The evidence reconfirms synthetic checkout,
   `DD-MM-YYYY` presentation, owner-visible safe state, Product Key omission and

@@ -68,35 +68,35 @@ secret, production data or Product Key plaintext:
 
 Overall status: `PENDING`.
 
-| Acceptance step                                                       | Status             | Evidence and result                                                                                                                                                                                   |
-| --------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sign in as customer A and open `Meine Käufe`                          | `PASS`             | Human review confirmed customer A can see the owned synthetic READY purchase.                                                                                                                         |
-| Compare direct-purchase status and key availability                   | `PASS`             | Human review confirmed no key before explicit reveal and synthetic-only reveal through the dedicated action.                                                                                          |
-| Confirm a claimed guest purchase appears                              | `GATED`            | The secure Guest Claim service and repositories exist, but `Kauf hinzufügen` is intentionally a non-mutating shell and the staging bridge exposes no claim route. Gate: `PHASE_12_ACCOUNT_TRANSPORT`. |
-| Wrong user, wrong code and replay remain denied                       | `PASS` (automated) | E2E-002 and focused Guest Claim tests passed with synthetic fixtures; no browser claim was fabricated.                                                                                                |
-| Customer B's unrelated purchase is absent and direct access is denied | `PASS`             | Human cross-owner review passed; focused ownership and account tests also passed.                                                                                                                     |
-| Claimed ownership survives a later session                            | `PENDING`          | PostgreSQL coverage exists in CI, but there is no PRE-UAT browser claim/session flow to execute as a human.                                                                                           |
+| Acceptance step                                                       | Status             | Evidence and result                                                                                                                                            |
+| --------------------------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sign in as customer A and open `Meine Käufe`                          | `PASS`             | Human review confirmed customer A can see the owned synthetic READY purchase.                                                                                  |
+| Compare direct-purchase status and key availability                   | `PASS`             | Human review confirmed no key before explicit reveal and synthetic-only reveal through the dedicated action.                                                   |
+| Confirm a claimed guest purchase appears                              | `EXECUTABLE_NOW`   | `PHASE_12_ACCOUNT_TRANSPORT` composes the existing Guest Claim service behind the staging `Kauf hinzufügen` form; human execution and evidence remain pending. |
+| Wrong user, wrong code and replay remain denied                       | `PASS` (automated) | E2E-002 and focused Guest Claim tests passed with synthetic fixtures; no browser claim was fabricated.                                                         |
+| Customer B's unrelated purchase is absent and direct access is denied | `PASS`             | Human cross-owner review passed; focused ownership and account tests also passed.                                                                              |
+| Claimed ownership survives a later session                            | `EXECUTABLE_NOW`   | PostgreSQL coverage proves durability and the browser flow can now be repeated after logout/login; human observation remains pending.                          |
 
-The backend implementation is not the blocker. The missing component is the
-dedicated one-time, verified-same-email browser adapter already named by the
-specification. It remains outside this documentation-only reconciliation.
+The backend and browser composition are now technically executable. UAT-015
+remains `PENDING` because the product owner has not yet executed the complete
+claim, denial, replay and later-session procedure or supplied safe screenshots.
 
 ## UAT-018 - Complete Acceptance Walkthrough
 
 Overall status: `PENDING`.
 
-| Walkthrough step                                                                    | Status                                                    | Evidence and remaining gate                                                                                    |
-| ----------------------------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Discover and select an eligible synthetic product                                   | `PASS`                                                    | UAT-001 human result.                                                                                          |
-| Authenticate as the mapped synthetic customer                                       | `PASS`                                                    | Human account A review. Production identity remains out of scope.                                              |
-| Open cart and checkout shell                                                        | `PASS`                                                    | Human review confirmed the shell and absence of a live payment method.                                         |
-| Complete sandbox payment                                                            | `PASS`                                                    | UAT-002 human review completed the staging-only synthetic success checkout.                                    |
-| Create the resulting KeyCore order idempotently                                     | `PASS` (scoped)                                           | The resulting purchase was human-visible; E2E-001/E2E-011 support exact-one and replay invariants.             |
-| Observe synthetic procurement and encrypted fulfillment for that order              | `PENDING`                                                 | The tested order remained in progress with no key available; composed fulfillment was not executed.            |
-| Review owned purchase history                                                       | `PASS` for direct purchase / `GATED` for claimed purchase | The resulting UAT-002 purchase was owner-visible; Guest Claim still needs `PHASE_12_ACCOUNT_TRANSPORT`.        |
-| Reveal only through the secure owner path                                           | `PASS`                                                    | UAT-006 human result.                                                                                          |
-| Review invoice access                                                               | `PENDING`                                                 | Owner-filtered metadata exists; real invoice document/provider transport remains `PHASE_12_INVOICE_TRANSPORT`. |
-| Review one coherent ordered evidence set and explicitly accept the complete journey | `PENDING`                                                 | UAT-002 now passes, but Guest Claim, fulfillment and invoice-document steps prevent UAT-018 acceptance.        |
+| Walkthrough step                                                                    | Status                                                      | Evidence and remaining gate                                                                                    |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Discover and select an eligible synthetic product                                   | `PASS`                                                      | UAT-001 human result.                                                                                          |
+| Authenticate as the mapped synthetic customer                                       | `PASS`                                                      | Human account A review. Production identity remains out of scope.                                              |
+| Open cart and checkout shell                                                        | `PASS`                                                      | Human review confirmed the shell and absence of a live payment method.                                         |
+| Complete sandbox payment                                                            | `PASS`                                                      | UAT-002 human review completed the staging-only synthetic success checkout.                                    |
+| Create the resulting KeyCore order idempotently                                     | `PASS` (scoped)                                             | The resulting purchase was human-visible; E2E-001/E2E-011 support exact-one and replay invariants.             |
+| Observe synthetic procurement and encrypted fulfillment for that order              | `PENDING`                                                   | The tested order remained in progress with no key available; composed fulfillment was not executed.            |
+| Review owned purchase history                                                       | `PASS` for direct purchase / `PENDING` human claimed review | The resulting UAT-002 purchase was owner-visible; the new claim path awaits human UAT-015 evidence.            |
+| Reveal only through the secure owner path                                           | `PASS`                                                      | UAT-006 human result.                                                                                          |
+| Review invoice access                                                               | `PENDING`                                                   | Owner-filtered metadata exists; real invoice document/provider transport remains `PHASE_12_INVOICE_TRANSPORT`. |
+| Review one coherent ordered evidence set and explicitly accept the complete journey | `PENDING`                                                   | UAT-002 passes, but claim human evidence, fulfillment and invoice-document steps prevent UAT-018 acceptance.   |
 
 No required UAT-018 step is `NOT_APPLICABLE`. The gated steps are part of the
 normative scenario and therefore cannot be removed merely to produce a pass.
@@ -121,10 +121,11 @@ These automated results support the safety rules but are not human acceptance.
 
 ## Merge Assessment
 
-UAT-002 is accepted for the synthetic staging scope. UAT-015 still requires the
-dedicated Guest Claim browser adapter, and UAT-018 still depends on that path,
-composed fulfillment and invoice-document transport. PR #47 therefore does not
-complete KS-11-07, approve production or approve `SECURITY-READINESS`.
+UAT-002 is accepted for the synthetic staging scope. UAT-015 now has a dedicated
+Guest Claim browser adapter but still requires human execution and redacted
+evidence. UAT-018 still depends on that human result, composed fulfillment and
+invoice-document transport. Neither PR completes KS-11-07, approves production
+or approves `SECURITY-READINESS`.
 
 This record contains the supplied human observations but does not claim that
 new screenshots were committed or attached. Any redacted screenshots still
