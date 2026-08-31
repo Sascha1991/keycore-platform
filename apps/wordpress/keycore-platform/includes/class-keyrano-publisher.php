@@ -49,9 +49,7 @@ final class Publisher
             $product->set_catalog_visibility('visible');
             $product->set_stock_status('instock');
             $product->set_virtual(true);
-            if (0 === $existing_id) {
-                $product->set_description(wp_kses_post((string) $source['description']));
-            }
+            $product->set_description(wp_kses_post((string) $source['description']));
             $product->update_meta_data('_keyrano_managed', '1');
             $product->update_meta_data('_keyrano_public_reference', $reference);
             $product->update_meta_data('_keyrano_platform', sanitize_text_field((string) $source['platform']));

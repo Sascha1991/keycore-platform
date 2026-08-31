@@ -152,8 +152,19 @@ $bridge = new FakeBridge();
 $publisher = new Publisher($bridge);
 assert_true($publisher->sync(), 'Initial publisher sync failed');
 assert_true(2 === count($GLOBALS['keyrano_products']), 'Create did not publish exactly two products');
+$first = wc_get_product(wc_get_product_id_by_sku('keyrano-safe-one'));
+assert_true(
+    'Safe staging description' === ($first?->state()['data']['description'] ?? null),
+    'Initial owned description field was not published'
+);
+$bridge->products[0]['description'] = 'Updated staging description';
 assert_true($publisher->sync(), 'Repeated publisher sync failed');
 assert_true(2 === count($GLOBALS['keyrano_products']), 'Repeated sync created duplicates');
+$first = wc_get_product(wc_get_product_id_by_sku('keyrano-safe-one'));
+assert_true(
+    'Updated staging description' === ($first?->state()['data']['description'] ?? null),
+    'Owned description field was not updated'
+);
 
 $bridge->products[0]['priceMinor'] = 1599;
 $bridge->products[1]['publicationStatus'] = 'BLOCKED';
