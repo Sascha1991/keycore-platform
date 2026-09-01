@@ -300,10 +300,8 @@
       "expectedResult": "One coherent, secure purchase completes with exact ownership, secure reveal, history, and invoice behavior.",
       "validatedRule": "The composed customer journey satisfies critical business and security rules without production effects.",
       "automatedEvidence": ["EVIDENCE-01", "EVIDENCE-02", "EVIDENCE-03", "EVIDENCE-04", "EVIDENCE-05"],
-      "uiReadiness": "PARTIALLY_EXECUTABLE",
-      "reason": "Catalog, synthetic registered checkout, account, Guest Claim, reveal and invoice transport are composed, but remaining procurement, fulfillment and other required journeys are incomplete.",
-      "targetDependency": "PHASE_12_END_TO_END_STOREFRONT_INTEGRATION",
-      "humanActionRequired": "Execute last, after all required staging transports and prior scenario blockers are resolved.",
+      "uiReadiness": "EXECUTABLE_NOW",
+      "humanActionRequired": "Human execution was completed and recorded on 2026-09-01; preserve only redacted synthetic evidence.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result and separate human approval artifact"
     }
   ]

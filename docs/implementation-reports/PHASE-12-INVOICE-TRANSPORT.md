@@ -55,10 +55,35 @@ or production business behavior was added.
 - UAT-002 remains `PASS`.
 - UAT-015 remains `PENDING`; PR #48 carries its separate Guest Claim transport
   and still requires human evidence.
-- UAT-012 and only the invoice portion of UAT-018 are technically executable;
-  no human result is fabricated and UAT-018 remains `PENDING`.
-- Composed procurement/fulfillment and coherent final evidence still block
-  UAT-018.
+- The product owner subsequently confirmed UAT-018 `PASS` on 2026-09-01 after
+  the secure invoice correction. The supplied result is recorded without
+  inventing screenshots or expanding its synthetic staging scope.
 - KS-11-07 remains incomplete/unapproved.
 - `SECURITY-READINESS` remains `NOT_APPROVED`.
 - Production invoice, legal/tax and provider readiness are not claimed.
+
+## Purchase Detail UI Follow-up
+
+The WordPress purchase-detail template now presents the existing safe account
+projection as a dark responsive KeyRaNo surface. It adds breadcrumbs, a
+four-column desktop status summary, German date and minor-unit price formatting,
+and separate Product Key and invoice sections. Tablet uses a two-by-two summary;
+mobile uses one column, full-width actions and a wrapped two-column account
+navigation without horizontal overflow.
+
+The change is presentation-only. Pending invoices render no download form;
+available invoices retain the existing POST action and dedicated `_wpnonce`.
+The reveal form is unchanged and Product Key content is never rendered into the
+initial purchase HTML. `CustomerInvoiceAccessService`, ownership checks, HMAC,
+same-origin validation, response headers, PDF transport and fail-closed behavior
+were not modified.
+
+Safe visual evidence was captured from the running synthetic staging stack:
+
+- `docs/screenshots/phase-12-invoice-transport/purchase-detail-desktop-available.png`
+- `docs/screenshots/phase-12-invoice-transport/purchase-detail-mobile-pending.png`
+
+The mobile capture verifies a 390 px viewport without horizontal overflow. The
+pending fixture exposes neither an invoice-download nor a reveal action. Neither
+capture contains Product Key content, credentials, customer email, tokens or
+internal invoice identifiers.

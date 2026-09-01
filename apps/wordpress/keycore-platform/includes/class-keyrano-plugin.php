@@ -55,7 +55,7 @@ final class Plugin
             'AVAILABLE' => __('Verfügbar', 'keycore-platform'),
             'CAPTURED' => __('Bezahlt', 'keycore-platform'),
             'DELIVERY_PENDING' => __('Lieferung wird vorbereitet', 'keycore-platform'),
-            'FULFILLMENT_PENDING' => __('Key wird vorbereitet', 'keycore-platform'),
+            'FULFILLMENT_PENDING' => __('In Bearbeitung', 'keycore-platform'),
             'NOT_AVAILABLE' => __('Nicht verfügbar', 'keycore-platform'),
             'PAYMENT_CAPTURED' => __('Zahlung bestätigt', 'keycore-platform'),
             'PENDING' => __('In Bearbeitung', 'keycore-platform'),
@@ -66,6 +66,46 @@ final class Plugin
         ];
 
         return $labels[$status] ?? __('In Bearbeitung', 'keycore-platform');
+    }
+
+    public static function invoice_status_label(string $status): string
+    {
+        $labels = [
+            'AVAILABLE' => __('Verfügbar', 'keycore-platform'),
+            'PENDING' => __('Ausstehend', 'keycore-platform'),
+        ];
+
+        return $labels[$status] ?? __('Nicht verfügbar', 'keycore-platform');
+    }
+
+    public static function status_tone(string $status): string
+    {
+        if (in_array($status, ['AVAILABLE', 'READY', 'RETRIEVED', 'SUCCEEDED'], true)) {
+            return 'positive';
+        }
+        if (in_array($status, ['DELIVERY_PENDING', 'FULFILLMENT_PENDING', 'PENDING', 'PROCESSING'], true)) {
+            return 'pending';
+        }
+        return 'neutral';
+    }
+
+    public static function money_label(string $amount_minor, string $currency): string
+    {
+        $normalized_currency = strtoupper($currency);
+        if (
+            1 !== preg_match('/^\d{1,15}$/', $amount_minor) ||
+            1 !== preg_match('/^[A-Z]{3}$/', $normalized_currency)
+        ) {
+            return __('Nicht verfügbar', 'keycore-platform');
+        }
+
+        $padded = str_pad(ltrim($amount_minor, '0'), 3, '0', STR_PAD_LEFT);
+        $major = substr($padded, 0, -2);
+        $minor = substr($padded, -2);
+        $grouped_major = preg_replace('/\B(?=(\d{3})+(?!\d))/', '.', $major) ?? $major;
+        $currency_label = 'EUR' === $normalized_currency ? '€' : $normalized_currency;
+
+        return $grouped_major . ',' . $minor . ' ' . $currency_label;
     }
 
     public static function product_facts(): void

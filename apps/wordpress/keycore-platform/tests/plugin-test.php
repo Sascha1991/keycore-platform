@@ -12,6 +12,7 @@ $GLOBALS['keyrano_test_filters'] = [];
 $GLOBALS['keyrano_products'] = [];
 $GLOBALS['keyrano_order'] = null;
 $GLOBALS['keyrano_notices'] = [];
+$GLOBALS['keyrano_nonce_fields'] = [];
 
 function add_action(string $name, mixed $callback, int $priority = 10): void { $GLOBALS['keyrano_test_actions'][] = $name; }
 function add_filter(string $name, mixed $callback): void { $GLOBALS['keyrano_test_filters'][] = $name; }
@@ -31,10 +32,17 @@ function esc_url(string $value): string { return $value; }
 function esc_html__(string $value, string $domain): string { return $value; }
 function esc_attr__(string $value, string $domain): string { return $value; }
 function esc_html(string $value): string { return htmlspecialchars($value, ENT_QUOTES); }
+function esc_attr(string $value): string { return htmlspecialchars($value, ENT_QUOTES); }
 function wc_get_page_permalink(string $page): string { return '/' . $page . '/'; }
 function wc_get_cart_url(): string { return '/cart/'; }
-function wc_get_account_endpoint_url(string $endpoint): string { return '/my-account/' . $endpoint . '/'; }
-function wp_nonce_field(string $action): void { echo '<input type="hidden" name="_wpnonce" value="test-nonce">'; }
+function wc_get_account_endpoint_url(string $endpoint): string { return '/my-account/' . ('' === $endpoint || 'dashboard' === $endpoint ? '' : $endpoint . '/'); }
+function wp_date(string $format, int $timestamp): string { return gmdate($format, $timestamp); }
+function wp_nonce_field(string $action, string $name = '_wpnonce', bool $referer = true, bool $display = true): string {
+    $GLOBALS['keyrano_nonce_fields'][] = compact('action', 'name', 'referer', 'display');
+    $field = '<input type="hidden" name="' . esc_attr($name) . '" value="synthetic-nonce">';
+    if ($display) { echo $field; }
+    return $field;
+}
 function flush_rewrite_rules(): void {}
 function add_rewrite_endpoint(string $name, int $places): void {}
 function wc_print_notice(string $message, string $type): void {}
@@ -135,6 +143,15 @@ function assert_true(bool $condition, string $message): void
     if (! $condition) { fwrite(STDERR, $message . PHP_EOL); exit(1); }
 }
 
+/** @param array<string, mixed> $fixture */
+function render_order_detail(array $fixture): string
+{
+    $order = $fixture;
+    ob_start();
+    require dirname(__DIR__) . '/templates/account-order-detail.php';
+    return (string) ob_get_clean();
+}
+
 foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'woocommerce_account_kauf-hinzufuegen_endpoint', 'admin_post_keyrano_reveal', 'admin_post_keyrano_claim_purchase', 'admin_post_keyrano_invoice', 'admin_post_nopriv_keyrano_invoice', 'woocommerce_blocks_loaded'] as $hook) {
     assert_true(in_array($hook, $GLOBALS['keyrano_test_actions'], true), 'Missing hook: ' . $hook);
 }
@@ -148,7 +165,43 @@ assert_true(false !== strpos($claim_form, 'type="password"'), 'Guest claim code 
 assert_true(false !== strpos($claim_form, 'keyrano_claim_purchase'), 'Guest claim form is not CSRF-bound');
 assert_true(false === stripos($claim_form, 'Bestellnummer'), 'Guest claim form exposes an unnecessary order identifier');
 assert_true('Bezahlt' === \KeyRaNo\Storefront\Plugin::status_label('CAPTURED'), 'Captured status was not localized');
+assert_true('In Bearbeitung' === \KeyRaNo\Storefront\Plugin::status_label('FULFILLMENT_PENDING'), 'Fulfillment status was not presented safely');
+assert_true('Ausstehend' === \KeyRaNo\Storefront\Plugin::invoice_status_label('PENDING'), 'Pending invoice status was not localized');
+assert_true('18,99 €' === \KeyRaNo\Storefront\Plugin::money_label('1899', 'EUR'), 'Minor-unit total was not formatted for the German storefront');
+assert_true('Nicht verfügbar' === \KeyRaNo\Storefront\Plugin::money_label('invalid', 'EUR'), 'Malformed amount did not fail closed in presentation');
 assert_true('In Bearbeitung' === \KeyRaNo\Storefront\Plugin::status_label('UNKNOWN_INTERNAL_STATE'), 'Unknown status did not use a safe customer label');
+$base_order_detail = [
+    'createdAt' => '2026-08-30T12:00:00.000Z',
+    'currency' => 'EUR',
+    'fulfillment' => ['keyAccessAvailable' => false],
+    'invoice' => ['downloadAvailable' => false, 'status' => 'PENDING'],
+    'orderId' => '20000000-0000-4000-8000-000000000001',
+    'productKey' => 'TEST-AAAAA-BBBBB-CCCCC',
+    'productTitle' => 'Orbital Tactics',
+    'status' => 'FULFILLMENT_PENDING',
+    'totalMinor' => '1899',
+];
+$pending_detail = render_order_detail($base_order_detail);
+assert_true(false !== strpos($pending_detail, '30.08.2026'), 'German order date is absent from purchase detail');
+assert_true(false !== strpos($pending_detail, '18,99 €'), 'German total is absent from purchase detail');
+assert_true(false !== strpos($pending_detail, 'Die Rechnung wird erstellt, sobald deine Bestellung abgeschlossen ist.'), 'Pending invoice guidance is absent');
+assert_true(false === strpos($pending_detail, 'value="keyrano_invoice"'), 'Pending invoice rendered an active download path');
+assert_true(false === strpos($pending_detail, 'TEST-AAAAA-BBBBB-CCCCC'), 'Product Key leaked into initial purchase HTML');
+$GLOBALS['keyrano_nonce_fields'] = [];
+$available_detail = render_order_detail(array_replace_recursive($base_order_detail, [
+    'fulfillment' => ['keyAccessAvailable' => true],
+    'invoice' => ['downloadAvailable' => true, 'status' => 'AVAILABLE'],
+]));
+assert_true(false !== strpos($available_detail, 'value="keyrano_invoice"'), 'Available invoice secure form is absent');
+assert_true(false !== strpos($available_detail, 'value="keyrano_reveal"'), 'Existing reveal form is absent');
+assert_true(false !== strpos($available_detail, 'name="_wpnonce"'), 'Secure action nonce is absent from rendered HTML');
+assert_true(false === strpos($available_detail, 'TEST-AAAAA-BBBBB-CCCCC'), 'Product Key leaked from available purchase HTML');
+$invoice_nonce = array_values(array_filter(
+    $GLOBALS['keyrano_nonce_fields'],
+    static fn (array $field): bool => str_starts_with($field['action'], 'keyrano_invoice_')
+));
+assert_true(1 === count($invoice_nonce), 'Invoice form did not render exactly one dedicated nonce');
+assert_true(false === $invoice_nonce[0]['referer'] && true === $invoice_nonce[0]['display'], 'Invoice nonce rendering contract changed');
 $pdf = "%PDF-1.4\nsynthetic invoice\n%%EOF\n";
 $invoice_payload = [
     '_httpStatus' => 200,

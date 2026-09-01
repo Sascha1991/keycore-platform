@@ -8,6 +8,12 @@
   hash and preserves consumed ownership across bootstrap; all production and
   security gates stay closed.
 
+- Redesigned the KeyRaNo purchase-detail page as a dark, responsive account
+  surface with German order summary, clear pending/available states and
+  unchanged owner-only Invoice and Product Key POST actions. Recorded the
+  product owner's supplied 2026-09-01 UAT-018 `PASS`; KS-11-07 and
+  `SECURITY-READINESS` remain unapproved.
+
 - Added `PHASE_12_INVOICE_TRANSPORT`: an owner-authorized, HMAC-signed and
   nonce-protected synthetic staging PDF download with bounded content, fixed
   safe headers and fail-closed cross-owner/outage behavior. Production invoice,

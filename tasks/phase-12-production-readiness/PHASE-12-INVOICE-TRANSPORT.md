@@ -42,3 +42,10 @@ invoice approval.
 - Live Stripe, Kinguin, procurement or fulfillment.
 - Real customers, addresses, invoice records, credentials or Product Keys.
 - Human approval of UAT-012, UAT-018, KS-11-07 or `SECURITY-READINESS`.
+
+## Subsequent Human Result
+
+The product owner confirmed UAT-018 `PASS` on 2026-09-01 after the secure
+invoice correction. This later human result does not alter the implementation
+task's original approval boundary and does not approve KS-11-07,
+`SECURITY-READINESS`, production invoices or production release.

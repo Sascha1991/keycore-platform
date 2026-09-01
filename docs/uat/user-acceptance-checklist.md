@@ -9,10 +9,12 @@ are authoritative in `artifacts/user-acceptance/uat-readiness.json`.
 On 2026-08-30 the product owner completed and passed UAT-001 and UAT-006 using
 the synthetic staging fixture. On 2026-08-31 the product owner completed and
 passed UAT-002. UAT-015 and UAT-018 remain pending because their Guest Claim,
-fulfillment and invoice steps were not executed. The synthetic invoice action
-is now technically executable, but no human invoice result is claimed. The safe textual records are
+fulfillment and invoice steps had not yet been executed at that review. The
+product owner subsequently confirmed UAT-018 `PASS` on 2026-09-01 after the
+secure invoice correction; UAT-015 remains pending. The safe textual records are
 `docs/uat/human-uat-2026-08-30.md` and
-`docs/uat/open-scenario-reconciliation-2026-08-31.md`.
+`docs/uat/open-scenario-reconciliation-2026-08-31.md`, with the later UAT-018
+result in `docs/uat/human-uat-2026-09-01-invoice.md`.
 
 | ID      | Where to go                                   | What to do                                                           | What should happen                                                   | Failure                                                         | Safe evidence                          |
 | ------- | --------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------- |
