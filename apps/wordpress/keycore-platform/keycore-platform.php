@@ -20,6 +20,7 @@ define('KEYRANO_PLUGIN_DIR', __DIR__);
 
 require_once KEYRANO_PLUGIN_DIR . '/includes/class-keyrano-bridge.php';
 require_once KEYRANO_PLUGIN_DIR . '/includes/class-keyrano-bridge-client.php';
+require_once KEYRANO_PLUGIN_DIR . '/includes/class-keyrano-invoice-document.php';
 require_once KEYRANO_PLUGIN_DIR . '/includes/class-keyrano-publisher.php';
 require_once KEYRANO_PLUGIN_DIR . '/includes/class-keyrano-account.php';
 require_once KEYRANO_PLUGIN_DIR . '/includes/class-keyrano-plugin.php';

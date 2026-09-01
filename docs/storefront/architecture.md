@@ -23,6 +23,8 @@ The staging flow is:
 4. Existing `CustomerAccountService` owner-filters reads. Existing
    `ProductKeyVaultService` performs authorization before authenticated
    decryption.
+   `CustomerInvoiceAccessService` independently repeats owner and invoice-state
+   authorization before the staging document provider may return bytes.
 5. The response signature is bound to the exact fresh request signature before
    WordPress renders the safe view model.
 
@@ -39,6 +41,9 @@ staging-only process and refuses production startup.
 - Reveal is a separate POST with a WordPress nonce, exact same-origin check,
   signed CSRF result, bounded rate limit and vault audit.
 - Responses are HMAC-signed and rejected by WordPress when modified.
+- Invoice download is a nonce-protected POST. WordPress validates the signed,
+  bounded PDF envelope and emits only a fixed filename with private/no-store
+  headers; the browser never receives a storage path or provider URL.
 - Key material exists only in the encrypted in-memory staging vault and the
   authorized reveal response. It is never WooCommerce state.
 

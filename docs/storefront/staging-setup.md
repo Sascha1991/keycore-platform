@@ -60,6 +60,13 @@ a real Product Key. The Guest Claim code must be transferred to the human tester
 through the approved staging channel and must not appear in screenshots, notes,
 URLs or logs.
 
+The available fixture purchase also exposes a deterministic synthetic invoice
+through `Rechnung herunterladen`. No additional environment value is required.
+For human UAT, capture only the account availability state, the visibly
+synthetic/non-legally-valid invoice content and the generic cross-owner denial.
+Do not capture browser developer tools, cookies, nonces, HMAC headers, private
+identifiers or the secure reveal value.
+
 ## Stop
 
 ```sh

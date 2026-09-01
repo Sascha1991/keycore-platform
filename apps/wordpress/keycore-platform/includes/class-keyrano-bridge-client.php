@@ -45,6 +45,21 @@ final class Bridge_Client implements Bridge
     }
 
     /** @return array<string, mixed>|null */
+    public function invoice(int $wp_user_id, string $customer_id, string $order_id): ?array
+    {
+        if (! self::is_uuid($order_id)) {
+            return null;
+        }
+        return $this->request(
+            'POST',
+            '/v1/account/orders/' . rawurlencode($order_id) . '/invoice',
+            $wp_user_id,
+            $customer_id,
+            true
+        );
+    }
+
+    /** @return array<string, mixed>|null */
     public function reveal(int $wp_user_id, string $customer_id, string $order_id): ?array
     {
         if (! self::is_uuid($order_id)) {
@@ -139,6 +154,9 @@ final class Bridge_Client implements Bridge
         }
         $status = (int) wp_remote_retrieve_response_code($response);
         $response_body = (string) wp_remote_retrieve_body($response);
+        if (strlen($response_body) > 700000) {
+            return null;
+        }
         $response_timestamp = (string) wp_remote_retrieve_header($response, 'x-keyrano-response-timestamp');
         $response_signature = (string) wp_remote_retrieve_header($response, 'x-keyrano-response-signature');
         $response_time = strtotime($response_timestamp);

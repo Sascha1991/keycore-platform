@@ -12,6 +12,7 @@ import {
   type AuthenticatedCustomerPrincipal,
   type CustomerAccountOrderProjection,
   type CustomerId,
+  type CustomerInvoiceDocumentProvider,
 } from "../contracts.js";
 
 const now = new Date("2026-08-26T10:00:00.000Z");
@@ -188,7 +189,113 @@ describe("customer invoice access foundation", () => {
       );
     }
   });
+
+  it("authorizes the owner immediately before returning a bounded invoice document", async () => {
+    const harness = invoiceHarness();
+    const provider = new CapturingDocumentProvider({
+      bytes: Buffer.from("%PDF-1.4\nsynthetic\n%%EOF\n"),
+      contentType: "application/pdf",
+      status: "AVAILABLE",
+    });
+    const service = documentService(harness, provider);
+    const result = await service.getInvoiceDocument({
+      correlationId: correlationId("invoice-document-owner"),
+      orderId: harness.ownedOrder.orderId,
+      principal: principal(harness.customerA),
+    });
+
+    expect(result).toMatchObject({
+      contentType: "application/pdf",
+      orderId: harness.ownedOrder.orderId,
+      status: "OK",
+    });
+    expect(provider.inputs).toEqual([
+      {
+        currency: "EUR",
+        customerId: harness.customerA,
+        invoiceReference: "KR-INV-2026-0001",
+        issuedAt: "2026-08-26T09:30:00.000Z",
+        orderId: harness.ownedOrder.orderId,
+        productTitle: "Synthetic invoice product",
+        totalMinor: "2599",
+      },
+    ]);
+    expect(harness.audit.events.at(-1)).toMatchObject({
+      eventType: "CUSTOMER_INVOICE_DOCUMENT_VIEWED",
+      outcome: "SUCCEEDED",
+    });
+    expect(safeJson(harness.audit.events)).not.toContain("%PDF");
+  });
+
+  it("never invokes the document provider for wrong-owner or unavailable invoices", async () => {
+    const harness = invoiceHarness();
+    const provider = new CapturingDocumentProvider({
+      bytes: Buffer.from("%PDF-1.4\nsynthetic\n%%EOF\n"),
+      contentType: "application/pdf",
+      status: "AVAILABLE",
+    });
+    const service = documentService(harness, provider);
+    for (const requestedOrderId of [
+      harness.otherOrder.orderId,
+      harness.pendingOrder.orderId,
+    ]) {
+      await expect(
+        service.getInvoiceDocument({
+          correlationId: correlationId(`invoice-denied-${requestedOrderId}`),
+          orderId: requestedOrderId,
+          principal: principal(harness.customerA),
+        }),
+      ).resolves.toEqual({
+        code: "RESOURCE_NOT_AVAILABLE",
+        status: "DENIED",
+      });
+    }
+    expect(provider.inputs).toEqual([]);
+  });
+
+  it("rejects malformed content types and oversized provider documents", async () => {
+    const harness = invoiceHarness();
+    for (const providerResult of [
+      {
+        bytes: Buffer.from("<html>unsafe</html>"),
+        contentType: "text/html",
+        status: "AVAILABLE" as const,
+      },
+      {
+        bytes: Buffer.alloc(512 * 1024 + 1, 0x41),
+        contentType: "application/pdf",
+        status: "AVAILABLE" as const,
+      },
+    ]) {
+      const service = documentService(
+        harness,
+        new CapturingDocumentProvider(providerResult),
+      );
+      await expect(
+        service.getInvoiceDocument({
+          correlationId: correlationId("invoice-document-malformed"),
+          orderId: harness.ownedOrder.orderId,
+          principal: principal(harness.customerA),
+        }),
+      ).resolves.toEqual({
+        code: "RESOURCE_NOT_AVAILABLE",
+        status: "DENIED",
+      });
+    }
+  });
 });
+
+const documentService = (
+  harness: ReturnType<typeof invoiceHarness>,
+  documentProvider: CustomerInvoiceDocumentProvider,
+) =>
+  new CustomerInvoiceAccessService({
+    audit: harness.audit,
+    documentProvider,
+    environment: "CI",
+    now: () => now,
+    repository: harness.repository,
+  });
 
 const invoiceHarness = () => {
   const repository = new InMemoryCustomerAccountReadRepository();
@@ -309,6 +416,25 @@ class CollectingAudit {
 
   public async append(event: AuditEvent): Promise<void> {
     this.events.push(event);
+  }
+}
+
+class CapturingDocumentProvider implements CustomerInvoiceDocumentProvider {
+  public readonly inputs: Parameters<
+    CustomerInvoiceDocumentProvider["getDocument"]
+  >[0][] = [];
+
+  public constructor(
+    private readonly result: Awaited<
+      ReturnType<CustomerInvoiceDocumentProvider["getDocument"]>
+    >,
+  ) {}
+
+  public async getDocument(
+    input: Parameters<CustomerInvoiceDocumentProvider["getDocument"]>[0],
+  ) {
+    this.inputs.push(input);
+    return this.result;
   }
 }
 

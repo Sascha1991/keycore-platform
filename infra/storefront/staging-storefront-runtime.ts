@@ -6,6 +6,7 @@ import {
 
 import {
   CustomerAccountService,
+  CustomerInvoiceAccessService,
   ProductKeyVaultService,
   correlationId,
   currency,
@@ -20,6 +21,7 @@ import {
   type CustomerAccountReadRepository,
   type CustomerAccountRecord,
   type CustomerId,
+  type CustomerInvoiceDocumentProvider,
   type KeyAccessAuthorizationPort,
 } from "../../packages/platform/src/contracts.js";
 import { InMemoryCustomerAccountReadRepository } from "../customers/in-memory-customer-account-repository.js";
@@ -30,6 +32,7 @@ import {
   type StagingGuestOrderClaimPort,
   type StagingStorefrontRequest,
 } from "./staging-browser-adapter.js";
+import { SyntheticStagingInvoiceDocumentProvider } from "./staging-invoice-document.js";
 import type {
   StagingCheckoutPort,
   StagingCheckoutResult,
@@ -75,6 +78,7 @@ export interface StagingStorefrontRuntimeDependencies {
   readonly accountRepository?: CustomerAccountReadRepository;
   readonly checkout?: StagingCheckoutPort;
   readonly guestOrderClaim?: StagingGuestOrderClaimPort;
+  readonly invoiceDocumentProvider?: CustomerInvoiceDocumentProvider;
 }
 
 export const createStagingStorefrontRuntime = async (
@@ -111,6 +115,23 @@ export const createStagingStorefrontRuntime = async (
     : fixtures;
 
   const audit = new MemoryAudit();
+  const invoiceAccessService = new CustomerInvoiceAccessService({
+    audit,
+    documentProvider:
+      dependencies.invoiceDocumentProvider ??
+      new SyntheticStagingInvoiceDocumentProvider({
+        currency: "EUR",
+        customerId: stagingCustomerAId,
+        invoiceReference: "KR-SYNTHETIC-0001",
+        issuedAt: fixtureNow.toISOString(),
+        orderId: stagingFulfilledOrderId,
+        productTitle: "Neonpfad: Berlin",
+        totalMinor: "1299",
+      }),
+    environment: "STAGING",
+    ...(config.now ? { now: config.now } : {}),
+    repository,
+  });
   const keyRepository = new InMemoryEncryptedKeyRepository();
   const authorization = new StagingVaultAuthorization(
     new Map([[stagingFulfilledOrderLineId, stagingCustomerAId]]),
@@ -156,6 +177,7 @@ export const createStagingStorefrontRuntime = async (
         [config.customerAWpUserId, stagingCustomerAId],
         [config.customerBWpUserId, stagingCustomerBId],
       ]),
+      invoiceAccessService,
       ...(config.now ? { now: config.now } : {}),
       orderLines: new Map([
         [

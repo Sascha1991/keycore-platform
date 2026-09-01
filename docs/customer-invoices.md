@@ -4,6 +4,11 @@ KS-08-06 adds the customer invoice access foundation for KeyRaNo account
 surfaces while keeping invoice generation, tax/legal accounting, PDF rendering
 and production HTTP out of scope.
 
+`PHASE_12_INVOICE_TRANSPORT` extends that foundation only for isolated staging.
+It adds an owner-authorized document-provider port and one deterministic
+synthetic PDF. Production PDF generation, tax/legal policy and accounting
+providers remain out of scope and unapproved.
+
 Public customer copy uses KeyRaNo:
 
 - KeyRaNo — Rapid Access. No Waiting.
@@ -83,6 +88,21 @@ timestamps are omitted.
 `NOT_AVAILABLE`, `PENDING` and `FAILED`, customer metadata always reports
 `downloadAvailable=false` and omits invoice reference and issued timestamp.
 KS-08-06 still does not connect production invoice download infrastructure.
+
+## Staging Document Transport
+
+The Phase-12 WordPress action posts only the owned KeyCore OrderId with a
+per-order nonce. The signed bridge response carries a bounded base64 document
+with the allowlisted `application/pdf` type. WordPress validates the signature
+and exact payload, then serves a fixed `keyrano-rechnung.pdf` filename with
+private/no-store, no-cache, no-referrer and nosniff headers. No public file or
+provider redirect exists.
+
+KeyCore repeats the owner lookup immediately before provider access. The
+browser cannot supply an invoice reference, filename, storage key, path or
+provider URL. The PDF is deterministic synthetic UAT material, explicitly
+marked as not legally valid, and contains no customer address, Product Key,
+claim code, payment secret or provider credential.
 
 ## Audit
 

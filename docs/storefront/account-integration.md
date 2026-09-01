@@ -6,6 +6,17 @@ The plugin adds native WooCommerce account endpoints:
 - `kauf-details/<OrderId>` for safe status, invoice and activation metadata;
 - `kauf-hinzufuegen` for the guest-claim shell.
 
+For an owned purchase whose sanitized invoice state is `AVAILABLE` with
+`downloadAvailable=true`, the detail page adds `Rechnung herunterladen`. The
+POST action uses an order-bound WordPress nonce and exact-origin check. KeyCore
+then repeats owner authorization through `CustomerInvoiceAccessService`; the
+OrderId is a lookup input and never ownership authority.
+
+The staging response is a deterministic synthetic PDF with a fixed safe
+filename. Unavailable, foreign and unknown invoices share the same public
+unavailable behavior, while backend outages use a generic temporary failure.
+No invoice ID, path, provider URL or Product Key is exposed.
+
 WordPress authentication supplies presentation context only. The plugin reads a
 controlled immutable CustomerId mapping and signs it together with the current
 WordPress user ID. The bridge independently checks that pair, creates an

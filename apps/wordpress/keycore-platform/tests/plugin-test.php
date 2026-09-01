@@ -110,6 +110,7 @@ final class FakeBridge implements Bridge
     public function checkout(int $wp_user_id, string $customer_id, array $command): ?array { return null; }
     public function orders(int $wp_user_id, string $customer_id): ?array { return null; }
     public function order(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
+    public function invoice(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
     public function reveal(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
     public function claim(int $wp_user_id, string $customer_id, string $claim_code): ?array { return ['status' => 'CLAIMED']; }
 }
@@ -134,7 +135,7 @@ function assert_true(bool $condition, string $message): void
     if (! $condition) { fwrite(STDERR, $message . PHP_EOL); exit(1); }
 }
 
-foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'woocommerce_account_kauf-hinzufuegen_endpoint', 'admin_post_keyrano_reveal', 'admin_post_keyrano_claim_purchase', 'woocommerce_blocks_loaded'] as $hook) {
+foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'woocommerce_account_kauf-hinzufuegen_endpoint', 'admin_post_keyrano_reveal', 'admin_post_keyrano_claim_purchase', 'admin_post_keyrano_invoice', 'admin_post_nopriv_keyrano_invoice', 'woocommerce_blocks_loaded'] as $hook) {
     assert_true(in_array($hook, $GLOBALS['keyrano_test_actions'], true), 'Missing hook: ' . $hook);
 }
 assert_true(in_array('woocommerce_account_menu_items', $GLOBALS['keyrano_test_filters'], true), 'Missing account menu filter');
@@ -148,6 +149,34 @@ assert_true(false !== strpos($claim_form, 'keyrano_claim_purchase'), 'Guest clai
 assert_true(false === stripos($claim_form, 'Bestellnummer'), 'Guest claim form exposes an unnecessary order identifier');
 assert_true('Bezahlt' === \KeyRaNo\Storefront\Plugin::status_label('CAPTURED'), 'Captured status was not localized');
 assert_true('In Bearbeitung' === \KeyRaNo\Storefront\Plugin::status_label('UNKNOWN_INTERNAL_STATE'), 'Unknown status did not use a safe customer label');
+$pdf = "%PDF-1.4\nsynthetic invoice\n%%EOF\n";
+$invoice_payload = [
+    '_httpStatus' => 200,
+    'document' => ['body' => base64_encode($pdf), 'contentType' => 'application/pdf', 'encoding' => 'base64'],
+    'status' => 'AVAILABLE',
+];
+assert_true($pdf === \KeyRaNo\Storefront\Invoice_Document_Response::decode($invoice_payload), 'Valid signed bridge invoice payload was not decoded');
+assert_true(null === \KeyRaNo\Storefront\Invoice_Document_Response::decode(array_merge($invoice_payload, ['filename' => "bad\r\nInjected: yes"])), 'Unexpected invoice response fields were accepted');
+$wrong_type = $invoice_payload;
+$wrong_type['document']['contentType'] = 'text/html';
+assert_true(null === \KeyRaNo\Storefront\Invoice_Document_Response::decode($wrong_type), 'Non-PDF invoice content type was accepted');
+$bad_pdf = $invoice_payload;
+$bad_pdf['document']['body'] = base64_encode("%PDF-1.4\nmissing trailer");
+assert_true(null === \KeyRaNo\Storefront\Invoice_Document_Response::decode($bad_pdf), 'Malformed PDF framing was accepted');
+$oversized_pdf = $invoice_payload;
+$oversized_pdf['document']['body'] = str_repeat('A', 700001);
+assert_true(null === \KeyRaNo\Storefront\Invoice_Document_Response::decode($oversized_pdf), 'Oversized invoice envelope was accepted');
+assert_true(
+    \KeyRaNo\Storefront\Invoice_Document_Response::has_exact_request_fields(['_wpnonce' => 'nonce', 'action' => 'keyrano_invoice', 'order_id' => '20000000-0000-4000-8000-000000000001']),
+    'Exact invoice action fields were rejected'
+);
+assert_true(
+    ! \KeyRaNo\Storefront\Invoice_Document_Response::has_exact_request_fields(['_wpnonce' => 'nonce', 'action' => 'keyrano_invoice', 'invoiceId' => '../private', 'order_id' => '20000000-0000-4000-8000-000000000001']),
+    'Unexpected invoice authority fields were accepted'
+);
+$invoice_headers = \KeyRaNo\Storefront\Invoice_Document_Response::headers(strlen($pdf));
+assert_true('attachment; filename="keyrano-rechnung.pdf"' === ($invoice_headers['Content-Disposition'] ?? null), 'Invoice filename is not fixed and safe');
+assert_true(false !== strpos((string) ($invoice_headers['Cache-Control'] ?? ''), 'no-store'), 'Invoice response is cacheable');
 $gateways = \KeyRaNo\Storefront\Checkout_Registration_Loader::gateways([]);
 assert_true(3 === count($gateways), 'Expected three explicit synthetic checkout outcomes');
 $success_gateway = new \KeyRaNo\Storefront\Checkout_Gateway_Success();

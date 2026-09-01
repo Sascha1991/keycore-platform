@@ -202,10 +202,8 @@
       "expectedResult": "Customer A receives only the eligible invoice; customer B is denied and sensitive delivery material is absent.",
       "validatedRule": "Invoice access requires exact ownership and invoices never carry key-delivery authority.",
       "automatedEvidence": ["EVIDENCE-04"],
-      "uiReadiness": "PARTIALLY_EXECUTABLE",
-      "reason": "Owner-filtered invoice availability and reference metadata are rendered, but no authorized invoice document provider or download exists.",
-      "targetDependency": "PHASE_12_INVOICE_TRANSPORT",
-      "humanActionRequired": "Execute with synthetic invoice content after account integration exists.",
+      "uiReadiness": "EXECUTABLE_NOW",
+      "humanActionRequired": "Execute the owner, cross-owner and anonymous synthetic invoice procedure and capture only redacted safe evidence.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {
@@ -303,7 +301,7 @@
       "validatedRule": "The composed customer journey satisfies critical business and security rules without production effects.",
       "automatedEvidence": ["EVIDENCE-01", "EVIDENCE-02", "EVIDENCE-03", "EVIDENCE-04", "EVIDENCE-05"],
       "uiReadiness": "PARTIALLY_EXECUTABLE",
-      "reason": "Catalog, synthetic checkout/order creation, login, account, Guest Claim and reveal are composed, but claim human evidence, composed fulfillment and full invoice delivery remain outstanding.",
+      "reason": "Catalog, synthetic registered checkout, account, Guest Claim, reveal and invoice transport are composed, but remaining procurement, fulfillment and other required journeys are incomplete.",
       "targetDependency": "PHASE_12_END_TO_END_STOREFRONT_INTEGRATION",
       "humanActionRequired": "Execute last, after all required staging transports and prior scenario blockers are resolved.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result and separate human approval artifact"
