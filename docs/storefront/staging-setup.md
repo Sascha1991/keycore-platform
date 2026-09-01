@@ -48,6 +48,10 @@ this isolated synthetic storefront so anonymous UAT reaches the actual shop.
 The persisted WooCommerce account page is idempotently titled `Mein Konto`
 while its stable `/my-account/` slug remains unchanged. A non-clean database
 with conflicting IDs fails instead of silently changing identity authority.
+The same bootstrap creates or preserves the editable Help, Legal and footer
+content described in `docs/storefront/help-legal-content.md`. Repeated runs do
+not duplicate pages and do not replace manually edited page or occupied footer
+content.
 
 Passwords are supplied from the ignored environment file. No credentials are
 committed or printed by the documented commands.

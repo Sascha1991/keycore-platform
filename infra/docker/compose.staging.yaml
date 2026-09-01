@@ -212,10 +212,12 @@ services:
         wp option update page_on_front "$$(wp option get woocommerce_shop_page_id --path=/var/www/html)" --path=/var/www/html;
         wp transient delete keyrano_catalog_synced --path=/var/www/html || true;
         wp eval '(new KeyRaNo\Storefront\Publisher(new KeyRaNo\Storefront\Bridge_Client()))->sync();' --path=/var/www/html;
+        wp eval-file /opt/keyrano-bootstrap/keyrano-content-bootstrap.php --path=/var/www/html;
         wp rewrite flush --hard --path=/var/www/html
     volumes:
       - wordpress-data:/var/www/html
       - ../../apps/wordpress/keycore-platform:/var/www/html/wp-content/plugins/keycore-platform:ro
+      - ../wordpress/keyrano-content-bootstrap.php:/opt/keyrano-bootstrap/keyrano-content-bootstrap.php:ro
 
 volumes:
   wordpress-data:

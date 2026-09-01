@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added idempotent native WordPress Help, Legal and three-column footer content
+  for staging. Existing manual page and Shop-footer content is preserved, verified
+  WooCommerce category links are corrected, unsupported Contact/activation/legal
+  workflows remain explicit placeholders, and no checkout, account, Invoice or
+  Product Key security behavior changes.
+
 - Normalized Invoice Transport onto the PR #48 squash-merged Account Transport,
   preserving both secure paths and recording the product owner's UAT-015
   `PASS`. UAT-018 remains `PASS`; KS-11-07, `SECURITY-READINESS` and production
