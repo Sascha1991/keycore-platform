@@ -254,14 +254,41 @@ function keyrano_ensure_shop_categories(): void
     }
 }
 
-function keyrano_navigation_column(string $heading, array $links): array
+function keyrano_page_url(string $slug): string
+{
+    $page = get_page_by_path($slug, OBJECT, 'page');
+    if (! $page instanceof WP_Post) {
+        throw new RuntimeException('Required KeyRaNo page is missing: ' . $slug);
+    }
+    $url = get_permalink($page);
+    if (! is_string($url) || $url === '') {
+        throw new RuntimeException('Could not resolve KeyRaNo page URL: ' . $slug);
+    }
+    return $url;
+}
+
+function keyrano_category_url(string $slug): string
+{
+    $term = get_term_by('slug', $slug, 'product_cat');
+    if (! $term instanceof WP_Term) {
+        throw new RuntimeException('Shop category is missing: ' . $slug);
+    }
+    $url = get_term_link($term);
+    if (is_wp_error($url)) {
+        throw new RuntimeException('Could not resolve shop category URL: ' . $slug);
+    }
+    return $url;
+}
+
+function keyrano_navigation_column(string $heading, array $links, string $link_type = 'page'): array
 {
     $navigation = '';
-    foreach ($links as $label => $path) {
+    foreach ($links as $label => $slug) {
+        $url = $link_type === 'category' ? keyrano_category_url($slug) : keyrano_page_url($slug);
         $attrs = wp_json_encode([
             'label' => $label,
             'type' => 'custom',
-            'url' => esc_url(home_url($path)),
+            'url' => esc_url($url),
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $navigation .= '<!-- wp:navigation-link ' . $attrs . ' /-->';
     }
@@ -273,12 +300,8 @@ function keyrano_navigation_column(string $heading, array $links): array
 
 function keyrano_fresh_footer(): string
 {
-    $shop = [];
-    foreach (keyrano_shop_categories() as $label => $slug) {
-        $shop[$label] = '/product-category/' . $slug . '/';
-    }
     $columns = [
-        keyrano_navigation_column('Shop', $shop),
+        keyrano_navigation_column('Shop', keyrano_shop_categories(), 'category'),
         keyrano_navigation_column('Hilfe &amp; Service', keyrano_help_links()),
         keyrano_navigation_column('Rechtliches', keyrano_legal_links()),
     ];
@@ -291,10 +314,10 @@ function keyrano_fresh_footer(): string
 function keyrano_help_links(): array
 {
     return [
-        'Häufige Fragen' => '/haeufige-fragen/',
-        'Kontakt' => '/kontakt/',
-        'Key aktivieren' => '/key-aktivieren/',
-        'Bestellstatus' => '/bestellstatus/',
+        'Häufige Fragen' => 'haeufige-fragen',
+        'Kontakt' => 'kontakt',
+        'Key aktivieren' => 'key-aktivieren',
+        'Bestellstatus' => 'bestellstatus',
     ];
 }
 
@@ -302,10 +325,10 @@ function keyrano_help_links(): array
 function keyrano_legal_links(): array
 {
     return [
-        'Impressum' => '/impressum/',
-        'Datenschutz' => '/datenschutz/',
-        'AGB' => '/agb/',
-        'Widerrufsbelehrung' => '/widerrufsbelehrung/',
+        'Impressum' => 'impressum',
+        'Datenschutz' => 'datenschutz',
+        'AGB' => 'agb',
+        'Widerrufsbelehrung' => 'widerrufsbelehrung',
     ];
 }
 
@@ -333,6 +356,30 @@ function keyrano_column_is_empty(array $column): bool
     return keyrano_block_text($column) === '' && empty($column['innerBlocks']);
 }
 
+function keyrano_add_block_class(array &$block, string $class): void
+{
+    $classes = preg_split('/\s+/', trim((string) ($block['attrs']['className'] ?? ''))) ?: [];
+    if (! in_array($class, $classes, true)) {
+        $classes[] = $class;
+        $block['attrs']['className'] = trim(implode(' ', $classes));
+    }
+
+    if (isset($block['innerContent']) && is_array($block['innerContent'])) {
+        foreach ($block['innerContent'] as &$content) {
+            if (! is_string($content) || ! str_contains($content, 'wp-block-columns')) {
+                continue;
+            }
+            $processor = new WP_HTML_Tag_Processor($content);
+            if ($processor->next_tag(['tag_name' => 'DIV', 'class_name' => 'wp-block-columns'])) {
+                $processor->add_class($class);
+                $content = $processor->get_updated_html();
+            }
+            break;
+        }
+        unset($content);
+    }
+}
+
 function keyrano_rewrite_shop_links(array &$block): void
 {
     if (($block['blockName'] ?? '') === 'core/navigation-link') {
@@ -340,14 +387,14 @@ function keyrano_rewrite_shop_links(array &$block): void
         $categories = keyrano_shop_categories();
         if (isset($categories[$label])) {
             $slug = $categories[$label];
-            if (! term_exists($slug, 'product_cat')) {
-                throw new RuntimeException('Shop category is missing: ' . $slug);
-            }
-            $block['attrs']['url'] = esc_url(home_url('/product-category/' . $slug . '/'));
+            $block['attrs']['url'] = esc_url(keyrano_category_url($slug));
         }
     }
-    foreach (($block['innerBlocks'] ?? []) as &$inner) {
-        keyrano_rewrite_shop_links($inner);
+    if (isset($block['innerBlocks']) && is_array($block['innerBlocks'])) {
+        foreach ($block['innerBlocks'] as &$inner) {
+            keyrano_rewrite_shop_links($inner);
+        }
+        unset($inner);
     }
 }
 
@@ -380,45 +427,38 @@ function keyrano_enhance_columns(array &$block): bool
                 }
                 $columns[$target] = keyrano_navigation_column('Rechtliches', keyrano_legal_links());
             }
-            $classes = preg_split('/\s+/', trim((string) ($block['attrs']['className'] ?? ''))) ?: [];
-            if (! in_array('keyrano-footer-columns', $classes, true)) {
-                $classes[] = 'keyrano-footer-columns';
-            }
-            $block['attrs']['className'] = trim(implode(' ', $classes));
+            keyrano_add_block_class($block, 'keyrano-footer-columns');
             return true;
         }
     }
 
-    foreach (($block['innerBlocks'] ?? []) as &$inner) {
-        if (keyrano_enhance_columns($inner)) {
-            return true;
+    if (isset($block['innerBlocks']) && is_array($block['innerBlocks'])) {
+        foreach ($block['innerBlocks'] as &$inner) {
+            if (keyrano_enhance_columns($inner)) {
+                return true;
+            }
         }
+        unset($inner);
     }
     return false;
 }
 
-function keyrano_footer_post(): ?WP_Post
+function keyrano_active_footer(): ?WP_Block_Template
 {
-    $theme = get_stylesheet();
-    $posts = get_posts([
-        'name' => 'footer',
-        'numberposts' => 20,
-        'post_status' => ['publish', 'draft'],
-        'post_type' => 'wp_template_part',
-        'suppress_filters' => false,
-    ]);
-    foreach ($posts as $post) {
-        $themes = wp_get_object_terms($post->ID, 'wp_theme', ['fields' => 'slugs']);
-        if (! is_wp_error($themes) && in_array($theme, $themes, true)) {
-            return $post;
-        }
-    }
-    return null;
+    $template = get_block_template(get_stylesheet() . '//footer', 'wp_template_part');
+    return $template instanceof WP_Block_Template ? $template : null;
 }
 
 function keyrano_ensure_footer(): string
 {
-    $post = keyrano_footer_post();
+    $footer = keyrano_active_footer();
+    $footer_post_id = $footer instanceof WP_Block_Template && is_numeric($footer->wp_id)
+        ? (int) $footer->wp_id
+        : 0;
+    $post = $footer_post_id > 0
+        ? get_post($footer_post_id)
+        : null;
+    $created = false;
     if (! $post instanceof WP_Post) {
         $post_id = wp_insert_post([
             'post_content' => keyrano_fresh_footer(),
@@ -432,7 +472,11 @@ function keyrano_ensure_footer(): string
         }
         wp_set_object_terms((int) $post_id, get_stylesheet(), 'wp_theme');
         wp_set_object_terms((int) $post_id, 'footer', 'wp_template_part_area');
-        return 'created';
+        $post = get_post((int) $post_id);
+        if (! $post instanceof WP_Post) {
+            throw new RuntimeException('Could not load the editable KeyRaNo footer.');
+        }
+        $created = true;
     }
 
     $blocks = parse_blocks((string) $post->post_content);
@@ -452,9 +496,9 @@ function keyrano_ensure_footer(): string
         if (is_wp_error($updated)) {
             throw new RuntimeException('Could not update the editable KeyRaNo footer.');
         }
-        return 'updated';
+        return $created ? 'created' : 'updated';
     }
-    return 'unchanged';
+    return $created ? 'created' : 'unchanged';
 }
 
 keyrano_ensure_shop_categories();

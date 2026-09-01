@@ -20,10 +20,17 @@ version. A later bootstrap may update untouched managed content, but it preserve
 any page whose editor content no longer matches that hash. An already existing
 manual FAQ page has no managed hash and is therefore reused without replacement.
 
-The footer updater parses native WordPress blocks. It keeps the recognized Shop
-column, fills only empty columns and stops with an error instead of overwriting
-unrecognized manual content. A clean WordPress volume receives the same native,
-Site-Editor-compatible footer structure.
+The footer updater asks WordPress for the canonical active `footer` template
+part, then parses and mutates that post's native blocks by reference. It keeps
+the recognized Shop column, fills only empty columns and stops with an error
+instead of overwriting unrecognized manual content. Logo/banner, copyright and
+other blocks outside those empty columns remain untouched. A clean WordPress
+volume receives the same native, Site-Editor-compatible footer structure.
+
+Page destinations come from the existing page objects through `get_permalink`;
+Shop destinations come from the verified `product_cat` terms through
+`get_term_link`. The bootstrap therefore does not embed a staging hostname or
+assume a WordPress path configuration.
 
 ## Safety Boundaries
 

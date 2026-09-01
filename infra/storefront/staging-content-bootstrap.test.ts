@@ -49,9 +49,41 @@ describe("staging help, legal and footer content bootstrap", () => {
       ["Abonnements", "abonnements"],
     ]) {
       expect(bootstrap).toContain(`'${label}' => '${slug}'`);
-      expect(bootstrap).toContain("'/product-category/' . $slug . '/'");
     }
+    expect(bootstrap).toContain("get_term_by('slug', $slug, 'product_cat')");
+    expect(bootstrap).toContain("get_term_link($term)");
     expect(bootstrap).toContain("keyrano_rewrite_shop_links");
+  });
+
+  it("updates the canonical active footer instead of an arbitrary footer post", () => {
+    expect(bootstrap).toContain(
+      "get_block_template(get_stylesheet() . '//footer', 'wp_template_part')",
+    );
+    expect(bootstrap).toContain("$footer_post_id > 0");
+    expect(bootstrap).toContain("get_post($footer_post_id)");
+    expect(bootstrap).not.toContain("'numberposts' => 20");
+    expect(bootstrap).not.toContain(
+      "wp_get_object_terms($post->ID, 'wp_theme'",
+    );
+  });
+
+  it("mutates nested footer blocks by reference instead of an expression copy", () => {
+    expect(bootstrap).toContain("foreach ($block['innerBlocks'] as &$inner)");
+    expect(bootstrap).not.toContain(
+      "foreach (($block['innerBlocks'] ?? []) as &$inner)",
+    );
+  });
+
+  it("keeps the responsive class in block attributes and rendered wrapper markup", () => {
+    expect(bootstrap).toContain("keyrano_add_block_class");
+    expect(bootstrap).toContain("new WP_HTML_Tag_Processor($content)");
+    expect(bootstrap).toContain("$processor->add_class($class)");
+  });
+
+  it("resolves footer destinations from WordPress objects without a staging origin", () => {
+    expect(bootstrap).toContain("get_page_by_path($slug, OBJECT, 'page')");
+    expect(bootstrap).toContain("get_permalink($page)");
+    expect(bootstrap).not.toContain("staging.keyrano.de");
   });
 
   it("adds only the two missing footer groups and refuses to overwrite occupied manual columns", () => {
@@ -62,6 +94,8 @@ describe("staging help, legal and footer content bootstrap", () => {
     expect(bootstrap).toContain(
       "Footer has no empty column for Rechtliches. Manual content was preserved.",
     );
+    expect(bootstrap).toContain("parse_blocks((string) $post->post_content)");
+    expect(bootstrap).toContain("wp_update_post(['ID' => $post->ID");
     for (const label of [
       "Häufige Fragen",
       "Kontakt",
