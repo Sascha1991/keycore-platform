@@ -15,7 +15,7 @@
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="keyrano-invoice-form">
             <input type="hidden" name="action" value="keyrano_invoice">
             <input type="hidden" name="order_id" value="<?php echo esc_attr((string) $order['orderId']); ?>">
-            <?php wp_nonce_field('keyrano_invoice_' . (string) $order['orderId'], '_wpnonce', true, false); ?>
+            <?php wp_nonce_field('keyrano_invoice_' . (string) $order['orderId'], '_wpnonce', false, true); ?>
             <button type="submit" class="button"><?php echo esc_html__('Rechnung herunterladen', 'keycore-platform'); ?></button>
         </form>
     <?php endif; ?>

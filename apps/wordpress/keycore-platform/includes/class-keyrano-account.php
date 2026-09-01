@@ -99,9 +99,6 @@ final class Account
             auth_redirect();
             exit;
         }
-        if (! Invoice_Document_Response::has_exact_request_fields($_POST)) {
-            $this->render_invoice_failure(400);
-        }
         $order_id = isset($_POST['order_id']) ? sanitize_text_field(wp_unslash((string) $_POST['order_id'])) : '';
         $nonce = isset($_POST['_wpnonce']) ? sanitize_text_field(wp_unslash((string) $_POST['_wpnonce'])) : '';
         if (! wp_verify_nonce($nonce, 'keyrano_reveal_' . $order_id) || ! $this->same_origin()) {
@@ -122,6 +119,9 @@ final class Account
         if (! is_user_logged_in()) {
             auth_redirect();
             exit;
+        }
+        if (! Invoice_Document_Response::has_exact_request_fields($_POST)) {
+            $this->render_invoice_failure(400);
         }
         $order_id = isset($_POST['order_id']) ? sanitize_text_field(wp_unslash((string) $_POST['order_id'])) : '';
         $nonce = isset($_POST['_wpnonce']) ? sanitize_text_field(wp_unslash((string) $_POST['_wpnonce'])) : '';
