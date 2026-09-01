@@ -152,7 +152,24 @@ function render_order_detail(array $fixture): string
     return (string) ob_get_clean();
 }
 
-foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'woocommerce_account_kauf-hinzufuegen_endpoint', 'admin_post_keyrano_reveal', 'admin_post_keyrano_claim_purchase', 'admin_post_keyrano_invoice', 'admin_post_nopriv_keyrano_invoice', 'woocommerce_blocks_loaded'] as $hook) {
+/** @param array<int, array<string, mixed>> $fixtures */
+function render_orders(array $fixtures, bool $is_unavailable = false): string
+{
+    $orders = $fixtures;
+    $unavailable = $is_unavailable;
+    ob_start();
+    require dirname(__DIR__) . '/templates/account-orders.php';
+    return (string) ob_get_clean();
+}
+
+function render_template(string $template): string
+{
+    ob_start();
+    require dirname(__DIR__) . '/templates/' . $template;
+    return (string) ob_get_clean();
+}
+
+foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'woocommerce_account_kauf-hinzufuegen_endpoint', 'woocommerce_before_edit_account_form', 'woocommerce_edit_account_form_start', 'admin_post_keyrano_reveal', 'admin_post_keyrano_claim_purchase', 'admin_post_keyrano_invoice', 'admin_post_nopriv_keyrano_invoice', 'woocommerce_blocks_loaded'] as $hook) {
     assert_true(in_array($hook, $GLOBALS['keyrano_test_actions'], true), 'Missing hook: ' . $hook);
 }
 assert_true(in_array('woocommerce_account_menu_items', $GLOBALS['keyrano_test_filters'], true), 'Missing account menu filter');
@@ -166,10 +183,57 @@ assert_true(false !== strpos($claim_form, 'keyrano_claim_purchase'), 'Guest clai
 assert_true(false === stripos($claim_form, 'Bestellnummer'), 'Guest claim form exposes an unnecessary order identifier');
 assert_true('Bezahlt' === \KeyRaNo\Storefront\Plugin::status_label('CAPTURED'), 'Captured status was not localized');
 assert_true('In Bearbeitung' === \KeyRaNo\Storefront\Plugin::status_label('FULFILLMENT_PENDING'), 'Fulfillment status was not presented safely');
+assert_true('Ausstehend' === \KeyRaNo\Storefront\Plugin::status_label('PENDING'), 'Pending order status was not localized');
+assert_true('Abgeschlossen' === \KeyRaNo\Storefront\Plugin::status_label('COMPLETED'), 'Completed order status was not localized');
+assert_true('Aktion erforderlich' === \KeyRaNo\Storefront\Plugin::status_label('ACTION_REQUIRED'), 'Action-required order status was not localized');
+assert_true('Storniert' === \KeyRaNo\Storefront\Plugin::status_label('CANCELLED'), 'Cancelled order status was not localized');
+assert_true('Erstattet' === \KeyRaNo\Storefront\Plugin::status_label('REFUNDED'), 'Refunded order status was not localized');
 assert_true('Ausstehend' === \KeyRaNo\Storefront\Plugin::invoice_status_label('PENDING'), 'Pending invoice status was not localized');
+assert_true('Fehlgeschlagen' === \KeyRaNo\Storefront\Plugin::invoice_status_label('FAILED'), 'Failed invoice status was not localized');
+assert_true('danger' === \KeyRaNo\Storefront\Plugin::status_tone('FAILED'), 'Failed status did not receive a safe warning tone');
 assert_true('18,99 €' === \KeyRaNo\Storefront\Plugin::money_label('1899', 'EUR'), 'Minor-unit total was not formatted for the German storefront');
 assert_true('Nicht verfügbar' === \KeyRaNo\Storefront\Plugin::money_label('invalid', 'EUR'), 'Malformed amount did not fail closed in presentation');
 assert_true('In Bearbeitung' === \KeyRaNo\Storefront\Plugin::status_label('UNKNOWN_INTERNAL_STATE'), 'Unknown status did not use a safe customer label');
+$orders_html = render_orders([
+    [
+        'createdAt' => '2026-08-30T12:00:00.000Z',
+        'currency' => 'EUR',
+        'fulfillmentAvailable' => true,
+        'orderId' => '20000000-0000-4000-8000-000000000001',
+        'productKey' => 'TEST-OVERVIEW-MUST-NOT-LEAK',
+        'productTitle' => 'Neonpfad: Berlin',
+        'status' => 'READY',
+        'totalMinor' => '1299',
+    ],
+    [
+        'createdAt' => '2026-08-31T12:00:00.000Z',
+        'currency' => 'EUR',
+        'fulfillmentAvailable' => false,
+        'orderId' => '20000000-0000-4000-8000-000000000002',
+        'productTitle' => 'Arena Eleven',
+        'status' => 'FULFILLMENT_PENDING',
+        'totalMinor' => '2199',
+    ],
+]);
+assert_true(false !== strpos($orders_html, 'Alle deine Käufe auf einen Blick.'), 'Purchase overview heading is absent');
+assert_true(false !== strpos($orders_html, '12,99 €'), 'Purchase total is absent');
+assert_true(false !== strpos($orders_html, 'Bereit'), 'Ready purchase status is absent');
+assert_true(false !== strpos($orders_html, 'In Bearbeitung'), 'Pending purchase status is absent');
+assert_true(false !== strpos($orders_html, 'Key verfügbar'), 'Safe key availability badge is absent');
+assert_true(false !== strpos($orders_html, 'Details ansehen'), 'Purchase detail action is absent');
+assert_true(false === strpos($orders_html, 'TEST-OVERVIEW-MUST-NOT-LEAK'), 'Product Key leaked into purchase overview HTML');
+$empty_orders_html = render_orders([]);
+assert_true(false !== strpos($empty_orders_html, 'Sobald du etwas kaufst, erscheint es hier.'), 'Purchase empty state is incomplete');
+$unavailable_orders_html = render_orders([], true);
+assert_true(false !== strpos($unavailable_orders_html, 'Bitte versuche es später erneut.'), 'Purchase unavailable state is incomplete');
+$claim_html = render_template('account-claim.php');
+assert_true(false !== strpos($claim_html, '<form'), 'Active claim form is absent');
+assert_true(false !== strpos($claim_html, 'type="password"'), 'Claim code is not protected as a password input');
+assert_true(false !== strpos($claim_html, 'keyrano_claim_purchase'), 'Claim form is not bound to the secure action');
+assert_true(false === strpos($claim_html, 'disabled'), 'Active claim controls remain disabled');
+assert_true(false === stripos($claim_html, 'Bestellnummer'), 'Claim form requests an unnecessary order identifier');
+$details_header_html = render_template('account-details-header.php');
+assert_true(false !== strpos($details_header_html, 'Verwalte deine persönlichen Daten und deinen Login.'), 'Account details presentation header is absent');
 $base_order_detail = [
     'createdAt' => '2026-08-30T12:00:00.000Z',
     'currency' => 'EUR',

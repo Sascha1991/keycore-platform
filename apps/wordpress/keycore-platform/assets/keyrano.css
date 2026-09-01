@@ -2,25 +2,20 @@
 .keyrano-product-facts div { background: var(--wp--preset--color--base-2, #f7f8fa); min-width: 0; padding: 12px; }
 .keyrano-product-facts dt { opacity: 0.75; }
 .keyrano-product-facts dd { font-weight: 700; margin: 4px 0 0; overflow-wrap: anywhere; }
-.keyrano-account { max-width: 900px; }
-.keyrano-purchases { border-top: 1px solid currentColor; }
-.keyrano-purchase { align-items: center; border-bottom: 1px solid currentColor; display: grid; gap: 16px; grid-template-columns: 1fr auto auto; padding: 18px 0; }
-.keyrano-purchase h3, .keyrano-purchase p { margin: 0; }
-.keyrano-purchase__date { opacity: 0.75; }
-.keyrano-status { background: var(--wp--preset--color--base-2, #e7f5f1); border-radius: 4px; padding: 6px 9px; }
-.keyrano-state { background: var(--wp--preset--color--base-2, #f7f8fa); border-left: 4px solid currentColor; padding: 16px; }
-.keyrano-state--error { font-weight: 700; }
+.keyrano-account { max-width: 980px; width: 100%; }
 .keyrano-reveal-page { background: var(--wp--preset--color--base, #f7f8fa); color: var(--wp--preset--color--contrast, #17202a); }
 .keyrano-reveal { background: var(--wp--preset--color--base, #fff); border: 1px solid currentColor; margin: 8vh auto; max-width: 680px; padding: 32px; }
 .keyrano-revealed-value { background: var(--wp--preset--color--contrast, #111820); color: var(--wp--preset--color--base, #fff); display: block; margin: 18px 0; overflow-wrap: anywhere; padding: 18px; }
 
-body.woocommerce-account:has(.keyrano-order-detail),
-body.woocommerce-account:has(.keyrano-order-detail) .wp-site-blocks,
-body.woocommerce-account:has(.keyrano-order-detail) main {
+body.woocommerce-account:has(.keyrano-account-surface),
+body.woocommerce-account:has(.keyrano-account-surface) .wp-site-blocks,
+body.woocommerce-account:has(.keyrano-account-surface) main {
   background: #0c0b12;
   color: #f7f5ff;
 }
-body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navigation ul {
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-MyAccount-content { min-width: 0; }
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-MyAccount-navigation ul {
   background: #15131c;
   border: 1px solid #2d2938;
   border-radius: 16px;
@@ -29,26 +24,26 @@ body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navig
   overflow: hidden;
   padding: 8px;
 }
-body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navigation a {
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-MyAccount-navigation a {
   border-radius: 8px;
   color: #b9b5c5;
   display: block;
+  overflow-wrap: anywhere;
   padding: 11px 13px;
   text-decoration: none;
 }
-body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navigation a:hover,
-body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navigation .is-active a {
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-MyAccount-navigation a:hover,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-MyAccount-navigation a:focus-visible,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-MyAccount-navigation .is-active a {
   background: #24202f;
   color: #f7f5ff;
 }
-body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navigation .is-active a {
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-MyAccount-navigation .is-active a {
   box-shadow: inset 3px 0 #8b5cf6;
 }
-.keyrano-order-detail {
-  color: #f7f5ff;
-  max-width: 980px;
-  width: 100%;
-}
+.keyrano-account-surface,
+.keyrano-account-surface * { box-sizing: border-box; }
+.keyrano-account-surface { color: #f7f5ff; }
 .keyrano-breadcrumbs {
   align-items: center;
   color: #8f899d;
@@ -60,8 +55,17 @@ body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navig
   overflow-wrap: anywhere;
 }
 .keyrano-breadcrumbs a { color: #b9b5c5; text-decoration: none; }
-.keyrano-breadcrumbs a:hover { color: #f7f5ff; }
-.keyrano-order-detail__header { margin-bottom: 26px; }
+.keyrano-breadcrumbs a:hover,
+.keyrano-breadcrumbs a:focus-visible { color: #fff; }
+.keyrano-account-page-header,
+.keyrano-order-detail__header { margin-bottom: 28px; }
+.keyrano-account-page-header--action {
+  align-items: end;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+}
+.keyrano-account-page-header .keyrano-kicker,
 .keyrano-order-detail__header .keyrano-kicker,
 .keyrano-order-action__label {
   color: #a78bfa;
@@ -71,6 +75,7 @@ body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navig
   margin: 0 0 8px;
   text-transform: uppercase;
 }
+.keyrano-account-page-header h2,
 .keyrano-order-detail__header h2 {
   color: #fff;
   font-size: 42px;
@@ -78,6 +83,179 @@ body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navig
   margin: 0;
   overflow-wrap: anywhere;
 }
+.keyrano-account-page-header__intro {
+  color: #aaa5b5;
+  line-height: 1.6;
+  margin: 10px 0 0;
+}
+.keyrano-button,
+.keyrano-action-form .button,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm button[type="submit"] {
+  background: #7c3aed;
+  border: 1px solid #8b5cf6;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 700;
+  min-height: 44px;
+  padding: 10px 18px;
+  text-align: center;
+  text-decoration: none;
+}
+.keyrano-button:hover,
+.keyrano-button:focus-visible,
+.keyrano-action-form .button:hover,
+.keyrano-action-form .button:focus-visible,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm button[type="submit"]:hover,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm button[type="submit"]:focus-visible {
+  background: #8b5cf6;
+  border-color: #a78bfa;
+  color: #fff;
+  outline: 2px solid #c4b5fd;
+  outline-offset: 2px;
+}
+.keyrano-button[disabled] {
+  background: #332d40;
+  border-color: #443c55;
+  color: #898292;
+  cursor: not-allowed;
+}
+.keyrano-state {
+  background: #15131c;
+  border: 1px solid #2d2938;
+  border-left: 4px solid #8b5cf6;
+  border-radius: 12px;
+  color: #c9c3d6;
+  padding: 20px;
+}
+.keyrano-state strong { color: #fff; display: block; }
+.keyrano-state p { margin: 8px 0 0; }
+.keyrano-state--error { border-left-color: #ef6a73; }
+.keyrano-state--error strong { color: #ffb4bb; }
+.keyrano-state--info { margin-top: 22px; }
+.keyrano-empty-state { padding: 30px; }
+.keyrano-purchases { display: grid; gap: 16px; }
+.keyrano-purchase {
+  align-items: center;
+  background: #15131c;
+  border: 1px solid #2d2938;
+  border-radius: 16px;
+  display: grid;
+  gap: 22px;
+  grid-template-columns: minmax(200px, 1.25fr) minmax(250px, 1fr) auto;
+  padding: 24px;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+.keyrano-purchase:hover { border-color: #493f5d; transform: translateY(-1px); }
+.keyrano-purchase h3 { color: #fff; font-size: 21px; margin: 0; overflow-wrap: anywhere; }
+.keyrano-purchase__date { color: #8f899d; margin: 7px 0 0; }
+.keyrano-purchase__meta {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+.keyrano-purchase__meta div { min-width: 0; }
+.keyrano-purchase__meta dt { color: #8f899d; font-size: 13px; margin: 0 0 8px; }
+.keyrano-purchase__meta dd { color: #fff; font-weight: 700; margin: 0; overflow-wrap: anywhere; }
+.keyrano-purchase__availability { grid-column: 2; margin: -8px 0 0; }
+.keyrano-purchase__button { grid-column: 3; grid-row: 1 / span 2; white-space: nowrap; }
+.keyrano-badge {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  max-width: 100%;
+  padding: 6px 9px;
+}
+.keyrano-badge--pending { background: #2c2418; border-color: #5d4822; color: #f2c76d; }
+.keyrano-badge--positive { background: #182923; border-color: #315344; color: #77d6a6; }
+.keyrano-badge--neutral { background: #24202f; border-color: #3a3449; color: #c9c3d6; }
+.keyrano-badge--danger { background: #301d22; border-color: #66333d; color: #ff9da7; }
+.keyrano-form-card,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm {
+  background: #15131c;
+  border: 1px solid #2d2938;
+  border-radius: 16px;
+  color: #c9c3d6;
+  max-width: 760px;
+  padding: 30px;
+}
+.keyrano-form-card h3 { color: #fff; font-size: 23px; margin: 0 0 10px; }
+.keyrano-form-card > p { color: #aaa5b5; line-height: 1.6; }
+.keyrano-field { margin-top: 24px; }
+.keyrano-field label,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm label,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm legend {
+  color: #f7f5ff;
+  display: block;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.keyrano-field input,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm input[type="text"],
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm input[type="email"],
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm input[type="password"] {
+  background: #0f0e15;
+  border: 1px solid #3a3449;
+  border-radius: 8px;
+  color: #fff;
+  min-height: 48px;
+  padding: 11px 13px;
+  width: 100%;
+}
+.keyrano-field input:focus,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm input:focus {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgb(139 92 246 / 24%);
+  outline: 0;
+}
+.keyrano-field input[disabled] { color: #777180; opacity: 1; }
+.keyrano-field-help,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm em {
+  color: #8f899d;
+  display: block;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.keyrano-form-card > .keyrano-button { margin-top: 8px; }
+.keyrano-account-details-header { max-width: 980px; }
+.keyrano-account-form-heading {
+  color: #fff;
+  font-size: 23px;
+  font-weight: 700;
+  margin: 0 0 20px;
+}
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm .form-row-first,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm .form-row-last { width: calc(50% - 8px); }
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm fieldset {
+  border: 0;
+  border-top: 1px solid #2d2938;
+  clear: both;
+  margin: 28px 0 0;
+  padding: 28px 0 0;
+}
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm fieldset legend {
+  color: #fff;
+  font-size: 23px;
+  padding: 0 0 18px;
+}
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm .password-input { width: 100%; }
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm .show-password-input { color: #a78bfa; }
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-error,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-message,
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-info {
+  background: #15131c;
+  border: 1px solid #2d2938;
+  border-left: 4px solid #8b5cf6;
+  border-radius: 12px;
+  color: #f7f5ff;
+}
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-error { border-left-color: #ef6a73; }
+body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-message { border-left-color: #54c792; }
 .keyrano-order-summary {
   background: #15131c;
   border: 1px solid #2d2938;
@@ -89,31 +267,8 @@ body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navig
 }
 .keyrano-order-summary > div { min-width: 0; padding: 22px; }
 .keyrano-order-summary > div + div { border-left: 1px solid #2d2938; }
-.keyrano-order-summary dt {
-  color: #8f899d;
-  font-size: 13px;
-  margin: 0 0 10px;
-}
-.keyrano-order-summary dd {
-  color: #fff;
-  font-size: 17px;
-  font-weight: 700;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.keyrano-badge {
-  align-items: center;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  display: inline-flex;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.2;
-  padding: 6px 9px;
-}
-.keyrano-badge--pending { background: #2c2418; border-color: #5d4822; color: #f2c76d; }
-.keyrano-badge--positive { background: #182923; border-color: #315344; color: #77d6a6; }
-.keyrano-badge--neutral { background: #24202f; border-color: #3a3449; color: #c9c3d6; }
+.keyrano-order-summary dt { color: #8f899d; font-size: 13px; margin: 0 0 10px; }
+.keyrano-order-summary dd { color: #fff; font-size: 17px; font-weight: 700; margin: 0; overflow-wrap: anywhere; }
 .keyrano-order-actions {
   background: #15131c;
   border: 1px solid #2d2938;
@@ -127,19 +282,11 @@ body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navig
 .keyrano-order-action h3 { color: #fff; font-size: 23px; margin: 0 0 10px; overflow-wrap: anywhere; }
 .keyrano-order-action p:not(.keyrano-order-action__label) { color: #aaa5b5; line-height: 1.6; margin: 0; }
 .keyrano-action-form { margin: 24px 0 0; }
-.keyrano-action-form .button {
-  background: #7c3aed;
-  border: 1px solid #8b5cf6;
-  border-radius: 8px;
-  color: #fff;
-  font-weight: 700;
-  min-height: 44px;
-  padding: 10px 18px;
-  text-decoration: none;
-}
-.keyrano-action-form .button:hover { background: #8b5cf6; border-color: #a78bfa; color: #fff; }
 
 @media (max-width: 960px) {
+  .keyrano-purchase { grid-template-columns: minmax(180px, 1fr) minmax(220px, 1fr); }
+  .keyrano-purchase__button { grid-column: 1 / -1; grid-row: auto; justify-self: start; }
+  .keyrano-purchase__availability { grid-column: 2; }
   .keyrano-order-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .keyrano-order-summary > div:nth-child(3) { border-left: 0; }
   .keyrano-order-summary > div:nth-child(n+3) { border-top: 1px solid #2d2938; }
@@ -147,14 +294,27 @@ body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navig
 
 @media (max-width: 720px) {
   .keyrano-product-facts { grid-template-columns: 1fr; }
-  .keyrano-purchase { align-items: start; grid-template-columns: 1fr; }
-  body.woocommerce-account:has(.keyrano-order-detail) .woocommerce-MyAccount-navigation ul {
+  body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-MyAccount-navigation ul {
     display: grid;
     gap: 4px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .keyrano-account-page-header--action { align-items: stretch; flex-direction: column; }
+  .keyrano-account-page-header h2,
   .keyrano-order-detail__header h2 { font-size: 34px; }
-  .keyrano-order-summary, .keyrano-order-actions { grid-template-columns: 1fr; }
+  .keyrano-account-page-header--action .keyrano-button { width: 100%; }
+  .keyrano-purchase { align-items: stretch; gap: 20px; grid-template-columns: 1fr; padding: 20px; }
+  .keyrano-purchase__meta { grid-template-columns: 1fr; }
+  .keyrano-purchase__availability,
+  .keyrano-purchase__button { grid-column: 1; width: 100%; }
+  .keyrano-form-card,
+  body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm { padding: 22px 18px; }
+  .keyrano-form-card > .keyrano-button,
+  body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm button[type="submit"] { width: 100%; }
+  body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm .form-row-first,
+  body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm .form-row-last { float: none; width: 100%; }
+  .keyrano-order-summary,
+  .keyrano-order-actions { grid-template-columns: 1fr; }
   .keyrano-order-summary > div { padding: 18px; }
   .keyrano-order-summary > div + div,
   .keyrano-order-summary > div:nth-child(3) { border-left: 0; border-top: 1px solid #2d2938; }

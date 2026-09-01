@@ -87,3 +87,58 @@ The mobile capture verifies a 390 px viewport without horizontal overflow. The
 pending fixture exposes neither an invoice-download nor a reveal action. Neither
 capture contains Product Key content, credentials, customer email, tokens or
 internal invoice identifiers.
+
+## Account Surface UI Follow-up
+
+`Meine Käufe`, `Kauf hinzufügen` and native WooCommerce `Kontodetails` now use
+the purchase-detail page's dark KeyRaNo account surface. Shared presentation
+values cover the background, cards, borders, 16 px radius, purple actions,
+status badges, typography, spacing, focus states and responsive breakpoints.
+The existing left account navigation is retained with a clear active state.
+
+The purchase overview renders the existing owner-filtered projection as wide
+cards with German dates, minor-unit totals, mapped customer-safe statuses and
+the existing detail route. `Key verfügbar` appears only when the existing list
+projection positively supplies `fulfillmentAvailable`; Product Key content is
+never rendered. Empty and backend-unavailable states use generic dark cards.
+A live local outage check returned only the generic unavailable message without
+technical details or identifiers.
+
+`Kauf hinzufügen` remains an explicitly unavailable, fail-closed shell because
+the secure Guest Claim browser integration is outside this branch. Its visual
+controls are disabled and it has no form, request action, Claim Code, nonce,
+HMAC or client-side authority. No unsupported claim behavior was fabricated.
+
+`Kontodetails` keeps WooCommerce's original POST form, nonce, validation,
+password fields, show/hide controls and save handler. Plugin hooks add only the
+page and form section headings; CSS presents the native controls as a dark card.
+Desktop places first and last name side by side, while mobile stacks every field
+and uses a full-width save action.
+
+Safe synthetic staging screenshots:
+
+- `docs/screenshots/phase-12-invoice-transport/account-purchases-desktop.png`
+- `docs/screenshots/phase-12-invoice-transport/account-purchases-mobile.png`
+- `docs/screenshots/phase-12-invoice-transport/account-add-purchase-desktop.png`
+- `docs/screenshots/phase-12-invoice-transport/account-add-purchase-mobile.png`
+- `docs/screenshots/phase-12-invoice-transport/account-details-desktop.png`
+- `docs/screenshots/phase-12-invoice-transport/account-details-mobile.png`
+
+Desktop staging checks used a 1440 px viewport; mobile checks used 390 px. All
+three pages had equal document client and scroll widths, so no horizontal
+overflow was present. The native password visibility control changed the input
+type from password to text without submitting the form. The existing available
+purchase detail retained one POST reveal form and one POST invoice form, while
+its initial HTML contained no Product Key.
+
+Validation for this follow-up: PHP 8.3 syntax and the deterministic WordPress
+adapter passed; 91 focused Account, Claim, Invoice, Reveal, delivery and staging
+adapter tests passed; `npm run check` passed with 754 tests and 127 intentional
+skips; npm audit reported zero vulnerabilities; Secret Scan, UAT validator and
+`git diff --check` passed. Relevant PostgreSQL account and order persistence
+finished with 13 passing tests; an initial combined run crossed one existing
+five-second test timeout by 12 ms, then the complete order file passed 12/12 on
+its immediate isolated rerun without a code, timeout or schema change. UAT-018
+remains `PASS`, UAT-015 is unchanged, KS-11-07 remains incomplete/unapproved and
+`SECURITY-READINESS` remains `NOT_APPROVED`. No production approval is
+introduced.

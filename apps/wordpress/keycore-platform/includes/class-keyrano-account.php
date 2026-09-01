@@ -93,6 +93,16 @@ final class Account
         $this->render_claim_response($result, $status);
     }
 
+    public function render_account_details_header(): void
+    {
+        require KEYRANO_PLUGIN_DIR . '/templates/account-details-header.php';
+    }
+
+    public function render_account_details_form_heading(): void
+    {
+        echo '<h3 class="keyrano-account-form-heading">' . esc_html__('Persönliche Informationen', 'keycore-platform') . '</h3>';
+    }
+
     public function handle_reveal(): void
     {
         if (! is_user_logged_in()) {

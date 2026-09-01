@@ -8,6 +8,11 @@
   hash and preserves consumed ownership across bootstrap; all production and
   security gates stay closed.
 
+- Unified `Meine Käufe`, the fail-closed `Kauf hinzufügen` shell and native
+  WooCommerce `Kontodetails` with the dark responsive KeyRaNo account design.
+  Existing order projections, WooCommerce form handling, ownership, Claim,
+  Invoice and Product Key security boundaries remain unchanged.
+
 - Redesigned the KeyRaNo purchase-detail page as a dark, responsive account
   surface with German order summary, clear pending/available states and
   unchanged owner-only Invoice and Product Key POST actions. Recorded the

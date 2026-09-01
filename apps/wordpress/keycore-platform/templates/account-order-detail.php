@@ -1,5 +1,5 @@
 <?php defined('ABSPATH') || exit; ?>
-<section class="keyrano-account keyrano-order-detail">
+<section class="keyrano-account keyrano-account-surface keyrano-order-detail">
 <?php if (! is_array($order)) : ?>
     <div class="keyrano-state keyrano-state--error"><?php echo esc_html__('Dieser Kauf ist nicht verfügbar.', 'keycore-platform'); ?></div>
 <?php else : ?>

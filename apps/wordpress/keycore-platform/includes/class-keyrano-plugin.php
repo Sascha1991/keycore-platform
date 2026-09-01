@@ -18,6 +18,8 @@ final class Plugin
         add_action('woocommerce_account_meine-kaeufe_endpoint', [$account, 'render_orders']);
         add_action('woocommerce_account_kauf-details_endpoint', [$account, 'render_order_detail']);
         add_action('woocommerce_account_kauf-hinzufuegen_endpoint', [$account, 'render_claim_shell']);
+        add_action('woocommerce_before_edit_account_form', [$account, 'render_account_details_header']);
+        add_action('woocommerce_edit_account_form_start', [$account, 'render_account_details_form_heading']);
         add_action('admin_post_keyrano_reveal', [$account, 'handle_reveal']);
         add_action('admin_post_nopriv_keyrano_reveal', [$account, 'handle_reveal']);
         add_action('admin_post_keyrano_claim_purchase', [$account, 'handle_claim']);
@@ -52,15 +54,19 @@ final class Plugin
     public static function status_label(string $status): string
     {
         $labels = [
+            'ACTION_REQUIRED' => __('Aktion erforderlich', 'keycore-platform'),
             'AVAILABLE' => __('Verfügbar', 'keycore-platform'),
+            'CANCELLED' => __('Storniert', 'keycore-platform'),
             'CAPTURED' => __('Bezahlt', 'keycore-platform'),
+            'COMPLETED' => __('Abgeschlossen', 'keycore-platform'),
             'DELIVERY_PENDING' => __('Lieferung wird vorbereitet', 'keycore-platform'),
             'FULFILLMENT_PENDING' => __('In Bearbeitung', 'keycore-platform'),
             'NOT_AVAILABLE' => __('Nicht verfügbar', 'keycore-platform'),
             'PAYMENT_CAPTURED' => __('Zahlung bestätigt', 'keycore-platform'),
-            'PENDING' => __('In Bearbeitung', 'keycore-platform'),
+            'PENDING' => __('Ausstehend', 'keycore-platform'),
             'PROCESSING' => __('In Bearbeitung', 'keycore-platform'),
             'READY' => __('Bereit', 'keycore-platform'),
+            'REFUNDED' => __('Erstattet', 'keycore-platform'),
             'RETRIEVED' => __('Sicher hinterlegt', 'keycore-platform'),
             'SUCCEEDED' => __('Abgeschlossen', 'keycore-platform'),
         ];
@@ -72,6 +78,7 @@ final class Plugin
     {
         $labels = [
             'AVAILABLE' => __('Verfügbar', 'keycore-platform'),
+            'FAILED' => __('Fehlgeschlagen', 'keycore-platform'),
             'PENDING' => __('Ausstehend', 'keycore-platform'),
         ];
 
@@ -80,8 +87,11 @@ final class Plugin
 
     public static function status_tone(string $status): string
     {
-        if (in_array($status, ['AVAILABLE', 'READY', 'RETRIEVED', 'SUCCEEDED'], true)) {
+        if (in_array($status, ['AVAILABLE', 'COMPLETED', 'READY', 'RETRIEVED', 'SUCCEEDED'], true)) {
             return 'positive';
+        }
+        if (in_array($status, ['ACTION_REQUIRED', 'BLOCKED', 'CANCELLED', 'FAILED'], true)) {
+            return 'danger';
         }
         if (in_array($status, ['DELIVERY_PENDING', 'FULFILLMENT_PENDING', 'PENDING', 'PROCESSING'], true)) {
             return 'pending';
