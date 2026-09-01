@@ -14,9 +14,10 @@ The machine-readable source is
 `artifacts/user-acceptance/uat-results.json`. The visible storefront remediation
 makes UAT-001, UAT-006 and UAT-015 executable and several related journeys
 partially executable. The product owner accepted UAT-001 and UAT-006 on
-2026-08-30 using only synthetic staging data. UAT-002, UAT-015 and UAT-018 retain
-accepted observations in their notes but remain `PENDING` because their complete
-scenario steps were not executed. Unchanged browser gaps remain
+2026-08-30 using only synthetic staging data. The product owner completed and
+accepted UAT-002 on 2026-08-31. UAT-015 and UAT-018 retain accepted observations
+in their notes but remain `PENDING` because their complete scenario steps were
+not executed. Unchanged browser gaps remain
 `NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY`. Readiness is not acceptance.
 
 ## Allowed Results
@@ -46,9 +47,11 @@ the lifecycle:
   or review time; and
 - result and readiness scenario IDs/statuses must agree.
 
-The checked-in package is `IN_REVIEW`. Its two scoped `PASS` results identify the
-product-owner role, a date-normalized UTC timestamp and the redacted record at
-`docs/uat/human-uat-2026-08-30.md`. No overall approval is recorded.
+The checked-in package is `IN_REVIEW`. Its three scoped `PASS` results identify
+the product-owner role and date-normalized UTC timestamps. Safe textual records
+are stored in `docs/uat/human-uat-2026-08-30.md` and
+`docs/uat/open-scenario-reconciliation-2026-08-31.md`. No overall approval is
+recorded.
 
 ## Acceptance Record
 
@@ -69,7 +72,8 @@ The current scoped acceptance does not satisfy these complete-approval rules.
 
 The 2026-08-31 review in
 `docs/uat/open-scenario-reconciliation-2026-08-31.md` maps every required step
-for UAT-002, UAT-015 and UAT-018 to human evidence, automated evidence and its
-remaining browser gate. All three remain `PENDING`. Their missing payment/order,
-Guest Claim and invoice composition belongs to named Phase-12 integrations and
-must not be added to PR #46 merely to manufacture complete Human-UAT results.
+for UAT-002, UAT-015 and UAT-018 to human evidence, automated evidence and any
+remaining browser gate. UAT-002 is `PASS`; UAT-015 and UAT-018 remain `PENDING`.
+Their remaining Guest Claim, fulfillment and invoice composition belongs to
+named Phase-12 integrations and must not be inferred from the accepted
+registered-customer checkout.

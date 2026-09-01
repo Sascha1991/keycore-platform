@@ -10,6 +10,8 @@ define('EP_PAGES', 2);
 $GLOBALS['keyrano_test_actions'] = [];
 $GLOBALS['keyrano_test_filters'] = [];
 $GLOBALS['keyrano_products'] = [];
+$GLOBALS['keyrano_order'] = null;
+$GLOBALS['keyrano_notices'] = [];
 
 function add_action(string $name, mixed $callback, int $priority = 10): void { $GLOBALS['keyrano_test_actions'][] = $name; }
 function add_filter(string $name, mixed $callback): void { $GLOBALS['keyrano_test_filters'][] = $name; }
@@ -33,6 +35,31 @@ function wc_get_cart_url(): string { return '/cart/'; }
 function flush_rewrite_rules(): void {}
 function add_rewrite_endpoint(string $name, int $places): void {}
 function wc_print_notice(string $message, string $type): void {}
+function is_user_logged_in(): bool { return true; }
+function get_current_user_id(): int { return 20; }
+function get_user_meta(int $user_id, string $key, bool $single = true): string { return '10000000-0000-4000-8000-000000000001'; }
+function wc_get_order(int $order_id): mixed { return $GLOBALS['keyrano_order']; }
+function wc_add_notice(string $message, string $type): void { $GLOBALS['keyrano_notices'][] = [$message, $type]; }
+
+class WC_Payment_Gateway
+{
+    public string $id = '';
+    public string $method_title = '';
+    public string $method_description = '';
+    public string $title = '';
+    public string $description = '';
+    public string $enabled = 'no';
+    public bool $has_fields = false;
+    public array $supports = [];
+    public function is_available(): bool { return 'yes' === $this->enabled; }
+    public function get_return_url(mixed $order): string { return '/order-received/'; }
+}
+
+class WC_Order
+{
+    public function __construct(private int $customer_id) {}
+    public function get_customer_id(): int { return $this->customer_id; }
+}
 
 class WC_Product
 {
@@ -77,6 +104,7 @@ final class FakeBridge implements Bridge
     public array $products;
     public function __construct() { $this->products = [fixture('safe-one'), fixture('safe-two')]; }
     public function catalog(): ?array { return ['products' => $this->products, 'status' => 'OK']; }
+    public function checkout(int $wp_user_id, string $customer_id, array $command): ?array { return null; }
     public function orders(int $wp_user_id, string $customer_id): ?array { return null; }
     public function order(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
     public function reveal(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
@@ -102,23 +130,41 @@ function assert_true(bool $condition, string $message): void
     if (! $condition) { fwrite(STDERR, $message . PHP_EOL); exit(1); }
 }
 
-foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'admin_post_keyrano_reveal', 'wp_body_open'] as $hook) {
+foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'admin_post_keyrano_reveal', 'woocommerce_blocks_loaded'] as $hook) {
     assert_true(in_array($hook, $GLOBALS['keyrano_test_actions'], true), 'Missing hook: ' . $hook);
 }
 assert_true(in_array('woocommerce_account_menu_items', $GLOBALS['keyrano_test_filters'], true), 'Missing account menu filter');
-assert_true(in_array('render_block_core/navigation', $GLOBALS['keyrano_test_filters'], true), 'Theme navigation is not suppressed');
-assert_true(in_array('woocommerce_show_page_title', $GLOBALS['keyrano_test_filters'], true), 'Default shop title is not suppressed');
-assert_true('' === \KeyRaNo\Storefront\Plugin::hide_theme_navigation('<nav>duplicate</nav>'), 'Theme navigation remained visible');
-assert_true(false === \KeyRaNo\Storefront\Plugin::hide_shop_page_title(), 'Default shop title remained visible');
+assert_true(in_array('woocommerce_payment_gateways', $GLOBALS['keyrano_test_filters'], true), 'Synthetic staging gateways are not registered');
 assert_true('Bezahlt' === \KeyRaNo\Storefront\Plugin::status_label('CAPTURED'), 'Captured status was not localized');
 assert_true('In Bearbeitung' === \KeyRaNo\Storefront\Plugin::status_label('UNKNOWN_INTERNAL_STATE'), 'Unknown status did not use a safe customer label');
+$gateways = \KeyRaNo\Storefront\Checkout_Registration_Loader::gateways([]);
+assert_true(3 === count($gateways), 'Expected three explicit synthetic checkout outcomes');
+$success_gateway = new \KeyRaNo\Storefront\Checkout_Gateway_Success();
+assert_true($success_gateway->is_available(), 'Synthetic success gateway is unavailable in staging');
+$GLOBALS['keyrano_order'] = new WC_Order(21);
+assert_true(
+    ['result' => 'failure'] === $success_gateway->process_payment(100),
+    'A checkout for another WordPress customer was not denied'
+);
+assert_true(1 === count($GLOBALS['keyrano_notices']), 'Cross-customer checkout denial did not produce a safe notice');
 
 $bridge = new FakeBridge();
 $publisher = new Publisher($bridge);
 assert_true($publisher->sync(), 'Initial publisher sync failed');
 assert_true(2 === count($GLOBALS['keyrano_products']), 'Create did not publish exactly two products');
+$first = wc_get_product(wc_get_product_id_by_sku('keyrano-safe-one'));
+assert_true(
+    'Safe staging description' === ($first?->state()['data']['description'] ?? null),
+    'Initial owned description field was not published'
+);
+$bridge->products[0]['description'] = 'Updated staging description';
 assert_true($publisher->sync(), 'Repeated publisher sync failed');
 assert_true(2 === count($GLOBALS['keyrano_products']), 'Repeated sync created duplicates');
+$first = wc_get_product(wc_get_product_id_by_sku('keyrano-safe-one'));
+assert_true(
+    'Updated staging description' === ($first?->state()['data']['description'] ?? null),
+    'Owned description field was not updated'
+);
 
 $bridge->products[0]['priceMinor'] = 1599;
 $bridge->products[1]['publicationStatus'] = 'BLOCKED';

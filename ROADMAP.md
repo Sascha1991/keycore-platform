@@ -167,6 +167,11 @@ Automated evidence and PR merge cannot satisfy either human gate.
 
 Legal and tax configuration gates, production credentials, controlled rollout, go-live checklist and post-launch review.
 
+The narrowly scoped `PHASE_12_CUSTOMER_CHECKOUT_INTEGRATION` composes a strictly
+synthetic registered-customer WooCommerce checkout with existing KeyCore order,
+payment and ownership services. It does not start production payment,
+procurement, fulfillment, release or approval work.
+
 For Phases 11 and 12, consolidated repository tasks do not supersede detailed
 approved acceptance tasks. Every criterion must be evidenced, explicitly
 deferred to a named task for a valid dependency reason, or superseded by a

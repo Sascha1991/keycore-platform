@@ -41,6 +41,7 @@ describe("staging WordPress configuration", () => {
       "wp language core install de_DE --activate",
       "wp language plugin install woocommerce de_DE",
       "WP_CLI_CACHE_DIR: /tmp/wp-cli-cache",
+      "wp option update date_format 'd-m-Y'",
       "wp option update woocommerce_currency EUR",
       "wp option update woocommerce_default_country DE",
       "wp option update woocommerce_default_customer_address base",
@@ -48,6 +49,8 @@ describe("staging WordPress configuration", () => {
       "wp option update woocommerce_coming_soon no",
       'wp post update "$$(wp option get woocommerce_myaccount_page_id',
       "--post_title='Mein Konto'",
+      'wp post update "$$(wp option get woocommerce_cart_page_id',
+      "--post_title='Warenkorb'",
       "--name=sample-page",
     ]) {
       expect(compose).toContain(expected);

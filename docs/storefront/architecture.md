@@ -6,6 +6,11 @@ WooCommerce renders; KeyCore authorizes. The WordPress plugin is a presentation
 adapter and never treats a WooCommerce user ID, email address, URL order ID or
 order metadata as proof of ownership.
 
+Presentation ownership is defined in `docs/storefront/design-editability.md`.
+Native WordPress/WooCommerce theme styles, Site Editor templates, headers,
+footers, navigation and page content remain product-owner editable. KeyCore
+owns customer-safe facts and security decisions only.
+
 The staging flow is:
 
 1. WordPress authenticates the browser session and reads an immutable

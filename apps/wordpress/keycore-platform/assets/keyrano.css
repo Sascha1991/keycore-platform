@@ -1,67 +1,20 @@
-:root {
-  --keyrano-ink: #17202a;
-  --keyrano-paper: #f7f8fa;
-  --keyrano-accent: #00856f;
-  --keyrano-signal: #e8b638;
-  --keyrano-line: #d9dee5;
-}
-
-.wp-site-blocks > header.wp-block-template-part {
-  display: none;
-}
-
-.wc-block-mini-cart__drawer {
-  display: none !important;
-}
-
-.woocommerce-shop .wp-block-query-title {
-  display: none;
-}
-
-.keyrano-brand {
-  align-items: center;
-  background: #fff;
-  border-bottom: 1px solid var(--keyrano-line);
-  color: var(--keyrano-ink);
-  display: grid;
-  gap: 8px 24px;
-  grid-template-columns: auto 1fr auto;
-  padding: 16px max(20px, calc((100vw - 1180px) / 2));
-}
-
-.keyrano-brand__name {
-  color: var(--keyrano-ink);
-  font-size: 26px;
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.keyrano-brand__name::after { color: var(--keyrano-accent); content: "."; }
-.keyrano-brand__claim { font-size: 14px; }
-.keyrano-brand nav { display: flex; gap: 18px; }
-.keyrano-brand nav a { color: var(--keyrano-ink); font-weight: 650; text-decoration: none; }
-.keyrano-shop-intro { border-left: 4px solid var(--keyrano-accent); margin: 0 0 28px; padding: 8px 0 8px 22px; }
-.keyrano-shop-intro h1 { font-size: clamp(30px, 4vw, 52px); margin: 4px 0 10px; }
-.keyrano-kicker { color: var(--keyrano-accent); font-size: 12px; font-weight: 750; letter-spacing: 0; text-transform: uppercase; }
 .keyrano-product-facts, .keyrano-detail-grid { display: grid; gap: 1px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 20px 0; }
-.keyrano-product-facts div, .keyrano-detail-grid div { background: var(--keyrano-paper); min-width: 0; padding: 12px; }
-.keyrano-product-facts dt, .keyrano-detail-grid dt { color: #59636e; font-size: 12px; }
+.keyrano-product-facts div, .keyrano-detail-grid div { background: var(--wp--preset--color--base-2, #f7f8fa); min-width: 0; padding: 12px; }
+.keyrano-product-facts dt, .keyrano-detail-grid dt { opacity: 0.75; }
 .keyrano-product-facts dd, .keyrano-detail-grid dd { font-weight: 700; margin: 4px 0 0; overflow-wrap: anywhere; }
-.keyrano-account { color: var(--keyrano-ink); max-width: 900px; }
-.keyrano-purchases { border-top: 1px solid var(--keyrano-line); }
-.keyrano-purchase { align-items: center; border-bottom: 1px solid var(--keyrano-line); display: grid; gap: 16px; grid-template-columns: 1fr auto auto; padding: 18px 0; }
+.keyrano-account { max-width: 900px; }
+.keyrano-purchases { border-top: 1px solid currentColor; }
+.keyrano-purchase { align-items: center; border-bottom: 1px solid currentColor; display: grid; gap: 16px; grid-template-columns: 1fr auto auto; padding: 18px 0; }
 .keyrano-purchase h3, .keyrano-purchase p { margin: 0; }
-.keyrano-purchase__date { color: #66717d; font-size: 13px; }
-.keyrano-status { background: #e7f5f1; border-radius: 4px; color: #126b5d; padding: 6px 9px; }
-.keyrano-state { background: var(--keyrano-paper); border-left: 4px solid var(--keyrano-signal); padding: 16px; }
-.keyrano-state--error { border-left-color: #b43b37; }
-.keyrano-reveal-page { background: var(--keyrano-paper); color: var(--keyrano-ink); }
-.keyrano-reveal { background: #fff; border: 1px solid var(--keyrano-line); margin: 8vh auto; max-width: 680px; padding: 32px; }
-.keyrano-revealed-value { background: #111820; color: #fff; display: block; font-size: 18px; margin: 18px 0; overflow-wrap: anywhere; padding: 18px; }
+.keyrano-purchase__date { opacity: 0.75; }
+.keyrano-status { background: var(--wp--preset--color--base-2, #e7f5f1); border-radius: 4px; padding: 6px 9px; }
+.keyrano-state { background: var(--wp--preset--color--base-2, #f7f8fa); border-left: 4px solid currentColor; padding: 16px; }
+.keyrano-state--error { font-weight: 700; }
+.keyrano-reveal-page { background: var(--wp--preset--color--base, #f7f8fa); color: var(--wp--preset--color--contrast, #17202a); }
+.keyrano-reveal { background: var(--wp--preset--color--base, #fff); border: 1px solid currentColor; margin: 8vh auto; max-width: 680px; padding: 32px; }
+.keyrano-revealed-value { background: var(--wp--preset--color--contrast, #111820); color: var(--wp--preset--color--base, #fff); display: block; margin: 18px 0; overflow-wrap: anywhere; padding: 18px; }
 
 @media (max-width: 720px) {
-  .keyrano-brand { grid-template-columns: 1fr; }
-  .keyrano-brand nav { flex-wrap: wrap; }
   .keyrano-product-facts, .keyrano-detail-grid { grid-template-columns: 1fr; }
   .keyrano-purchase { align-items: start; grid-template-columns: 1fr; }
   .woocommerce-shop .wp-block-group:has(> .wc-block-product-results-count) { align-items: stretch; flex-direction: column; }

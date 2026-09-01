@@ -16,6 +16,9 @@ import {
   type AuditEvent,
   type AuditEventPort,
   type CustomerAccountOrderProjection,
+  type CustomerAccountReadCursor,
+  type CustomerAccountReadRepository,
+  type CustomerAccountRecord,
   type CustomerId,
   type KeyAccessAuthorizationPort,
 } from "../../packages/platform/src/contracts.js";
@@ -26,6 +29,10 @@ import {
   StagingStorefrontBridge,
   type StagingStorefrontRequest,
 } from "./staging-browser-adapter.js";
+import type {
+  StagingCheckoutPort,
+  StagingCheckoutResult,
+} from "./staging-checkout.js";
 
 export const stagingCustomerAId = customerId(
   "10000000-0000-4000-8000-000000000001",
@@ -63,8 +70,14 @@ export interface StagingStorefrontRuntime {
   readonly auditEvents: readonly AuditEvent[];
 }
 
+export interface StagingStorefrontRuntimeDependencies {
+  readonly accountRepository?: CustomerAccountReadRepository;
+  readonly checkout?: StagingCheckoutPort;
+}
+
 export const createStagingStorefrontRuntime = async (
   config: StagingStorefrontRuntimeConfig,
+  dependencies: StagingStorefrontRuntimeDependencies = {},
 ): Promise<StagingStorefrontRuntime> => {
   if (
     !config.syntheticKey.startsWith("SYNTHETIC_") ||
@@ -72,22 +85,28 @@ export const createStagingStorefrontRuntime = async (
   ) {
     throw new Error("A bounded synthetic reveal fixture is required");
   }
-  const repository = new InMemoryCustomerAccountReadRepository();
-  repository.addAccount({
+  const fixtures = new InMemoryCustomerAccountReadRepository();
+  fixtures.addAccount({
     createdAt: fixtureNow,
     customerId: stagingCustomerAId,
     emailMasked: "k********a@example.test",
     emailVerificationState: "VERIFIED",
   });
-  repository.addAccount({
+  fixtures.addAccount({
     createdAt: fixtureNow,
     customerId: stagingCustomerBId,
     emailMasked: "k********b@example.test",
     emailVerificationState: "VERIFIED",
   });
-  repository.addOrder(fulfilledOrder(stagingCustomerAId));
-  repository.addOrder(pendingOrder(stagingCustomerAId));
-  repository.addOrder(otherCustomerOrder(stagingCustomerBId));
+  fixtures.addOrder(fulfilledOrder(stagingCustomerAId));
+  fixtures.addOrder(pendingOrder(stagingCustomerAId));
+  fixtures.addOrder(otherCustomerOrder(stagingCustomerBId));
+  const repository = dependencies.accountRepository
+    ? new CompositeStagingAccountRepository(
+        dependencies.accountRepository,
+        fixtures,
+      )
+    : fixtures;
 
   const audit = new MemoryAudit();
   const keyRepository = new InMemoryEncryptedKeyRepository();
@@ -128,6 +147,7 @@ export const createStagingStorefrontRuntime = async (
         repository,
       }),
       allowedOrigin: config.allowedOrigin,
+      checkout: dependencies.checkout ?? new FailClosedStagingCheckout(),
       identityMappings: new Map([
         [config.customerAWpUserId, stagingCustomerAId],
         [config.customerBWpUserId, stagingCustomerBId],
@@ -262,6 +282,85 @@ class StagingVaultAuthorization implements KeyAccessAuthorizationPort {
       : { allowed: false, reasonCode: "RESOURCE_NOT_AVAILABLE" };
   }
 }
+
+class FailClosedStagingCheckout implements StagingCheckoutPort {
+  public async checkout(): Promise<StagingCheckoutResult> {
+    return { reasonCode: "CHECKOUT_UNAVAILABLE", status: "DENIED" };
+  }
+}
+
+class CompositeStagingAccountRepository implements CustomerAccountReadRepository {
+  public constructor(
+    private readonly durable: CustomerAccountReadRepository,
+    private readonly fixtures: CustomerAccountReadRepository,
+  ) {}
+
+  public async findAccountSummary(
+    requestedCustomerId: CustomerId,
+  ): Promise<CustomerAccountRecord | null> {
+    return (
+      (await this.durable.findAccountSummary(requestedCustomerId)) ??
+      this.fixtures.findAccountSummary(requestedCustomerId)
+    );
+  }
+
+  public async listOwnedOrders(input: {
+    readonly customerId: CustomerId;
+    readonly limit: number;
+    readonly after?: CustomerAccountReadCursor;
+  }): Promise<{
+    readonly orders: readonly CustomerAccountOrderProjection[];
+    readonly nextCursor?: CustomerAccountReadCursor;
+  }> {
+    const fetchLimit = input.limit + 1;
+    const query = { ...input, limit: fetchLimit };
+    const [durable, fixtures] = await Promise.all([
+      this.durable.listOwnedOrders(query),
+      this.fixtures.listOwnedOrders(query),
+    ]);
+    const merged = [...durable.orders, ...fixtures.orders]
+      .filter(
+        (order, index, orders) =>
+          orders.findIndex(
+            (candidate) => candidate.orderId === order.orderId,
+          ) === index,
+      )
+      .sort(compareAccountOrders);
+    const orders = merged.slice(0, input.limit);
+    const last = orders.at(-1);
+    return {
+      ...(merged.length > input.limit && last
+        ? {
+            nextCursor: {
+              createdAt: last.createdAt,
+              orderId: last.orderId,
+            },
+          }
+        : {}),
+      orders,
+    };
+  }
+
+  public async findOwnedOrderDetail(input: {
+    readonly customerId: CustomerId;
+    readonly orderId: ReturnType<typeof orderId>;
+  }): Promise<CustomerAccountOrderProjection | null> {
+    return (
+      (await this.durable.findOwnedOrderDetail(input)) ??
+      this.fixtures.findOwnedOrderDetail(input)
+    );
+  }
+}
+
+const compareAccountOrders = (
+  left: CustomerAccountOrderProjection,
+  right: CustomerAccountOrderProjection,
+): number => {
+  const byCreatedAt = right.createdAt.getTime() - left.createdAt.getTime();
+  return byCreatedAt === 0
+    ? right.orderId.localeCompare(left.orderId)
+    : byCreatedAt;
+};
 
 const readBoundedBody = async (
   request: IncomingMessage,
