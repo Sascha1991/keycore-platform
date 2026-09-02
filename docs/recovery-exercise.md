@@ -9,6 +9,10 @@ commerce state, creates a native custom-format backup, restores it into the
 empty target, queries the restored schema and continues application work only
 against the target.
 
+Baseline validation requires all 28 migration records through `028` and the
+restored Admin identity, role-assignment and hash-only session tables in
+addition to the existing commerce and operations structures.
+
 The exercise uses no production data, provider call, WooCommerce mutation,
 customer email or Product Key plaintext. Encrypted fulfillment bytes are
 synthetic opaque fixtures. PostgreSQL remains durable authority and Redis is

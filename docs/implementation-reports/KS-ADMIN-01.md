@@ -60,8 +60,9 @@ schema migrations exhausting a shared CI PostgreSQL service; concurrency inside
 the persistence tests remains enabled and unchanged.
 
 The repository recovery exercise and its current runbook now validate migration
-baseline 028. This keeps the isolated backup/restore gate aligned with the Admin
-schema addition without weakening any recovery or database invariant.
+baseline 028, all 28 migration records and the three restored Admin tables. This
+keeps the isolated backup/restore gate aligned with the Admin schema addition
+without weakening any recovery or database invariant.
 
 ## Human review
 

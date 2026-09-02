@@ -40,7 +40,11 @@ import { PostgresOperationsControlRepository } from "../postgres/operations-cont
 import { PostgresOrderRepository } from "../postgres/order-repositories.js";
 
 const expectedMigrationBaseline = "028";
+const expectedMigrationCount = 28;
 const requiredTables = [
+  "admin_identities",
+  "admin_role_assignments",
+  "admin_sessions",
   "customer_key_delivery_approvals",
   "fulfillment_operations",
   "fulfillment_secrets",
@@ -379,7 +383,7 @@ const validateRestoredSchema = async (db: Queryable): Promise<void> => {
     "SELECT version FROM keycore_migrations ORDER BY version",
   );
   if (
-    migrations.rows.length !== 27 ||
+    migrations.rows.length !== expectedMigrationCount ||
     migrations.rows.at(-1)?.version !== expectedMigrationBaseline
   ) {
     throw new Error("RECOVERY_MIGRATION_BASELINE_INVALID");
