@@ -134,6 +134,36 @@ body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountF
 .keyrano-state--error strong { color: #ffb4bb; }
 .keyrano-state--info { margin-top: 22px; }
 .keyrano-empty-state { padding: 30px; }
+body.woocommerce-account .keyrano-account-surface .keyrano-empty-state {
+  background: #15131c;
+  background-image: none;
+  border: 1px solid #3a3449;
+  border-left: 4px solid #8b5cf6;
+  border-radius: 16px;
+  box-shadow: none;
+  color: #c9c3d6;
+  column-gap: 14px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  padding: 28px;
+  row-gap: 6px;
+  width: 100%;
+}
+body.woocommerce-account .keyrano-account-surface .keyrano-empty-state::before {
+  border: 2px solid #a78bfa;
+  border-radius: 999px;
+  content: "";
+  grid-row: 1 / span 2;
+  height: 10px;
+  margin-top: 4px;
+  width: 10px;
+}
+body.woocommerce-account .keyrano-account-surface .keyrano-empty-state strong,
+body.woocommerce-account .keyrano-account-surface .keyrano-empty-state p {
+  grid-column: 2;
+  overflow-wrap: anywhere;
+}
+body.woocommerce-account .keyrano-account-surface .keyrano-empty-state p { margin: 0; }
 .keyrano-purchases { display: grid; gap: 16px; }
 .keyrano-purchase {
   align-items: center;
@@ -175,6 +205,14 @@ body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountF
 .keyrano-badge--positive { background: #182923; border-color: #315344; color: #77d6a6; }
 .keyrano-badge--neutral { background: #24202f; border-color: #3a3449; color: #c9c3d6; }
 .keyrano-badge--danger { background: #301d22; border-color: #66333d; color: #ff9da7; }
+body.woocommerce-account .keyrano-orders-page .keyrano-purchase__meta .keyrano-badge,
+body.woocommerce-account .keyrano-order-detail .keyrano-order-summary .keyrano-badge {
+  background: #24202f;
+  background-image: none;
+  border-color: #6d5a8f;
+  box-shadow: none;
+  color: #f7f5ff;
+}
 .keyrano-form-card,
 body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-EditAccountForm {
   background: #15131c;

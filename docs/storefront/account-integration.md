@@ -27,6 +27,12 @@ Anonymous users, missing mappings, cross-owner IDs and unknown resources fail
 closed. Purchase lists and details contain metadata only and never trigger
 decryption.
 
+Purchase status labels and the no-purchases state are presentation-only,
+account-scoped components. Their explicit dark backgrounds, light text and
+purple borders prevent WooCommerce or theme defaults from turning them into
+low-contrast light surfaces; status values and empty-state behavior remain
+unchanged.
+
 The guest-claim form intentionally remains non-mutating. Connecting the
 one-time, verified-same-email claim handler requires a dedicated browser adapter;
 order ID or email alone will not be accepted merely to make the shell functional.
