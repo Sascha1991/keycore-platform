@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fixed the KS-ADMIN-01 mobile Orders presentation found unusable during
+  Human-UAT at approximately 500 px. Desktop retains its table, while narrow
+  layouts present the same operational fields as labelled stacked entries and
+  reflow filters, details, navigation and login without page-level horizontal
+  scrolling. Security and business behavior are unchanged; Human Acceptance
+  remains `IN_REVIEW / NOT_APPROVED` pending staging retest and PR #52 remains
+  unmerged.
+
 - Kept strict Admin login Origin validation while changing the HTML response
   referrer policy to `same-origin`, preventing browsers from submitting the
   same-origin login form with `Origin: null`. Null, missing and cross-origin

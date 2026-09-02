@@ -78,10 +78,24 @@ Exact-origin validation remains unchanged; null, missing and cross-origin values
 remain rejected. Human acceptance is still `IN_REVIEW / NOT_APPROVED` pending a
 new manual staging retest.
 
+The subsequent Human-UAT passed Admin login, Dashboard, order listing and
+filtering, order detail, fail-closed Product-Key handling, neutral missing-order
+responses, unauthenticated denial, logout and re-bootstrap login. It also found
+a responsive usability failure on `/admin/orders` at approximately 500 px: the
+desktop table forced horizontal page scrolling and made long order/customer
+references difficult to use. The desktop table remains unchanged at normal
+widths; at 768 px and below, the same semantic rows now become labelled stacked
+order entries containing Order ID, customer, product, status, amount and date.
+Filters, order details, navigation and login also reflow without requiring
+page-level horizontal scrolling, and long non-secret references wrap safely.
+No authentication, authorization, filtering, pagination, audit or Product-Key
+behavior changed. Human acceptance remains `IN_REVIEW / NOT_APPROVED` until the
+responsive staging views are manually retested, so PR #52 must not be merged.
+
 ## Human review
 
-Focused browser UAT is still required for login, role-denial UX, search,
-pagination, order details, responsive layout and the fail-closed reveal shell.
-Production IdP/MFA and the future real-reveal design require separate explicit
-security approval. KS-11-07 remains incomplete and `SECURITY-READINESS` remains
-`NOT_APPROVED`.
+Focused browser UAT is still required for the corrected responsive layout and
+any remaining role-denial/pagination scenarios not covered by the completed
+Human-UAT. Production IdP/MFA and the future real-reveal design require separate
+explicit security approval. KS-11-07 remains incomplete and
+`SECURITY-READINESS` remains `NOT_APPROVED`.

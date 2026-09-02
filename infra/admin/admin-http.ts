@@ -191,7 +191,7 @@ export class AdminHttpController {
         ${metric("Bestellungen", result.totalOrders)}${metric("Aufmerksamkeit", result.attentionOrders)}${metric("In Bearbeitung", result.processingOrders)}${metric("Fehlgeschlagen", result.failedOrders)}
       </section>
       <section class="content-section"><div class="section-heading"><h2>Erfasster Umsatz</h2></div><ul class="revenue-list">${revenue}</ul></section>
-      <section class="content-section"><div class="section-heading"><h2>Letzte Bestellungen</h2><a href="/admin/orders">Alle anzeigen</a></div>${ordersTable(result.recentOrders)}</section>
+      <section class="content-section orders-section"><div class="section-heading"><h2>Letzte Bestellungen</h2><a href="/admin/orders">Alle anzeigen</a></div>${ordersTable(result.recentOrders)}</section>
     `,
       principal,
     );
@@ -218,7 +218,7 @@ export class AdminHttpController {
       `
       <header class="page-heading"><p>Bestellverwaltung</p><h1>Bestellungen</h1></header>
       ${searchForm(request.query)}
-      <section class="content-section"><div class="section-heading"><h2>Ergebnisse</h2><span>${result.orders.length} Einträge</span></div>${ordersTable(result.orders)}${pagination(result, request.query)}</section>
+      <section class="content-section orders-section"><div class="section-heading"><h2>Ergebnisse</h2><span>${result.orders.length} Einträge</span></div>${ordersTable(result.orders)}${pagination(result, request.query)}</section>
     `,
       principal,
     );
@@ -438,7 +438,7 @@ const ordersTable = (
 ): string =>
   orders.length === 0
     ? '<div class="empty-state"><strong>Keine Bestellungen gefunden</strong><p>Die gewählten Filter liefern keine Ergebnisse.</p></div>'
-    : `<div class="table-wrap"><table><thead><tr><th>Bestellung</th><th>Kunde</th><th>Produkt</th><th>Status</th><th>Betrag</th><th>Datum</th></tr></thead><tbody>${orders.map((order) => `<tr><td><a href="/admin/orders/${order.orderId}">${escapeHtml(order.orderId)}</a></td><td>${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}</td><td>${escapeHtml(order.productTitle)}</td><td><span class="status status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(order.status)}</span></td><td>${escapeHtml(formatMinor(order.amountMinor, order.currency))}</td><td>${escapeHtml(formatDate(order.createdAt))}</td></tr>`).join("")}</tbody></table></div>`;
+    : `<div class="table-wrap"><table class="orders-table"><thead><tr><th scope="col">Bestellung</th><th scope="col">Kunde</th><th scope="col">Produkt</th><th scope="col">Status</th><th scope="col">Betrag</th><th scope="col">Datum</th></tr></thead><tbody>${orders.map((order) => `<tr><td data-label="Bestellung" class="order-reference"><a href="/admin/orders/${order.orderId}">${escapeHtml(order.orderId)}</a></td><td data-label="Kunde" class="customer-reference">${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}</td><td data-label="Produkt">${escapeHtml(order.productTitle)}</td><td data-label="Status"><span class="status status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(order.status)}</span></td><td data-label="Betrag">${escapeHtml(formatMinor(order.amountMinor, order.currency))}</td><td data-label="Datum">${escapeHtml(formatDate(order.createdAt))}</td></tr>`).join("")}</tbody></table></div>`;
 
 const searchForm = (query: URLSearchParams): string =>
   `<form class="filter-bar" method="get" action="/admin/orders"><label>Bestell-ID oder E-Mail<input type="search" name="search" maxlength="254" value="${escapeHtml(query.get("search") ?? "")}"></label><label>Status<select name="status"><option value="">Alle</option>${["CREATED", "AWAITING_PAYMENT", "PAYMENT_CAPTURED", "PROCUREMENT_PENDING", "PROCUREMENT_IN_PROGRESS", "FULFILLMENT_PENDING", "COMPLETED", "CANCELLED", "FAILED", "REFUND_PENDING", "REFUNDED", "MANUAL_REVIEW"].map((status) => `<option${query.get("status") === status ? " selected" : ""}>${status}</option>`).join("")}</select></label><label>Von<input type="date" name="from" value="${escapeHtml(query.get("from") ?? "")}"></label><label>Bis<input type="date" name="to" value="${escapeHtml(query.get("to") ?? "")}"></label><button type="submit">Filtern</button></form>`;

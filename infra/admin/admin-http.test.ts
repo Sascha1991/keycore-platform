@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -108,6 +110,47 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain("Kontrollierten Zugriff anfordern");
     expect(response.body).not.toMatch(
       /ciphertext|wrapped_data|TEST-[A-Z0-9-]+/u,
+    );
+  });
+
+  it("renders the order list with a responsive card presentation contract", async () => {
+    const response = await fixture().handle(
+      authenticated("GET", "/admin/orders"),
+    );
+    const css = readFileSync(
+      new URL("../../apps/admin/assets/admin.css", import.meta.url),
+      "utf8",
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('class="orders-table"');
+    expect(response.body).toContain('<th scope="col">Bestellung</th>');
+    for (const label of [
+      "Bestellung",
+      "Kunde",
+      "Produkt",
+      "Status",
+      "Betrag",
+      "Datum",
+    ]) {
+      expect(response.body).toContain(`data-label="${label}"`);
+    }
+    expect(response.body).toContain(targetOrderId);
+    expect(response.body).toContain("customer@example.test");
+    expect(response.body).toContain("Arena Eleven");
+    expect(response.body).toContain("FULFILLMENT_PENDING");
+    expect(response.body).toContain("21,99 EUR");
+    expect(response.body).not.toMatch(
+      /ciphertext|wrapped_data|TEST-[A-Z0-9-]+/u,
+    );
+
+    expect(css).toContain("@media (max-width: 768px)");
+    expect(css).toContain(".orders-table tbody { display: grid");
+    expect(css).toContain("content: attr(data-label)");
+    expect(css).toContain(".table-wrap { overflow: visible; }");
+    expect(css).toContain(".detail-grid dl { grid-template-columns: 1fr");
+    expect(css).toContain(
+      ".metric-grid, .filter-bar { grid-template-columns: 1fr",
     );
   });
 
