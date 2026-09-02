@@ -11,6 +11,7 @@ import {
   orderLineId,
   type AuthenticatedCustomerPrincipal,
   type CorrelationId,
+  type CustomerInvoiceAccessService,
   type CustomerAccountService,
   type CustomerOrderClaimResult,
   type CustomerId,
@@ -51,6 +52,7 @@ export interface StagingGuestOrderClaimPort {
 
 export interface StagingStorefrontBridgeOptions {
   readonly accountService: CustomerAccountService;
+  readonly invoiceAccessService: CustomerInvoiceAccessService;
   readonly vaultService: ProductKeyVaultService;
   readonly checkout: StagingCheckoutPort;
   readonly guestOrderClaim: StagingGuestOrderClaimPort;
@@ -222,16 +224,25 @@ export class StagingStorefrontBridge {
       });
     }
 
-    const match = /^\/v1\/account\/orders\/([0-9a-f-]{36})(\/reveal)?$/iu.exec(
-      request.path,
-    );
+    const match =
+      /^\/v1\/account\/orders\/([0-9a-f-]{36})(\/(?:reveal|invoice))?$/iu.exec(
+        request.path,
+      );
     if (!match?.[1]) return respond(404, unavailable());
     const requestedOrderId = match[1];
-    const detail = await this.options.accountService.getOwnedOrderDetail({
-      correlationId: requestCorrelationId,
-      orderId: requestedOrderId,
-      principal,
-    });
+    let detail;
+    try {
+      detail = await this.options.accountService.getOwnedOrderDetail({
+        correlationId: requestCorrelationId,
+        orderId: requestedOrderId,
+        principal,
+      });
+    } catch {
+      return respond(503, {
+        code: "TEMPORARILY_UNAVAILABLE",
+        status: "ERROR",
+      });
+    }
     if (detail.status !== "OK") return respond(404, unavailable());
 
     if (request.method === "GET" && !match[2]) {
@@ -253,6 +264,37 @@ export class StagingStorefrontBridge {
         },
         status: "OK",
       });
+    }
+
+    if (request.method === "POST" && match[2] === "/invoice") {
+      if (!request.csrfVerified) {
+        return respond(403, { code: "ACCESS_DENIED", status: "ERROR" });
+      }
+      if (request.body !== "") {
+        return respond(400, { code: "BAD_REQUEST", status: "ERROR" });
+      }
+      try {
+        const result =
+          await this.options.invoiceAccessService.getInvoiceDocument({
+            correlationId: requestCorrelationId,
+            orderId: requestedOrderId,
+            principal,
+          });
+        if (result.status !== "OK") return respond(404, unavailable());
+        return respond(200, {
+          document: {
+            body: Buffer.from(result.bytes).toString("base64"),
+            contentType: result.contentType,
+            encoding: "base64",
+          },
+          status: "AVAILABLE",
+        });
+      } catch {
+        return respond(503, {
+          code: "TEMPORARILY_UNAVAILABLE",
+          status: "ERROR",
+        });
+      }
     }
 
     if (request.method !== "POST" || match[2] !== "/reveal") {

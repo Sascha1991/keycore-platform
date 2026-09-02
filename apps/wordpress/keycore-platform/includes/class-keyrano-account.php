@@ -93,6 +93,16 @@ final class Account
         $this->render_claim_response($result, $status);
     }
 
+    public function render_account_details_header(): void
+    {
+        require KEYRANO_PLUGIN_DIR . '/templates/account-details-header.php';
+    }
+
+    public function render_account_details_form_heading(): void
+    {
+        echo '<h3 class="keyrano-account-form-heading">' . esc_html__('Persönliche Informationen', 'keycore-platform') . '</h3>';
+    }
+
     public function handle_reveal(): void
     {
         if (! is_user_logged_in()) {
@@ -112,6 +122,39 @@ final class Account
         );
         $status = is_array($payload) ? (int) ($payload['_httpStatus'] ?? 503) : 503;
         $this->render_reveal_response($payload, $status);
+    }
+
+    public function handle_invoice(): void
+    {
+        if (! is_user_logged_in()) {
+            auth_redirect();
+            exit;
+        }
+        if (! Invoice_Document_Response::has_exact_request_fields($_POST)) {
+            $this->render_invoice_failure(400);
+        }
+        $order_id = isset($_POST['order_id']) ? sanitize_text_field(wp_unslash((string) $_POST['order_id'])) : '';
+        $nonce = isset($_POST['_wpnonce']) ? sanitize_text_field(wp_unslash((string) $_POST['_wpnonce'])) : '';
+        if (! wp_verify_nonce($nonce, 'keyrano_invoice_' . $order_id) || ! $this->same_origin()) {
+            $this->render_invoice_failure(403);
+        }
+        $identity = $this->identity();
+        $payload = null === $identity ? null : $this->bridge->invoice(
+            $identity['wpUserId'],
+            $identity['customerId'],
+            $order_id
+        );
+        $bytes = Invoice_Document_Response::decode($payload);
+        if (null === $bytes) {
+            $status = 503 === (int) ($payload['_httpStatus'] ?? 0) ? 503 : 404;
+            $this->render_invoice_failure($status);
+        }
+        status_header(200);
+        foreach (Invoice_Document_Response::headers(strlen($bytes)) as $name => $value) {
+            header($name . ': ' . $value, true);
+        }
+        echo $bytes;
+        exit;
     }
 
     /** @return array{wpUserId:int,customerId:string}|null */
@@ -160,6 +203,18 @@ final class Account
         header('Referrer-Policy: no-referrer', true);
         status_header($status);
         require KEYRANO_PLUGIN_DIR . '/templates/account-claim-result.php';
+        exit;
+    }
+
+    private function render_invoice_failure(int $status): never
+    {
+        nocache_headers();
+        header('Cache-Control: no-store, no-cache, must-revalidate, private', true);
+        header('Pragma: no-cache', true);
+        header('Referrer-Policy: no-referrer', true);
+        header('X-Content-Type-Options: nosniff', true);
+        status_header($status);
+        require KEYRANO_PLUGIN_DIR . '/templates/account-invoice-unavailable.php';
         exit;
     }
 }

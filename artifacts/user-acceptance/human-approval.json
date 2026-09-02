@@ -3,5 +3,5 @@
   "reviewer": null,
   "approvedAt": null,
   "scope": "KS-11-07",
-  "notes": "Visible-storefront UAT-001 and UAT-006 passed human review on 2026-08-30, and the complete synthetic registered-customer UAT-002 journey passed on 2026-08-31. Complete KS-11-07 approval remains withheld because other scenarios, including UAT-015 and UAT-018, are pending or not executable."
+  "notes": "Visible-storefront UAT-001 and UAT-006 passed human review on 2026-08-30, the complete synthetic registered-customer UAT-002 journey passed on 2026-08-31, UAT-018 passed on 2026-09-01 after the secure invoice correction, and UAT-015 passed on 2026-09-02 after Account Transport integration. Complete KS-11-07 approval remains withheld because other scenarios remain pending or not executable."
 }

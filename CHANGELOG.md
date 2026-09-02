@@ -2,11 +2,32 @@
 
 ## Unreleased
 
+- Normalized Invoice Transport onto the PR #48 squash-merged Account Transport,
+  preserving both secure paths and recording the product owner's UAT-015
+  `PASS`. UAT-018 remains `PASS`; KS-11-07, `SECURITY-READINESS` and production
+  release remain unapproved.
+
 - Added the secure staging-only `Kauf hinzufügen` transport by composing the
   existing verified-same-email, one-time Guest Claim service behind the signed
   WordPress bridge. The deterministic synthetic fixture stores only a claim
-  hash and preserves consumed ownership across bootstrap; UAT-015 and UAT-018
-  remain pending human review and all production/security gates stay closed.
+  hash and preserves consumed ownership across bootstrap; all production and
+  security gates stay closed.
+
+- Unified `Meine Käufe`, the secure `Kauf hinzufügen` flow and native
+  WooCommerce `Kontodetails` with the dark responsive KeyRaNo account design.
+  Existing order projections, WooCommerce form handling, ownership, Claim,
+  Invoice and Product Key security boundaries remain unchanged.
+
+- Redesigned the KeyRaNo purchase-detail page as a dark, responsive account
+  surface with German order summary, clear pending/available states and
+  unchanged owner-only Invoice and Product Key POST actions. Recorded the
+  product owner's supplied 2026-09-01 UAT-018 `PASS`; KS-11-07 and
+  `SECURITY-READINESS` remain unapproved.
+
+- Added `PHASE_12_INVOICE_TRANSPORT`: an owner-authorized, HMAC-signed and
+  nonce-protected synthetic staging PDF download with bounded content, fixed
+  safe headers and fail-closed cross-owner/outage behavior. Production invoice,
+  tax/legal and provider readiness remain unapproved.
 
 - Added supplied security-reviewed screenshots from the independent 2026-09-01 UAT-002
   repeat using `Arena Eleven`. The evidence reconfirms synthetic checkout,
@@ -16,9 +37,9 @@
 
 - Recorded the KeyRaNo product owner's successful 2026-08-31 UAT-002 execution
   for the complete synthetic registered-customer checkout, resulting owned
-  purchase, ordinary-confirmation key omission and cross-owner denial. UAT-015,
-  UAT-018, KS-11-07 and `SECURITY-READINESS` remain pending or unapproved; no
-  production approval or live external operation was introduced.
+  purchase, ordinary-confirmation key omission and cross-owner denial. At that
+  review UAT-015 and UAT-018 were pending; their later `PASS` results do not
+  approve KS-11-07, `SECURITY-READINESS` or production.
 
 - Added the staging-only registered-customer checkout composition from a native
   WooCommerce product/cart/checkout through explicit synthetic success, failure

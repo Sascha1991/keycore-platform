@@ -5,8 +5,9 @@
 This review reconciles UAT-002, UAT-015 and UAT-018 against the implemented
 staging browser boundary. On 2026-08-31 the KeyRaNo product owner completed
 UAT-002 with synthetic staging data and accepted the complete registered-customer
-journey. UAT-015 and UAT-018 remain `PENDING` because Guest Claim and the full
-invoice/fulfillment walkthrough remain outside the tested browser boundary.
+journey. UAT-015 and UAT-018 were `PENDING` at this dated review. Their later
+product-owner `PASS` results are recorded separately on 2026-09-02 and
+2026-09-01 respectively and supersede only those historical statuses.
 
 No live Stripe or Kinguin call, supplier purchase, real Product Key, production
 credential, production data, production DNS change or deployment was used.
@@ -66,7 +67,8 @@ secret, production data or Product Key plaintext:
 
 ## UAT-015 - Account Purchase History
 
-Overall status: `PENDING`.
+Status at this review: `PENDING`. Current status: `PASS`, superseded by
+`docs/uat/human-uat-2026-09-02-account-history.md`.
 
 | Acceptance step                                                       | Status             | Evidence and result                                                                                                                                            |
 | --------------------------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -77,13 +79,14 @@ Overall status: `PENDING`.
 | Customer B's unrelated purchase is absent and direct access is denied | `PASS`             | Human cross-owner review passed; focused ownership and account tests also passed.                                                                              |
 | Claimed ownership survives a later session                            | `EXECUTABLE_NOW`   | PostgreSQL coverage proves durability and the browser flow can now be repeated after logout/login; human observation remains pending.                          |
 
-The backend and browser composition are now technically executable. UAT-015
-remains `PENDING` because the product owner has not yet executed the complete
-claim, denial, replay and later-session procedure or supplied safe screenshots.
+The backend and browser composition were technically executable at this review.
+The then-pending human result is superseded by the product owner's separately
+recorded 2026-09-02 `PASS`; no unrecorded step detail is inferred here.
 
 ## UAT-018 - Complete Acceptance Walkthrough
 
-Overall status: `PENDING`.
+Status at this review: `PENDING`. Current status: `PASS`, superseded by
+`docs/uat/human-uat-2026-09-01-invoice.md`.
 
 | Walkthrough step                                                                    | Status                                                      | Evidence and remaining gate                                                                                    |
 | ----------------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -121,15 +124,14 @@ These automated results support the safety rules but are not human acceptance.
 
 ## Merge Assessment
 
-UAT-002 is accepted for the synthetic staging scope. UAT-015 now has a dedicated
-Guest Claim browser adapter but still requires human execution and redacted
-evidence. UAT-018 still depends on that human result, composed fulfillment and
-invoice-document transport. Neither PR completes KS-11-07, approves production
-or approves `SECURITY-READINESS`.
+UAT-002 is accepted for the synthetic staging scope. The historical UAT-015 and
+UAT-018 pending assessments are superseded by the product owner's separately
+recorded `PASS` results. Other scenarios remain open; neither result completes
+KS-11-07, approves production or approves `SECURITY-READINESS`.
 
 This record contains the supplied human observations but does not claim that
 new screenshots were committed or attached. Any redacted screenshots still
 required by the repository-wide `AGENTS.md` PR policy must be attached by a
 human without keys, credentials, sessions, checkout capabilities, payment
-details, personal data or private identifiers. PR #47 remains open and must not
-be merged by the implementing agent.
+details, personal data or private identifiers. This historical record grants no
+merge or production authority.

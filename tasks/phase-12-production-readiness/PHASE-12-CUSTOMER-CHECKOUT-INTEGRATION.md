@@ -63,7 +63,8 @@ payment, supplier purchase, fulfillment or Product Key.
       general layout remain editable through native WordPress/WooCommerce
       mechanisms without changing KeyCore security code.
 - [x] UAT-002 remained `PENDING` until its successful human execution on
-      2026-08-31; UAT-015 and UAT-018 remain `PENDING`.
+      2026-08-31; the later UAT-015 and UAT-018 `PASS` results are recorded in
+      their dedicated follow-up transports.
 - [x] KS-11-07 and `SECURITY-READINESS` remain unapproved.
 
 ## Required Tests
