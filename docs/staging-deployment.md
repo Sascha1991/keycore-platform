@@ -1,5 +1,11 @@
 # Staging Deployment
 
+The separate KS-ADMIN-01 staging Admin service and its trust boundary are
+documented in `docs/admin/secure-admin-foundation.md`. It listens only on the
+explicit `KEYRANO_STAGING_ADMIN_ORIGIN`, uses its own hash-only synthetic Admin
+session and must not reuse WordPress/customer credentials. This staging shell
+does not approve production Admin authentication or Product-Key reveal.
+
 ## Purpose
 
 KS-11-01 provides a repeatable, production-like staging foundation for later

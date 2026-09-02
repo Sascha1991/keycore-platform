@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added KS-ADMIN-01, the first separate KeyRaNo Admin foundation with hash-only
+  sessions, explicit role/capability enforcement, audited Dashboard and bounded
+  PostgreSQL order search/detail views. Product-Key access remains a POST/CSRF-
+  protected fail-closed shell with no decryption; production IdP/MFA, Admin UAT,
+  KS-11-07 and `SECURITY-READINESS` remain unapproved.
+
 - Hardened the KeyRaNo `Meine Käufe` presentation so purchase status pills and
   the empty-purchase state retain accessible dark/purple account styling even
   when WooCommerce or theme defaults are present. Status and account behavior

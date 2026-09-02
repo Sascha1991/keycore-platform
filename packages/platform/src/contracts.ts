@@ -1,4 +1,5 @@
 export * from "./audit/service.js";
+export * from "./admin/admin-orders.js";
 export * from "./catalog/germany-eligibility.js";
 export * from "./catalog/canonical-product-grouping.js";
 export * from "./catalog/search-operations.js";

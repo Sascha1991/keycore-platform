@@ -91,6 +91,55 @@ services:
       timeout: 3s
       retries: 12
 
+  keycore-admin-bootstrap:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.staging-storefront
+    depends_on:
+      keycore-checkout-bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      KEYCORE_ENV: STAGING
+      KEYCORE_STAGING_POSTGRES_PASSWORD: ${KEYCORE_STAGING_POSTGRES_PASSWORD:?staging PostgreSQL password is required}
+      KEYRANO_STAGING_ADMIN_SESSION_CODE: ${KEYRANO_STAGING_ADMIN_SESSION_CODE:?staging admin session code is required}
+      KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET: ${KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET:?staging admin session hash secret is required}
+    command: ["node", "--import", "tsx", "scripts/staging-admin-bootstrap.ts"]
+    restart: "no"
+
+  keycore-admin:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.staging-storefront
+    depends_on:
+      keycore-admin-bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      KEYCORE_ENV: STAGING
+      KEYCORE_STAGING_POSTGRES_PASSWORD: ${KEYCORE_STAGING_POSTGRES_PASSWORD:?staging PostgreSQL password is required}
+      KEYRANO_STAGING_ADMIN_PORT: 3001
+      KEYRANO_STAGING_ADMIN_ORIGIN: ${KEYRANO_STAGING_ADMIN_ORIGIN:?explicit staging admin origin is required}
+      KEYRANO_STAGING_ADMIN_SECURE_COOKIES: ${KEYRANO_STAGING_ADMIN_SECURE_COOKIES:-true}
+      KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET: ${KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET:?staging admin session hash secret is required}
+      KEYRANO_STAGING_ADMIN_CURSOR_SECRET: ${KEYRANO_STAGING_ADMIN_CURSOR_SECRET:?staging admin cursor secret is required}
+      KEYRANO_STAGING_ADMIN_CSRF_SECRET: ${KEYRANO_STAGING_ADMIN_CSRF_SECRET:?staging admin CSRF secret is required}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "127.0.0.1:${KEYCORE_STAGING_ADMIN_PORT:-18081}:3001"
+
   wordpress-db:
     image: mariadb:11.8.8
     environment:
