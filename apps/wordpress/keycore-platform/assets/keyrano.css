@@ -283,6 +283,154 @@ body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-message { bo
 .keyrano-order-action p:not(.keyrano-order-action__label) { color: #aaa5b5; line-height: 1.6; margin: 0; }
 .keyrano-action-form { margin: 24px 0 0; }
 
+body:has(.keyrano-content-shell),
+body:has(.keyrano-content-shell) .wp-site-blocks,
+body:has(.keyrano-content-shell) main {
+  background: #0c0b12;
+  color: #f7f5ff;
+}
+body:has(.keyrano-content-shell) .wp-block-post-title {
+  color: #fff;
+  font-size: 52px;
+  line-height: 1.08;
+  overflow-wrap: anywhere;
+}
+.keyrano-content-shell,
+.keyrano-content-shell * { box-sizing: border-box; }
+.keyrano-content-shell {
+  color: #f7f5ff;
+  margin-inline: auto;
+  max-width: 1120px;
+  padding-block: clamp(48px, 8vw, 96px);
+  width: min(100% - 40px, 1120px);
+}
+.keyrano-content-header { margin: 0 0 40px; max-width: 760px; }
+.keyrano-content-kicker {
+  color: #a78bfa;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 10px;
+  text-transform: uppercase;
+}
+.keyrano-content-intro { color: #aaa5b5; line-height: 1.7; margin: 16px 0 0; max-width: 680px; }
+.keyrano-content-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+.keyrano-content-card,
+.keyrano-content-section,
+.keyrano-legal-section {
+  background: #15131c;
+  border: 1px solid #2d2938;
+  border-radius: 12px;
+  color: #c9c3d6;
+  min-width: 0;
+  padding: 26px;
+}
+.keyrano-content-card h2,
+.keyrano-content-section h2,
+.keyrano-legal-section h2 { color: #fff; font-size: 22px; margin: 0 0 14px; }
+.keyrano-content-card p,
+.keyrano-content-card li,
+.keyrano-content-section p,
+.keyrano-legal-section p { line-height: 1.65; overflow-wrap: anywhere; }
+.keyrano-content-card ul,
+.keyrano-content-card ol { margin-bottom: 0; padding-left: 22px; }
+.keyrano-placeholder {
+  background: #211d2b;
+  border: 1px dashed #584d70;
+  border-radius: 8px;
+  color: #d7d2e2;
+  padding: 13px;
+}
+.keyrano-content-notice {
+  background: #181522;
+  border: 1px solid #3d3550;
+  border-left: 4px solid #8b5cf6;
+  border-radius: 10px;
+  color: #c9c3d6;
+  line-height: 1.65;
+  margin: 22px 0 0;
+  padding: 18px 20px;
+}
+.keyrano-content-notice strong { color: #fff; }
+.keyrano-content-notice--warning { border-left-color: #e4b95f; }
+.keyrano-faq-list,
+.keyrano-legal-body { display: grid; gap: 18px; }
+.keyrano-faq-list > *,
+.keyrano-legal-body > * { margin-inline: 0 !important; max-width: none !important; width: 100%; }
+.keyrano-faq-group { padding: 24px; }
+.keyrano-faq-item { border-top: 1px solid #2d2938; margin: 0; padding: 0; }
+.keyrano-faq-item summary {
+  color: #f7f5ff;
+  cursor: pointer;
+  font-weight: 700;
+  list-style-position: outside;
+  padding: 18px 4px;
+}
+.keyrano-faq-item summary:hover,
+.keyrano-faq-item summary:focus-visible { color: #c4b5fd; }
+.keyrano-faq-item[open] summary { color: #c4b5fd; }
+.keyrano-faq-item p { color: #aaa5b5; margin: 0; padding: 0 4px 20px; }
+.keyrano-activation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.keyrano-status-guide { max-width: 760px; }
+.keyrano-status-guide .wp-block-buttons { margin-top: 24px; }
+.keyrano-status-guide .wp-element-button {
+  background: #7c3aed;
+  border: 1px solid #8b5cf6;
+  border-radius: 8px;
+  color: #fff;
+  font-weight: 700;
+}
+.keyrano-status-guide .wp-element-button:hover,
+.keyrano-status-guide .wp-element-button:focus-visible { background: #8b5cf6; color: #fff; }
+.keyrano-legal-page { max-width: 920px; }
+.keyrano-legal-body { margin-top: 24px; }
+.keyrano-legal-section { padding: 28px; }
+
+footer:has(.keyrano-footer-columns) {
+  background: #0f0e15;
+  border-top: 1px solid #2d2938;
+  color: #aaa5b5;
+}
+footer:has(.keyrano-footer-columns) > .wp-block-group { padding-block: 54px 28px !important; }
+footer:has(.keyrano-footer-columns) .wp-block-site-title,
+footer:has(.keyrano-footer-columns) .wp-block-site-title a,
+footer:has(.keyrano-footer-columns) h2,
+footer:has(.keyrano-footer-columns) h4 { color: #fff; }
+footer:has(.keyrano-footer-columns) figure img { height: auto; max-width: min(100%, 340px); }
+.keyrano-footer-columns {
+  display: grid !important;
+  gap: 42px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-block: 34px !important;
+}
+.keyrano-footer-columns > .wp-block-column { flex-basis: auto !important; margin: 0; min-width: 0; }
+.keyrano-footer-columns h4 { font-size: 14px; margin: 0 0 16px; text-transform: uppercase; }
+.keyrano-footer-columns .wp-block-navigation { align-items: flex-start; gap: 8px; }
+.keyrano-footer-columns .wp-block-navigation-item,
+.keyrano-footer-columns .wp-block-navigation-item__content { width: 100%; }
+.keyrano-footer-columns .wp-block-navigation-item__content {
+  color: #aaa5b5;
+  overflow-wrap: anywhere;
+  padding: 4px 0;
+  text-decoration: none;
+}
+.keyrano-footer-columns .wp-block-navigation-item__content:hover,
+.keyrano-footer-columns .wp-block-navigation-item__content:focus-visible { color: #c4b5fd; }
+.keyrano-footer-columns .wp-block-navigation__responsive-container-open,
+.keyrano-footer-columns .wp-block-navigation__responsive-container-close { display: none !important; }
+.keyrano-footer-columns .wp-block-navigation__responsive-container {
+  background: transparent !important;
+  color: inherit !important;
+  display: block !important;
+  position: static !important;
+  width: 100%;
+}
+.keyrano-footer-columns .wp-block-navigation__responsive-container-content { padding: 0 !important; }
+
 @media (max-width: 960px) {
   .keyrano-purchase { grid-template-columns: minmax(180px, 1fr) minmax(220px, 1fr); }
   .keyrano-purchase__button { grid-column: 1 / -1; grid-row: auto; justify-self: start; }
@@ -290,6 +438,7 @@ body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-message { bo
   .keyrano-order-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .keyrano-order-summary > div:nth-child(3) { border-left: 0; }
   .keyrano-order-summary > div:nth-child(n+3) { border-top: 1px solid #2d2938; }
+  .keyrano-footer-columns { gap: 28px; }
 }
 
 @media (max-width: 720px) {
@@ -327,4 +476,15 @@ body.woocommerce-account:has(.keyrano-account-surface) .woocommerce-message { bo
   .woocommerce .woocommerce-result-count,
   .woocommerce .woocommerce-ordering { float: none; width: 100%; }
   .woocommerce .woocommerce-ordering select { max-width: 100%; width: 100%; }
+  .keyrano-content-shell { padding-block: 48px; width: min(100% - 28px, 1120px); }
+  body:has(.keyrano-content-shell) .wp-block-post-title { font-size: 38px; }
+  .keyrano-content-header { margin-bottom: 28px; }
+  .keyrano-content-grid,
+  .keyrano-activation-grid,
+  .keyrano-footer-columns { grid-template-columns: 1fr; }
+  .keyrano-content-card,
+  .keyrano-content-section,
+  .keyrano-legal-section { padding: 21px 18px; }
+  .keyrano-footer-columns { gap: 30px; }
+  footer:has(.keyrano-footer-columns) > .wp-block-group { padding-block: 40px 24px !important; }
 }
