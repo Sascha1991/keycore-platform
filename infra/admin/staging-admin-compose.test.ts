@@ -34,8 +34,15 @@ describe("staging Admin Compose wiring", () => {
   });
 
   it("preserves the separate Admin bootstrap command", () => {
-    expect(serviceBlock("keycore-admin-bootstrap")).toContain(
+    const bootstrap = serviceBlock("keycore-admin-bootstrap");
+    expect(bootstrap).toContain(
       'command: ["node", "--import", "tsx", "scripts/staging-admin-bootstrap.ts"]',
+    );
+    expect(bootstrap).toContain(
+      "KEYRANO_STAGING_ADMIN_ROLE: ${KEYRANO_STAGING_ADMIN_ROLE-PROJECT_OWNER}",
+    );
+    expect(serviceBlock("keycore-admin")).not.toContain(
+      "KEYRANO_STAGING_ADMIN_ROLE:",
     );
   });
 });

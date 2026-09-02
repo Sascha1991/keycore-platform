@@ -103,6 +103,7 @@ services:
     environment:
       KEYCORE_ENV: STAGING
       KEYCORE_STAGING_POSTGRES_PASSWORD: ${KEYCORE_STAGING_POSTGRES_PASSWORD:?staging PostgreSQL password is required}
+      KEYRANO_STAGING_ADMIN_ROLE: ${KEYRANO_STAGING_ADMIN_ROLE-PROJECT_OWNER}
       KEYRANO_STAGING_ADMIN_SESSION_CODE: ${KEYRANO_STAGING_ADMIN_SESSION_CODE:?staging admin session code is required}
       KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET: ${KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET:?staging admin session hash secret is required}
     command: ["node", "--import", "tsx", "scripts/staging-admin-bootstrap.ts"]

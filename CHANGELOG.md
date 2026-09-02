@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added staging-only restricted-role Human-UAT support to the KS-ADMIN-01
+  synthetic Admin bootstrap. The authoritative existing role allowlist is
+  enforced, `PROJECT_OWNER` remains the absent-variable default, role changes
+  revoke other active assignments and prior sessions, and invalid roles fail
+  closed. Production authorization behavior and capability mappings are
+  unchanged and unapproved.
+
 - Fixed the KS-ADMIN-01 mobile Orders presentation found unusable during
   Human-UAT at approximately 500 px. Desktop retains its table, while narrow
   layouts present the same operational fields as labelled stacked entries and
