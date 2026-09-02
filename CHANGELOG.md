@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Hardened the KeyRaNo `Meine Käufe` presentation so purchase status pills and
+  the empty-purchase state retain accessible dark/purple account styling even
+  when WooCommerce or theme defaults are present. Status and account behavior
+  are unchanged.
+
 - Normalized the Footer, Help & Service and Legal presentation onto the
   PR #49 squash-merged Invoice Transport. The product owner confirmed all
   twelve staging footer links work and bootstrap remains idempotent; legal,
