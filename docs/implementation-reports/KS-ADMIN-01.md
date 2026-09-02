@@ -59,6 +59,10 @@ Database-enabled Vitest runs use one file worker to avoid unrelated isolated
 schema migrations exhausting a shared CI PostgreSQL service; concurrency inside
 the persistence tests remains enabled and unchanged.
 
+The repository recovery exercise and its current runbook now validate migration
+baseline 028. This keeps the isolated backup/restore gate aligned with the Admin
+schema addition without weakening any recovery or database invariant.
+
 ## Human review
 
 Focused browser UAT is still required for login, role-denial UX, search,
