@@ -70,6 +70,14 @@ starts `scripts/staging-admin-server.ts`; a focused regression test preserves
 the Storefront default, the separate Admin bootstrap command and the absence of
 the Storefront origin variable from the Admin service.
 
+The following browser login retest found that `Referrer-Policy: no-referrer`
+caused the HTML form request to arrive with `Origin: null`, which the strict
+origin guard correctly rejected. Admin responses now use the restrictive
+`same-origin` policy so same-origin form posts retain their concrete Origin.
+Exact-origin validation remains unchanged; null, missing and cross-origin values
+remain rejected. Human acceptance is still `IN_REVIEW / NOT_APPROVED` pending a
+new manual staging retest.
+
 ## Human review
 
 Focused browser UAT is still required for login, role-denial UX, search,

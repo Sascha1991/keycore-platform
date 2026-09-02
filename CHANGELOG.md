@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Kept strict Admin login Origin validation while changing the HTML response
+  referrer policy to `same-origin`, preventing browsers from submitting the
+  same-origin login form with `Origin: null`. Null, missing and cross-origin
+  values remain rejected; Human Acceptance remains unapproved pending retest.
+
 - Fixed the KS-ADMIN-01 staging runtime wiring so the shared image starts the
   dedicated Admin server for `keycore-admin`, while Storefront and Admin
   bootstrap commands remain unchanged and independently regression-tested.

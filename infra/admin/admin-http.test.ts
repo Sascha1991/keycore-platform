@@ -57,16 +57,46 @@ describe("AdminHttpController", () => {
     expect(response.headers["Content-Security-Policy"]).toContain(
       "frame-ancestors 'none'",
     );
+  });
+
+  it("keeps browser form POSTs compatible with strict exact-origin validation", async () => {
+    const controller = fixture();
+    const login = await controller.handle(request("GET", "/admin/login"));
+    const dashboard = await controller.handle(authenticated("GET", "/admin/"));
+
+    expect(login.headers["Referrer-Policy"]).toBe("same-origin");
+    expect(dashboard.headers["Referrer-Policy"]).toBe("same-origin");
+    expect(login.headers["Cache-Control"]).toBe("no-store, max-age=0");
+    expect(login.headers["X-Content-Type-Options"]).toBe("nosniff");
+    expect(login.headers["X-Frame-Options"]).toBe("DENY");
+    expect(login.headers["Cross-Origin-Opener-Policy"]).toBe("same-origin");
+    expect(login.body.match(/name="session_code"/gu)).toHaveLength(1);
+    expect(login.body).not.toMatch(/name="csrf"|name="origin"/u);
+
     await expect(
       controller.handle(
         request(
           "POST",
           "/admin/login",
-          { origin: "https://attacker.invalid" },
-          { session_code: rawSession },
+          { origin },
+          { session_code: "invalid-session-code-longer-than-32-bytes" },
         ),
       ),
-    ).resolves.toMatchObject({ statusCode: 400 });
+    ).resolves.toMatchObject({ statusCode: 401 });
+
+    for (const headers of [
+      {},
+      { origin: "null" },
+      { origin: "https://attacker.invalid" },
+    ]) {
+      await expect(
+        controller.handle(
+          request("POST", "/admin/login", headers, {
+            session_code: rawSession,
+          }),
+        ),
+      ).resolves.toMatchObject({ statusCode: 400 });
+    }
   });
 
   it("renders safe order data and never includes key material", async () => {

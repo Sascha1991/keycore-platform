@@ -346,7 +346,8 @@ const securityHeaders = (
     "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   "Content-Type": "text/html; charset=utf-8",
   "Cross-Origin-Opener-Policy": "same-origin",
-  "Referrer-Policy": "no-referrer",
+  // Same-origin form POSTs must retain a concrete Origin for exact validation.
+  "Referrer-Policy": "same-origin",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   ...additional,
