@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed the KS-ADMIN-01 staging runtime wiring so the shared image starts the
+  dedicated Admin server for `keycore-admin`, while Storefront and Admin
+  bootstrap commands remain unchanged and independently regression-tested.
+
 - Added KS-ADMIN-01, the first separate KeyRaNo Admin foundation with hash-only
   sessions, explicit role/capability enforcement, audited Dashboard and bounded
   PostgreSQL order search/detail views. Product-Key access remains a POST/CSRF-

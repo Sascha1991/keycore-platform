@@ -64,6 +64,12 @@ baseline 028, all 28 migration records and the three restored Admin tables. This
 keeps the isolated backup/restore gate aligned with the Admin schema addition
 without weakening any recovery or database invariant.
 
+The Human-UAT deployment exposed that the Admin service inherited the shared
+image's Storefront default command. The staging Compose service now explicitly
+starts `scripts/staging-admin-server.ts`; a focused regression test preserves
+the Storefront default, the separate Admin bootstrap command and the absence of
+the Storefront origin variable from the Admin service.
+
 ## Human review
 
 Focused browser UAT is still required for login, role-denial UX, search,
