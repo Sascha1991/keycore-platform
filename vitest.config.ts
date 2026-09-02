@@ -7,6 +7,7 @@ export default defineConfig({
       "infra/recovery/recovery-exercise.test.ts",
     ],
     include: ["infra/**/*.test.ts", "packages/**/*.test.ts"],
+    ...(process.env.KEYCORE_TEST_DATABASE_URL ? { maxWorkers: 1 } : {}),
     passWithNoTests: false,
   },
 });

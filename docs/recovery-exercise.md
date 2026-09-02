@@ -4,10 +4,14 @@
 
 `npm run recovery:exercise` validates REC-001 through REC-018 against real
 ephemeral PostgreSQL and Redis services. It creates distinct disposable source
-and restore databases, applies migration 027, seeds representative synthetic
+and restore databases, applies migrations through 028, seeds representative synthetic
 commerce state, creates a native custom-format backup, restores it into the
 empty target, queries the restored schema and continues application work only
 against the target.
+
+Baseline validation requires all 28 migration records through `028` and the
+restored Admin identity, role-assignment and hash-only session tables in
+addition to the existing commerce and operations structures.
 
 The exercise uses no production data, provider call, WooCommerce mutation,
 customer email or Product Key plaintext. Encrypted fulfillment bytes are
@@ -16,26 +20,26 @@ flushed and rebuilt without losing or authorizing business state.
 
 ## Scenario Map
 
-| Scenario | Recovery proof                                                         |
-| -------- | ---------------------------------------------------------------------- |
-| REC-001  | Non-empty custom backup, SHA-256, manifest and tool metadata           |
-| REC-002  | Restore into a new independently reachable database                    |
-| REC-003  | Migration 027, required tables, indexes and triggers queried in target |
-| REC-004  | Orders, payments, PriceLocks, history and versions preserved           |
-| REC-005  | Dispatched outbox stays dispatched; pending work resumes once          |
-| REC-006  | Successful and ambiguous procurement identities preserved              |
-| REC-007  | Ambiguous dispatch reconciles without retry or fallback purchase       |
-| REC-008  | Encrypted fulfillment relationship restored without plaintext          |
-| REC-009  | Ownership and consumed delivery capability remain stable               |
-| REC-010  | Active guest claim resumes once; consumed claim cannot replay          |
-| REC-011  | Completed refund state remains terminal and unique                     |
-| REC-012  | ALLOW, REVIEW and DENY risk evidence remains intact                    |
-| REC-013  | Support visibility and supplier-claim history remain linked            |
-| REC-014  | Six durable emergency controls remain paused                           |
-| REC-015  | Empty Redis cannot erase state or bypass controls                      |
-| REC-016  | Truncated backup copy fails digest validation before restore           |
-| REC-017  | Production, missing, ambiguous, same and unsafe targets are rejected   |
-| REC-018  | Repository reads restored order and creates a new independent order    |
+| Scenario | Recovery proof                                                                  |
+| -------- | ------------------------------------------------------------------------------- |
+| REC-001  | Non-empty custom backup, SHA-256, manifest and tool metadata                    |
+| REC-002  | Restore into a new independently reachable database                             |
+| REC-003  | Migration baseline 028, required tables, indexes and triggers queried in target |
+| REC-004  | Orders, payments, PriceLocks, history and versions preserved                    |
+| REC-005  | Dispatched outbox stays dispatched; pending work resumes once                   |
+| REC-006  | Successful and ambiguous procurement identities preserved                       |
+| REC-007  | Ambiguous dispatch reconciles without retry or fallback purchase                |
+| REC-008  | Encrypted fulfillment relationship restored without plaintext                   |
+| REC-009  | Ownership and consumed delivery capability remain stable                        |
+| REC-010  | Active guest claim resumes once; consumed claim cannot replay                   |
+| REC-011  | Completed refund state remains terminal and unique                              |
+| REC-012  | ALLOW, REVIEW and DENY risk evidence remains intact                             |
+| REC-013  | Support visibility and supplier-claim history remain linked                     |
+| REC-014  | Six durable emergency controls remain paused                                    |
+| REC-015  | Empty Redis cannot erase state or bypass controls                               |
+| REC-016  | Truncated backup copy fails digest validation before restore                    |
+| REC-017  | Production, missing, ambiguous, same and unsafe targets are rejected            |
+| REC-018  | Repository reads restored order and creates a new independent order             |
 
 ## Post-Restore Audit
 

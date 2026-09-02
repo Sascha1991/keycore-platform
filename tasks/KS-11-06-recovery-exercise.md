@@ -11,7 +11,7 @@ application-continuity checks using synthetic data only.
 - `npm run recovery:exercise` covers REC-001 through REC-018.
 - Source and target are distinct disposable databases; unsafe identities fail.
 - A real custom-format `pg_dump` and `pg_restore` execute in CI.
-- Migration 027 and required structures are queried in the restored target.
+- The current migration baseline 028 and required structures are queried in the restored target.
 - Restored repositories preserve commercial, ownership, ambiguity, encrypted
   fulfillment, guest-claim, fraud, support, control and outbox invariants.
 - Empty Redis does not erase authority or enable a paused operation.
@@ -25,4 +25,4 @@ application-continuity checks using synthetic data only.
 ## Delivery
 
 Open one PR named `KS-11-06: Add recovery exercise and restore validation` and
-do not merge it. Migration baseline remains 027.
+do not merge it. The recovery exercise now validates migration baseline 028.

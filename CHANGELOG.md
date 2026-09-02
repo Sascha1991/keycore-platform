@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- Added staging-only restricted-role Human-UAT support to the KS-ADMIN-01
+  synthetic Admin bootstrap. The authoritative existing role allowlist is
+  enforced, `PROJECT_OWNER` remains the absent-variable default, role changes
+  revoke other active assignments and prior sessions, and invalid roles fail
+  closed. Production authorization behavior and capability mappings are
+  unchanged and unapproved.
+
+- Fixed the KS-ADMIN-01 mobile Orders presentation found unusable during
+  Human-UAT at approximately 500 px. Desktop retains its table, while narrow
+  layouts present the same operational fields as labelled stacked entries and
+  reflow filters, details, navigation and login without page-level horizontal
+  scrolling. Security and business behavior are unchanged; Human Acceptance
+  remains `IN_REVIEW / NOT_APPROVED` pending staging retest and PR #52 remains
+  unmerged.
+
+- Kept strict Admin login Origin validation while changing the HTML response
+  referrer policy to `same-origin`, preventing browsers from submitting the
+  same-origin login form with `Origin: null`. Null, missing and cross-origin
+  values remain rejected; Human Acceptance remains unapproved pending retest.
+
+- Fixed the KS-ADMIN-01 staging runtime wiring so the shared image starts the
+  dedicated Admin server for `keycore-admin`, while Storefront and Admin
+  bootstrap commands remain unchanged and independently regression-tested.
+
+- Added KS-ADMIN-01, the first separate KeyRaNo Admin foundation with hash-only
+  sessions, explicit role/capability enforcement, audited Dashboard and bounded
+  PostgreSQL order search/detail views. Product-Key access remains a POST/CSRF-
+  protected fail-closed shell with no decryption; production IdP/MFA, Admin UAT,
+  KS-11-07 and `SECURITY-READINESS` remain unapproved.
+
 - Hardened the KeyRaNo `Meine Käufe` presentation so purchase status pills and
   the empty-purchase state retain accessible dark/purple account styling even
   when WooCommerce or theme defaults are present. Status and account behavior

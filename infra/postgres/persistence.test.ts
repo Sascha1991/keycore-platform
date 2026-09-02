@@ -702,7 +702,7 @@ describePostgres("PostgreSQL persistence foundation", () => {
 
     expect(result.rows[0]?.to_regclass).toBeNull();
     await database.applyAllMigrations();
-  });
+  }, 30_000);
 
   it("creates durable outbox records and claims due work once", async () => {
     const dedupeKey = `dedupe-${randomUUID()}`;

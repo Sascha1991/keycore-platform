@@ -11,7 +11,7 @@ import { PostgresTestDatabase, quoteIdentifier } from "./test-database.js";
 const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
 
 describe.skipIf(!connectionString)("staging deployment persistence", () => {
-  it("initializes through migration 027 and seeds only a small synthetic dataset idempotently", async () => {
+  it("initializes through migration 028 and seeds only a small synthetic dataset idempotently", async () => {
     await withDatabase(async (database) => {
       const expectedVersions = (await loadMigrations()).map(
         (migration) => migration.version,
@@ -20,7 +20,7 @@ describe.skipIf(!connectionString)("staging deployment persistence", () => {
         "SELECT version FROM keycore_migrations ORDER BY version",
       );
       expect(applied.rows.map((row) => row.version)).toEqual(expectedVersions);
-      expect(applied.rows.at(-1)?.version).toBe("027");
+      expect(applied.rows.at(-1)?.version).toBe("028");
 
       const boundary = new TestTransactionBoundary(database);
       const input = {

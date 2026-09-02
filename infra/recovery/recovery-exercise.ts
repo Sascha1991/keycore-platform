@@ -39,8 +39,12 @@ import { loadMigrations } from "../postgres/migrations.js";
 import { PostgresOperationsControlRepository } from "../postgres/operations-control-repositories.js";
 import { PostgresOrderRepository } from "../postgres/order-repositories.js";
 
-const expectedMigrationBaseline = "027";
+const expectedMigrationBaseline = "028";
+const expectedMigrationCount = 28;
 const requiredTables = [
+  "admin_identities",
+  "admin_role_assignments",
+  "admin_sessions",
   "customer_key_delivery_approvals",
   "fulfillment_operations",
   "fulfillment_secrets",
@@ -100,7 +104,7 @@ export interface RecoveryExerciseResult {
   readonly invariantCounts: Readonly<Record<string, number>>;
   readonly keyManagementRecovery: "DEFERRED_TO_PHASE_12";
   readonly manifestSha256: string;
-  readonly migrationBaseline: "027";
+  readonly migrationBaseline: "028";
   readonly productionRpoTarget: "NOT_YET_APPROVED";
   readonly productionRtoTarget: "NOT_YET_APPROVED";
   readonly redis: {
@@ -321,7 +325,7 @@ export const runRecoveryExercise = async (input: {
       invariantCounts,
       keyManagementRecovery: "DEFERRED_TO_PHASE_12",
       manifestSha256,
-      migrationBaseline: "027",
+      migrationBaseline: expectedMigrationBaseline,
       productionRpoTarget: "NOT_YET_APPROVED",
       productionRtoTarget: "NOT_YET_APPROVED",
       redis: redisResult,
@@ -379,7 +383,7 @@ const validateRestoredSchema = async (db: Queryable): Promise<void> => {
     "SELECT version FROM keycore_migrations ORDER BY version",
   );
   if (
-    migrations.rows.length !== 27 ||
+    migrations.rows.length !== expectedMigrationCount ||
     migrations.rows.at(-1)?.version !== expectedMigrationBaseline
   ) {
     throw new Error("RECOVERY_MIGRATION_BASELINE_INVALID");

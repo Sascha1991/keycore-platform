@@ -4,6 +4,7 @@ WORKDIR /workspace
 COPY package.json package-lock.json tsconfig.json ./
 RUN npm install -g npm@11.6.2 && npm ci
 COPY packages ./packages
+COPY apps ./apps
 COPY infra ./infra
 COPY scripts ./scripts
 

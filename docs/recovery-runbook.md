@@ -17,7 +17,7 @@ must differ. Production, missing or ambiguous classifications fail closed.
 
 1. Confirm the environment is isolated and contains synthetic data only.
 2. Run `npm run recovery:exercise`.
-3. Confirm native backup and restore completed and migration 027 was queried in
+3. Confirm native backup and restore completed and migration baseline 028 was queried in
    the restored target.
 4. Confirm all REC scenarios and post-restore invariant counts passed.
 5. Confirm Redis was emptied and rebuilt without changing PostgreSQL truth or

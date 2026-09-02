@@ -172,6 +172,12 @@ synthetic registered-customer WooCommerce checkout with existing KeyCore order,
 payment and ownership services. It does not start production payment,
 procurement, fulfillment, release or approval work.
 
+KS-ADMIN-01 adds the first separate internal KeyRaNo backoffice foundation with
+hash-only Admin sessions, explicit roles/capabilities, Dashboard and safe
+PostgreSQL-backed Bestellungen views. Product-Key access is an audited,
+capability-controlled fail-closed shell; actual decryption, production IdP/MFA,
+Admin UAT and deployment to `admin.keyrano.de` remain unapproved.
+
 For Phases 11 and 12, consolidated repository tasks do not supersede detailed
 approved acceptance tasks. Every criterion must be evidenced, explicitly
 deferred to a named task for a valid dependency reason, or superseded by a
