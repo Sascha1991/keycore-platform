@@ -10,10 +10,9 @@ judge the actual customer and operator experience.
 
 The repository now has a synthetic staging browser surface for catalog, product,
 cart, registered-customer checkout/order creation, mapped account purchases,
-one-time Guest Claim and explicit secure reveal. Human review passed UAT-001,
-UAT-002 and UAT-006. UAT-015 is technically executable but remains pending its
-complete human claim/denial/replay evidence; invoice documents and composed
-fulfillment still block UAT-018.
+one-time Guest Claim, explicit secure reveal and synthetic invoice transport.
+Human review passed UAT-001, UAT-002, UAT-006, UAT-015 and UAT-018. Other
+required scenarios remain pending or unavailable.
 
 Human acceptance is therefore `IN_REVIEW`, not `APPROVED`. Phase 11 remains
 incomplete, Phase 12 remains production-incomplete and `SECURITY-READINESS` remains

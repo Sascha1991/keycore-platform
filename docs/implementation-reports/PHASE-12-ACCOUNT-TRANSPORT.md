@@ -2,10 +2,10 @@
 
 ## Status
 
-Implementation complete on a stacked feature branch based on PR #47 head
-`fdc42fd122caad3dcde6d075da6f3c3b1d401cf1`. Human UAT and PR review remain
-pending. This report does not approve UAT-015, UAT-018, KS-11-07,
-`SECURITY-READINESS` or production release.
+Implementation was completed on a stacked feature branch and subsequently
+squash-merged to `main` as PR #48. The product owner later accepted UAT-015 and
+UAT-018. This report does not approve KS-11-07, `SECURITY-READINESS` or
+production release.
 
 ## Reused Components
 
@@ -74,8 +74,7 @@ The task does not add guest checkout, production authentication, invoice
 documents, procurement, fulfillment, live payment/supplier operations or real
 key delivery.
 
-UAT-015 is technically executable but remains `PENDING` until Sascha performs
-the browser procedure and supplies redacted evidence. UAT-018 remains
-`PENDING` behind fulfillment, invoice-document and full-walkthrough evidence.
-UAT-002 remains `PASS`. KS-11-07 remains incomplete and
-`SECURITY-READINESS` remains `NOT_APPROVED`.
+UAT-015 is `PASS` from the product owner's 2026-09-02 result, and UAT-018 is
+`PASS` from the separate 2026-09-01 result. UAT-002 remains `PASS`. Other UAT
+scenarios remain open, so KS-11-07 stays incomplete and
+`SECURITY-READINESS` stays `NOT_APPROVED`.

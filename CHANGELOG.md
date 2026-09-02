@@ -2,13 +2,18 @@
 
 ## Unreleased
 
+- Normalized Invoice Transport onto the PR #48 squash-merged Account Transport,
+  preserving both secure paths and recording the product owner's UAT-015
+  `PASS`. UAT-018 remains `PASS`; KS-11-07, `SECURITY-READINESS` and production
+  release remain unapproved.
+
 - Added the secure staging-only `Kauf hinzufügen` transport by composing the
   existing verified-same-email, one-time Guest Claim service behind the signed
   WordPress bridge. The deterministic synthetic fixture stores only a claim
   hash and preserves consumed ownership across bootstrap; all production and
   security gates stay closed.
 
-- Unified `Meine Käufe`, the fail-closed `Kauf hinzufügen` shell and native
+- Unified `Meine Käufe`, the secure `Kauf hinzufügen` flow and native
   WooCommerce `Kontodetails` with the dark responsive KeyRaNo account design.
   Existing order projections, WooCommerce form handling, ownership, Claim,
   Invoice and Product Key security boundaries remain unchanged.
@@ -32,9 +37,9 @@
 
 - Recorded the KeyRaNo product owner's successful 2026-08-31 UAT-002 execution
   for the complete synthetic registered-customer checkout, resulting owned
-  purchase, ordinary-confirmation key omission and cross-owner denial. UAT-015,
-  UAT-018, KS-11-07 and `SECURITY-READINESS` remain pending or unapproved; no
-  production approval or live external operation was introduced.
+  purchase, ordinary-confirmation key omission and cross-owner denial. At that
+  review UAT-015 and UAT-018 were pending; their later `PASS` results do not
+  approve KS-11-07, `SECURITY-READINESS` or production.
 
 - Added the staging-only registered-customer checkout composition from a native
   WooCommerce product/cart/checkout through explicit synthetic success, failure

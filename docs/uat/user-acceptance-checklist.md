@@ -8,13 +8,13 @@ are authoritative in `artifacts/user-acceptance/uat-readiness.json`.
 
 On 2026-08-30 the product owner completed and passed UAT-001 and UAT-006 using
 the synthetic staging fixture. On 2026-08-31 the product owner completed and
-passed UAT-002. UAT-015 and UAT-018 remain pending because their Guest Claim,
-fulfillment and invoice steps had not yet been executed at that review. The
-product owner subsequently confirmed UAT-018 `PASS` on 2026-09-01 after the
-secure invoice correction; UAT-015 remains pending. The safe textual records are
+passed UAT-002. UAT-015 and UAT-018 were pending at that review. The product
+owner subsequently confirmed UAT-018 `PASS` on 2026-09-01 and UAT-015 `PASS`
+on 2026-09-02. The safe textual records are
 `docs/uat/human-uat-2026-08-30.md` and
 `docs/uat/open-scenario-reconciliation-2026-08-31.md`, with the later UAT-018
-result in `docs/uat/human-uat-2026-09-01-invoice.md`.
+result in `docs/uat/human-uat-2026-09-01-invoice.md` and the UAT-015 result in
+`docs/uat/human-uat-2026-09-02-account-history.md`.
 
 | ID      | Where to go                                   | What to do                                                           | What should happen                                                   | Failure                                                         | Safe evidence                          |
 | ------- | --------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------- |

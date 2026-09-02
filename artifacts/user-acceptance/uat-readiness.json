@@ -68,10 +68,8 @@
       "expectedResult": "Ownership becomes permanent, replay is denied, and an order ID alone cannot claim the purchase.",
       "validatedRule": "Guest claim requires verified same-email identity and a one-time credential.",
       "automatedEvidence": ["EVIDENCE-01", "EVIDENCE-03", "EVIDENCE-04"],
-      "uiReadiness": "PARTIALLY_EXECUTABLE",
-      "reason": "The Kauf hinzufuegen account page exists, but the one-time verified-same-email claim adapter remains intentionally disconnected.",
-      "targetDependency": "PHASE_12_ACCOUNT_TRANSPORT",
-      "humanActionRequired": "Execute after the account claim UI is connected in approved staging.",
+      "uiReadiness": "EXECUTABLE_NOW",
+      "humanActionRequired": "The account claim transport is executable; retain only safe redacted evidence if this dedicated scenario is reviewed.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {
@@ -85,10 +83,8 @@
       "expectedResult": "The claim is denied, ownership is unchanged, and the response reveals no sensitive information.",
       "validatedRule": "Immutable checkout email must match the verified account email.",
       "automatedEvidence": ["EVIDENCE-04"],
-      "uiReadiness": "NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY",
-      "reason": "No browser claim form or customer-safe rendered denial response exists.",
-      "targetDependency": "PHASE_12_ACCOUNT_TRANSPORT",
-      "humanActionRequired": "Execute after the claim UI exists using isolated synthetic accounts.",
+      "uiReadiness": "EXECUTABLE_NOW",
+      "humanActionRequired": "Execute only with isolated synthetic accounts and retain only the generic denial result.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {
@@ -252,7 +248,7 @@
       "validatedRule": "Account projections are ownership-scoped and do not disclose keys in list views.",
       "automatedEvidence": ["EVIDENCE-04"],
       "uiReadiness": "EXECUTABLE_NOW",
-      "humanActionRequired": "Execute the synthetic claim, wrong-code, wrong-user, replay, cross-owner and later-session checks on approved staging; capture redacted evidence without the claim code.",
+      "humanActionRequired": "Human execution was completed and recorded on 2026-09-02; preserve only safe evidence without claim codes or private identifiers.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {

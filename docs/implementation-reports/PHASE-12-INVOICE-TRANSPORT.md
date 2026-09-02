@@ -3,9 +3,9 @@
 ## Result
 
 Implemented an owner-only synthetic invoice download for the isolated KeyRaNo
-staging account. The branch starts from PR #47 because its account detail
-projection and signed bridge are sufficient; PR #48 Guest Claim behavior is
-unrelated and was not copied into this branch.
+staging account. After PR #48 was squash-merged, this branch was normalized on
+the resulting `main`; it reuses but does not duplicate or weaken the Guest Claim
+and Account Transport behavior now present there.
 
 ## Architecture And Security
 
@@ -53,8 +53,7 @@ or production business behavior was added.
 ## Gates And Limitations
 
 - UAT-002 remains `PASS`.
-- UAT-015 remains `PENDING`; PR #48 carries its separate Guest Claim transport
-  and still requires human evidence.
+- The product owner confirmed UAT-015 `PASS` on 2026-09-02 after PR #48 merged.
 - The product owner subsequently confirmed UAT-018 `PASS` on 2026-09-01 after
   the secure invoice correction. The supplied result is recorded without
   inventing screenshots or expanding its synthetic staging scope.
@@ -104,10 +103,11 @@ never rendered. Empty and backend-unavailable states use generic dark cards.
 A live local outage check returned only the generic unavailable message without
 technical details or identifiers.
 
-`Kauf hinzufügen` remains an explicitly unavailable, fail-closed shell because
-the secure Guest Claim browser integration is outside this branch. Its visual
-controls are disabled and it has no form, request action, Claim Code, nonce,
-HMAC or client-side authority. No unsupported claim behavior was fabricated.
+After normalization onto the PR #48 squash merge, `Kauf hinzufügen` retains the
+active Account Transport form inside the dark account surface. The browser
+still supplies only the bounded password-style Claim Code through the existing
+nonce-, same-origin- and HMAC-protected path; no order ID, email or client-side
+ownership authority was introduced by the redesign.
 
 `Kontodetails` keeps WooCommerce's original POST form, nonce, validation,
 password fields, show/hide controls and save handler. Plugin hooks add only the
@@ -119,8 +119,6 @@ Safe synthetic staging screenshots:
 
 - `docs/screenshots/phase-12-invoice-transport/account-purchases-desktop.png`
 - `docs/screenshots/phase-12-invoice-transport/account-purchases-mobile.png`
-- `docs/screenshots/phase-12-invoice-transport/account-add-purchase-desktop.png`
-- `docs/screenshots/phase-12-invoice-transport/account-add-purchase-mobile.png`
 - `docs/screenshots/phase-12-invoice-transport/account-details-desktop.png`
 - `docs/screenshots/phase-12-invoice-transport/account-details-mobile.png`
 
@@ -139,6 +137,6 @@ skips; npm audit reported zero vulnerabilities; Secret Scan, UAT validator and
 finished with 13 passing tests; an initial combined run crossed one existing
 five-second test timeout by 12 ms, then the complete order file passed 12/12 on
 its immediate isolated rerun without a code, timeout or schema change. UAT-018
-remains `PASS`, UAT-015 is unchanged, KS-11-07 remains incomplete/unapproved and
+and UAT-015 remain `PASS`, KS-11-07 remains incomplete/unapproved and
 `SECURITY-READINESS` remains `NOT_APPROVED`. No production approval is
 introduced.

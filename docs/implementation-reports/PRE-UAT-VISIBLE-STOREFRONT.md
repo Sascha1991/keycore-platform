@@ -89,8 +89,9 @@ UAT-004, UAT-007, UAT-012, UAT-016 and UAT-018 moved to
 
 On 2026-08-30 the product owner passed UAT-001 and UAT-006 using the isolated
 synthetic staging fixture. Checkout-shell and direct owned-purchase observations
-were accepted, but UAT-002, UAT-015 and UAT-018 remain `PENDING` because their
-complete steps were not executed. Human acceptance is `IN_REVIEW`; overall human
+were accepted, while UAT-002, UAT-015 and UAT-018 were `PENDING` because their
+complete steps had not been executed. Their later results are recorded in the
+dedicated follow-up reports. Human acceptance is `IN_REVIEW`; overall human
 approval and `SECURITY-READINESS` remain `NOT_APPROVED`, Phase 11 remains
 incomplete and Phase 12 remains not started.
 

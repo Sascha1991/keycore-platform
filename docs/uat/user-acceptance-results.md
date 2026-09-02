@@ -75,7 +75,7 @@ The current scoped acceptance does not satisfy these complete-approval rules.
 The 2026-08-31 review in
 `docs/uat/open-scenario-reconciliation-2026-08-31.md` maps every required step
 for UAT-002, UAT-015 and UAT-018 to human evidence, automated evidence and any
-remaining browser gate as known on that date. UAT-002 is `PASS`; UAT-015 remains
-and UAT-018 are now `PASS`. Their historical pending assessments are superseded
+remaining browser gate as known on that date. UAT-002, UAT-015 and UAT-018 are
+now `PASS`. Their historical pending assessments are superseded
 only by the product owner's separately recorded 2026-09-01 and 2026-09-02 human
 results; other scenarios and approval gates remain unchanged.

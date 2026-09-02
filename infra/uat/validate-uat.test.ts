@@ -161,7 +161,7 @@ describe("KS-11-07 UAT package lifecycle validator", () => {
       results
         .filter((result) => result.status === "PASS")
         .map((result) => result.scenario),
-    ).toEqual(["UAT-001", "UAT-002", "UAT-006", "UAT-018"]);
+    ).toEqual(["UAT-001", "UAT-002", "UAT-006", "UAT-015", "UAT-018"]);
   });
 
   it("rejects PASS with a null reviewer", async () => {

@@ -12,7 +12,8 @@ invoice approval.
 
 - Base: `PHASE_12_CUSTOMER_CHECKOUT_INTEGRATION` / PR #47.
 - Reuses KS-08-06 invoice metadata and ownership checks.
-- Does not depend on `PHASE_12_ACCOUNT_TRANSPORT` / PR #48 Guest Claim code.
+- Does not duplicate `PHASE_12_ACCOUNT_TRANSPORT`; after PR #48 merged, the
+  invoice branch composes alongside its Guest Claim code from `main`.
 
 ## Acceptance Criteria
 

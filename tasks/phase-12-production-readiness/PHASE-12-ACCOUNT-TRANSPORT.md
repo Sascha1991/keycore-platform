@@ -2,9 +2,10 @@
 
 Risk: CRITICAL
 
-Human approval: Required. Automated implementation makes the Guest Claim path
-executable but cannot approve UAT-015, UAT-018, KS-11-07,
-`SECURITY-READINESS` or production release.
+Human approval: Required. Automated implementation made the Guest Claim path
+executable without approving any gate. The product owner subsequently accepted
+UAT-015 and UAT-018; KS-11-07, `SECURITY-READINESS` and production release
+remain unapproved.
 
 ## Objective
 
@@ -51,7 +52,8 @@ authority for identity, claim consumption and ownership.
       another customer's list/detail access in later sessions.
 - [x] No Product Key, claim secret, HMAC/session secret or production data is
       exposed or committed.
-- [x] UAT-015 and UAT-018 remain `PENDING` until human execution and evidence.
+- [x] Implementation did not infer human acceptance; the later product-owner
+      results for UAT-015 and UAT-018 are recorded separately.
 - [x] UAT-002 remains `PASS`; KS-11-07 and `SECURITY-READINESS` remain unapproved.
 
 ## Rollback
@@ -63,7 +65,6 @@ isolated staging volumes after confirming the environment identity.
 
 ## Human Gate
 
-The product owner must deploy the stacked branch, obtain the synthetic claim
-code through the approved staging channel, execute UAT-015 as both customer A
-and B, and capture redacted screenshots. Claim codes, cookies, HMAC values,
-customer email addresses and private identifiers must not appear in evidence.
+The product owner was required to execute UAT-015 through the approved staging
+channel. The supplied `PASS` is recorded separately without claim codes,
+cookies, HMAC values, customer email addresses or private identifiers.

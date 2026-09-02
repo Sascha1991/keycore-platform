@@ -47,8 +47,9 @@ shared environment.
 
 ## Human Evidence
 
-UAT-015 remains `PENDING` until the product owner executes success, wrong-code,
-wrong-user, replay, cross-owner and later-session checks. Screenshots must be
-redacted and must not contain the claim code, customer email, cookies, request
-signatures, Product Keys or credentials. UAT-018 additionally remains blocked
-by composed fulfillment and invoice-document transport.
+The product owner confirmed UAT-015 `PASS` on 2026-09-02; the scoped textual
+record is `docs/uat/human-uat-2026-09-02-account-history.md`. UAT-018 already
+remains `PASS` from 2026-09-01. Neither result approves KS-11-07,
+`SECURITY-READINESS` or production. Any later screenshots must remain redacted
+and omit claim codes, customer email, cookies, request signatures, Product Keys
+and credentials.
