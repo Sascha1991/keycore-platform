@@ -66,7 +66,9 @@ external deployment prerequisites.
    `infra/docker/staging.env.example`.
 2. Replace every placeholder password/key with staging-only values injected by
    the deployment secret store. Keep `MOCK`, Stripe `TEST`, mail `CAPTURE` and
-   Operations Control authority `DISABLED`.
+   Operations Control authority `DISABLED`. Generate a separate high-entropy
+   `KEYRANO_STAGING_GUEST_CLAIM_CODE` beginning with `SYNTHETIC_`; bootstrap
+   rejects the checked-in `GENERATE_LOCALLY` placeholder.
 3. Export the same ignored environment values for the Node commands.
 4. Validate and start the stack:
 
@@ -120,6 +122,11 @@ It creates matching offers, evidence, decisions and prices only. It creates no
 customer, order, fulfillment secret, encrypted key record or Product Key. It
 does not create the separate 50,000-product corpus reserved for KS-11-03.
 
+The later storefront `keycore-checkout-bootstrap` additionally creates two
+verified synthetic customers and one deterministic unowned synthetic order with
+a hash-only Guest Claim challenge. It never stores the raw claim code, never
+reactivates a consumed challenge and never creates fulfillment/key material.
+
 ## Readiness And Diagnostics
 
 `npm run staging:preflight` exits non-zero on unsafe configuration, unavailable
@@ -149,7 +156,8 @@ docker compose --env-file infra/docker/staging.env -f infra/docker/compose.stagi
 Verify `KEYCORE_ENV=STAGING`, the deployment ID and the Compose project shown by
 `docker compose ... config` before reset. Never point this procedure at a
 production project or external database. Re-run the fresh bootstrap to recreate
-an empty migrated and synthetically seeded environment.
+an empty migrated and synthetically seeded environment. This destructive reset
+is the only supported way to recreate a consumed human Guest Claim fixture.
 
 ## Safe External Modes
 

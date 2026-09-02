@@ -26,12 +26,15 @@ function __(string $value, string $domain): string { return $value; }
 function plugins_url(string $path, string $file): string { return '/plugins/keycore-platform/' . $path; }
 function wp_enqueue_style(string $handle, string $src, array $deps, string $version): void {}
 function home_url(string $path = ''): string { return 'https://staging.keyrano.de' . $path; }
+function admin_url(string $path = ''): string { return '/wp-admin/' . $path; }
 function esc_url(string $value): string { return $value; }
 function esc_html__(string $value, string $domain): string { return $value; }
 function esc_attr__(string $value, string $domain): string { return $value; }
 function esc_html(string $value): string { return htmlspecialchars($value, ENT_QUOTES); }
 function wc_get_page_permalink(string $page): string { return '/' . $page . '/'; }
 function wc_get_cart_url(): string { return '/cart/'; }
+function wc_get_account_endpoint_url(string $endpoint): string { return '/my-account/' . $endpoint . '/'; }
+function wp_nonce_field(string $action): void { echo '<input type="hidden" name="_wpnonce" value="test-nonce">'; }
 function flush_rewrite_rules(): void {}
 function add_rewrite_endpoint(string $name, int $places): void {}
 function wc_print_notice(string $message, string $type): void {}
@@ -108,6 +111,7 @@ final class FakeBridge implements Bridge
     public function orders(int $wp_user_id, string $customer_id): ?array { return null; }
     public function order(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
     public function reveal(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
+    public function claim(int $wp_user_id, string $customer_id, string $claim_code): ?array { return ['status' => 'CLAIMED']; }
 }
 
 function fixture(string $reference): array
@@ -130,11 +134,18 @@ function assert_true(bool $condition, string $message): void
     if (! $condition) { fwrite(STDERR, $message . PHP_EOL); exit(1); }
 }
 
-foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'admin_post_keyrano_reveal', 'woocommerce_blocks_loaded'] as $hook) {
+foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'woocommerce_account_kauf-hinzufuegen_endpoint', 'admin_post_keyrano_reveal', 'admin_post_keyrano_claim_purchase', 'woocommerce_blocks_loaded'] as $hook) {
     assert_true(in_array($hook, $GLOBALS['keyrano_test_actions'], true), 'Missing hook: ' . $hook);
 }
 assert_true(in_array('woocommerce_account_menu_items', $GLOBALS['keyrano_test_filters'], true), 'Missing account menu filter');
 assert_true(in_array('woocommerce_payment_gateways', $GLOBALS['keyrano_test_filters'], true), 'Synthetic staging gateways are not registered');
+$account = new \KeyRaNo\Storefront\Account(new FakeBridge());
+ob_start();
+$account->render_claim_shell();
+$claim_form = (string) ob_get_clean();
+assert_true(false !== strpos($claim_form, 'type="password"'), 'Guest claim code is not protected as a password input');
+assert_true(false !== strpos($claim_form, 'keyrano_claim_purchase'), 'Guest claim form is not CSRF-bound');
+assert_true(false === stripos($claim_form, 'Bestellnummer'), 'Guest claim form exposes an unnecessary order identifier');
 assert_true('Bezahlt' === \KeyRaNo\Storefront\Plugin::status_label('CAPTURED'), 'Captured status was not localized');
 assert_true('In Bearbeitung' === \KeyRaNo\Storefront\Plugin::status_label('UNKNOWN_INTERNAL_STATE'), 'Unknown status did not use a safe customer label');
 $gateways = \KeyRaNo\Storefront\Checkout_Registration_Loader::gateways([]);

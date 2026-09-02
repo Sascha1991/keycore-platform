@@ -56,6 +56,43 @@ final class Account
         require KEYRANO_PLUGIN_DIR . '/templates/account-claim.php';
     }
 
+    public function handle_claim(): void
+    {
+        if (! is_user_logged_in()) {
+            auth_redirect();
+            exit;
+        }
+        $claim_code = isset($_POST['claim_code'])
+            ? sanitize_text_field(wp_unslash((string) $_POST['claim_code']))
+            : '';
+        $nonce = isset($_POST['_wpnonce'])
+            ? sanitize_text_field(wp_unslash((string) $_POST['_wpnonce']))
+            : '';
+        if (! wp_verify_nonce($nonce, 'keyrano_claim_purchase') || ! $this->same_origin()) {
+            $this->render_claim_response('ACCESS_DENIED', 403);
+        }
+        if (
+            strlen($claim_code) < 16 ||
+            strlen($claim_code) > 128 ||
+            1 !== preg_match('/^[A-Za-z0-9_-]+(?:-[A-Za-z0-9_-]+)*$/', $claim_code)
+        ) {
+            $this->render_claim_response('CLAIM_INVALID', 400);
+        }
+        $identity = $this->identity();
+        $payload = null === $identity
+            ? null
+            : $this->bridge->claim(
+                $identity['wpUserId'],
+                $identity['customerId'],
+                $claim_code
+            );
+        $status = is_array($payload) ? (int) ($payload['_httpStatus'] ?? 503) : 503;
+        $result = 200 === $status && 'CLAIMED' === ($payload['status'] ?? null)
+            ? 'CLAIMED'
+            : (503 === $status ? 'TEMPORARILY_UNAVAILABLE' : 'CLAIM_INVALID');
+        $this->render_claim_response($result, $status);
+    }
+
     public function handle_reveal(): void
     {
         if (! is_user_logged_in()) {
@@ -112,6 +149,17 @@ final class Account
             ? (string) ($payload['value'] ?? '')
             : '';
         require KEYRANO_PLUGIN_DIR . '/templates/account-reveal.php';
+        exit;
+    }
+
+    private function render_claim_response(string $result, int $status): never
+    {
+        nocache_headers();
+        header('Cache-Control: no-store, no-cache, must-revalidate, private', true);
+        header('Pragma: no-cache', true);
+        header('Referrer-Policy: no-referrer', true);
+        status_header($status);
+        require KEYRANO_PLUGIN_DIR . '/templates/account-claim-result.php';
         exit;
     }
 }

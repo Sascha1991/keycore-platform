@@ -54,6 +54,7 @@ services:
       KEYCORE_ENV: STAGING
       KEYCORE_DEPLOYMENT_ID: ${KEYCORE_DEPLOYMENT_ID:?staging deployment ID is required}
       KEYCORE_STAGING_POSTGRES_PASSWORD: ${KEYCORE_STAGING_POSTGRES_PASSWORD:?staging PostgreSQL password is required}
+      KEYRANO_STAGING_GUEST_CLAIM_CODE: ${KEYRANO_STAGING_GUEST_CLAIM_CODE:?synthetic staging guest claim code is required}
     command:
       ["node", "--import", "tsx", "scripts/staging-checkout-bootstrap.ts"]
     restart: "no"

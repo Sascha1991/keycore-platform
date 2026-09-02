@@ -20,6 +20,8 @@ final class Plugin
         add_action('woocommerce_account_kauf-hinzufuegen_endpoint', [$account, 'render_claim_shell']);
         add_action('admin_post_keyrano_reveal', [$account, 'handle_reveal']);
         add_action('admin_post_nopriv_keyrano_reveal', [$account, 'handle_reveal']);
+        add_action('admin_post_keyrano_claim_purchase', [$account, 'handle_claim']);
+        add_action('admin_post_nopriv_keyrano_claim_purchase', [$account, 'handle_claim']);
         add_filter('woocommerce_payment_gateways', [Checkout_Registration_Loader::class, 'gateways']);
         add_action('woocommerce_blocks_loaded', [Checkout_Registration_Loader::class, 'blocks_loaded']);
         add_action('wp_enqueue_scripts', [self::class, 'assets']);

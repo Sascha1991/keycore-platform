@@ -13,10 +13,14 @@ Generate values locally and place them only in the ignored environment file:
 openssl rand -base64 48  # KEYRANO_STAGING_BRIDGE_SECRET
 openssl rand -base64 32  # KEYRANO_STAGING_BROWSER_MASTER_KEY
 openssl rand -base64 24  # each WordPress password
+printf 'SYNTHETIC_%s\n' "$(openssl rand -hex 32)"  # KEYRANO_STAGING_GUEST_CLAIM_CODE
 ```
 
 Set `KEYRANO_STAGING_SYNTHETIC_KEY` to a locally chosen value beginning with
-`SYNTHETIC_`. Never reuse or paste a real Product Key. For local browser use,
+`SYNTHETIC_`. Set `KEYRANO_STAGING_GUEST_CLAIM_CODE` to the separately generated
+synthetic value above. The checked-in `GENERATE_LOCALLY` placeholders are not
+runtime values, and the claim placeholder is rejected by bootstrap. Never reuse
+or paste a real Product Key or claim credential. For local browser use,
 set both staging public origins to `http://localhost:18080` and set
 `KEYRANO_STAGING_FORCE_SSL_ADMIN=false`. For hosted staging, use
 `https://staging.keyrano.de` and keep
@@ -34,7 +38,8 @@ docker compose --env-file .env.staging -f infra/docker/compose.staging.yaml --pr
 Open `http://localhost:18080` for local use. The bootstrap installs WooCommerce,
 activates the KeyRaNo plugin, creates two synthetic customer accounts, verifies
 their expected numeric IDs, installs immutable KeyCore mappings, publishes the
-small synthetic catalog and sets Shop as the front page. It runs as UID/GID
+small synthetic catalog, seeds one hash-only one-time guest claim and sets Shop
+as the front page. It runs as UID/GID
 `33:33`, matching the Apache WordPress image, so no manual `--user` argument or
 world-writable permission change is required. It also activates `de_DE`, sets
 WooCommerce to Germany and EUR, uses German price separators and removes the
@@ -51,7 +56,9 @@ The local HTTP exception applies only to WordPress admin transport in this
 isolated staging stack. It does not alter the exact-origin, nonce, HMAC,
 ownership, rate-limit or no-store controls on secure reveal. A manual reveal
 check must use only the configured synthetic value and must never use or record
-a real Product Key.
+a real Product Key. The Guest Claim code must be transferred to the human tester
+through the approved staging channel and must not appear in screenshots, notes,
+URLs or logs.
 
 ## Stop
 
@@ -60,4 +67,6 @@ docker compose --env-file .env.staging -f infra/docker/compose.staging.yaml down
 ```
 
 Add `--volumes` only when intentionally destroying the isolated synthetic
-staging data.
+staging data. A consumed Guest Claim is deliberately not reactivated by an
+ordinary bootstrap; recreating the scenario requires this explicit staging-only
+volume reset followed by a fresh bootstrap.

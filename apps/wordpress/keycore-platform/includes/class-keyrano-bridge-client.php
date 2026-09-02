@@ -60,6 +60,26 @@ final class Bridge_Client implements Bridge
     }
 
     /** @return array<string, mixed>|null */
+    public function claim(int $wp_user_id, string $customer_id, string $claim_code): ?array
+    {
+        if (
+            strlen($claim_code) < 16 ||
+            strlen($claim_code) > 128 ||
+            1 !== preg_match('/^[A-Za-z0-9_-]+(?:-[A-Za-z0-9_-]+)*$/', $claim_code)
+        ) {
+            return null;
+        }
+        return $this->request(
+            'POST',
+            '/v1/account/claim',
+            $wp_user_id,
+            $customer_id,
+            true,
+            ['claimCode' => $claim_code]
+        );
+    }
+
+    /** @return array<string, mixed>|null */
     private function request(
         string $method,
         string $path,

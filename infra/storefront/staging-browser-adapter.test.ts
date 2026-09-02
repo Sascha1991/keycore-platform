@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   signStagingStorefrontRequest,
   signStagingStorefrontResponse,
+  type StagingGuestOrderClaimPort,
   type StagingStorefrontRequest,
 } from "./staging-browser-adapter.js";
 import {
@@ -231,11 +232,104 @@ describe("staging storefront browser adapter", () => {
       ).toBeGreaterThanOrEqual(400);
     }
   });
+
+  it("claims through the existing application boundary without returning the claim secret", async () => {
+    const guestClaim = new CapturingGuestClaim();
+    const runtime = await harness(undefined, guestClaim);
+    const claimCode = "SYNTHETIC_CLAIM_BROWSER_TEST_123456";
+    const response = await runtime.bridge.handle(
+      signed({
+        body: JSON.stringify({ claimCode }),
+        csrfVerified: true,
+        customerId: stagingCustomerAId,
+        method: "POST",
+        path: "/v1/account/claim",
+        wpUserId: "20",
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(json(response.body)).toEqual({ status: "CLAIMED" });
+    expect(response.body).not.toContain(claimCode);
+    expect(guestClaim.claims).toHaveLength(1);
+    expect(guestClaim.claims[0]?.principal.customerId).toBe(stagingCustomerAId);
+  });
+
+  it("fails claim closed for invalid schema, CSRF, identity, replay and backend outage", async () => {
+    const guestClaim = new CapturingGuestClaim();
+    const validBody = JSON.stringify({
+      claimCode: "SYNTHETIC_CLAIM_BROWSER_TEST_123456",
+    });
+    for (const request of [
+      signed({ body: validBody, method: "POST", path: "/v1/account/claim" }),
+      signed({
+        body: validBody,
+        customerId: stagingCustomerAId,
+        method: "POST",
+        path: "/v1/account/claim",
+        wpUserId: "20",
+      }),
+      signed({
+        body: JSON.stringify({ claimCode: "short" }),
+        csrfVerified: true,
+        customerId: stagingCustomerAId,
+        method: "POST",
+        path: "/v1/account/claim",
+        wpUserId: "20",
+      }),
+      signed({
+        body: JSON.stringify({ claimCode: "a".repeat(32), orderId: "hidden" }),
+        csrfVerified: true,
+        customerId: stagingCustomerAId,
+        method: "POST",
+        path: "/v1/account/claim",
+        wpUserId: "20",
+      }),
+    ]) {
+      const response = await (
+        await harness(undefined, guestClaim)
+      ).bridge.handle(request);
+      expect(response.statusCode).toBeGreaterThanOrEqual(400);
+    }
+
+    guestClaim.result = { status: "CLAIM_DENIED" };
+    const replay = await (
+      await harness(undefined, guestClaim)
+    ).bridge.handle(ownerClaim(validBody));
+    expect(replay.statusCode).toBe(409);
+    expect(replay.body).toBe('{"code":"CLAIM_INVALID","status":"ERROR"}');
+
+    guestClaim.throwOnClaim = true;
+    const outage = await (
+      await harness(undefined, guestClaim)
+    ).bridge.handle(ownerClaim(validBody));
+    expect(outage.statusCode).toBe(503);
+    expect(outage.body).not.toContain(validBody);
+  });
+
+  it("rate-limits claim attempts per mapped customer", async () => {
+    const guestClaim = new CapturingGuestClaim();
+    guestClaim.result = { status: "CLAIM_DENIED" };
+    const runtime = await harness(undefined, guestClaim);
+    const body = JSON.stringify({ claimCode: "a".repeat(32) });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      expect((await runtime.bridge.handle(ownerClaim(body))).statusCode).toBe(
+        409,
+      );
+    }
+    expect((await runtime.bridge.handle(ownerClaim(body))).statusCode).toBe(
+      429,
+    );
+    expect(guestClaim.claims).toHaveLength(5);
+  });
 });
 
 const revealPath = `/v1/account/orders/${stagingFulfilledOrderId}/reveal`;
 
-const harness = (checkout?: StagingCheckoutPort) =>
+const harness = (
+  checkout?: StagingCheckoutPort,
+  guestOrderClaim?: StagingGuestOrderClaimPort,
+) =>
   createStagingStorefrontRuntime(
     {
       allowedOrigin: origin,
@@ -246,7 +340,10 @@ const harness = (checkout?: StagingCheckoutPort) =>
       sharedSecret,
       syntheticKey: syntheticValue,
     },
-    checkout ? { checkout } : {},
+    {
+      ...(checkout ? { checkout } : {}),
+      ...(guestOrderClaim ? { guestOrderClaim } : {}),
+    },
   );
 
 const signed = (
@@ -278,6 +375,16 @@ const ownerReveal = () =>
     wpUserId: "20",
   });
 
+const ownerClaim = (body: string) =>
+  signed({
+    body,
+    csrfVerified: true,
+    customerId: stagingCustomerAId,
+    method: "POST",
+    path: "/v1/account/claim",
+    wpUserId: "20",
+  });
+
 const json = (value: string): Readonly<Record<string, unknown>> =>
   JSON.parse(value) as Readonly<Record<string, unknown>>;
 
@@ -291,5 +398,26 @@ class CapturingCheckout implements StagingCheckoutPort {
       reasonCode: "CHECKOUT_PAYMENT_CAPTURED",
       status: "CAPTURED" as const,
     };
+  }
+}
+
+class CapturingGuestClaim implements StagingGuestOrderClaimPort {
+  public readonly claims: Parameters<
+    StagingGuestOrderClaimPort["claimGuestOrder"]
+  >[0][] = [];
+  public result: Awaited<
+    ReturnType<StagingGuestOrderClaimPort["claimGuestOrder"]>
+  > = {
+    orderId: stagingFulfilledOrderId,
+    status: "CLAIMED",
+  };
+  public throwOnClaim = false;
+
+  public async claimGuestOrder(
+    input: Parameters<StagingGuestOrderClaimPort["claimGuestOrder"]>[0],
+  ) {
+    this.claims.push(input);
+    if (this.throwOnClaim) throw new Error("synthetic backend outage");
+    return this.result;
   }
 }
