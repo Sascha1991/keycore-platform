@@ -65,3 +65,10 @@ Before production readiness can be considered, the product owner must provide:
 - complete legal text and business details reviewed by qualified legal counsel.
 
 These content approvals do not approve KS-11-07 or `SECURITY-READINESS`.
+
+## Staging Verification Status
+
+The product owner manually verified that all twelve rendered footer links work
+in staging and that the idempotent bootstrap preserves the active footer. This
+staging presentation result does not approve placeholder legal/company content,
+production deployment, KS-11-07 or `SECURITY-READINESS`.

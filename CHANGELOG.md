@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Normalized the Footer, Help & Service and Legal presentation onto the
+  PR #49 squash-merged Invoice Transport. The product owner confirmed all
+  twelve staging footer links work and bootstrap remains idempotent; legal,
+  company, support and activation placeholders remain explicitly unapproved.
+
 - Added idempotent native WordPress Help, Legal and three-column footer content
   for staging. Existing manual page and Shop-footer content is preserved, verified
   WooCommerce category links are corrected, unsupported Contact/activation/legal

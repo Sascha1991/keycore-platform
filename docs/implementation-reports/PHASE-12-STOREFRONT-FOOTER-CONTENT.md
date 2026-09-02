@@ -3,8 +3,10 @@
 ## Scope And Base
 
 - Branch: `feature/phase-12-footer-help-legal`
-- Base commit: `489de8a92daf00ee47ed49b809d2773298f767d1`
-- Dependency: the open `feature/phase-12-invoice-transport` presentation branch
+- Base commit: `44765df758e1ae522477a2891ede2540b88fe44d`
+- Dependency: the PR #49 Invoice Transport squash merge already present on
+  `main`; Account Transport, Guest Claim and Invoice behavior are inherited
+  unchanged.
 - Production deployment: not performed
 
 ## Implemented
@@ -64,11 +66,24 @@ their existing boundaries.
 
 GitHub Quality Gates are recorded in the pull request after push.
 
+## Human Staging Verification
+
+The product owner confirmed the rendered staging footer behavior passed. All
+twelve footer links were manually followed successfully, the Help & Service and
+Legal destinations remained visible, and repeated bootstrap preserved the
+idempotent result. This records only the supplied staging observation; it does
+not replace automated evidence or approve production.
+
+The legal, company, support and platform-activation content remains explicitly
+placeholder-based wherever reviewed real information is unavailable. No legal
+or company fact was inferred by this implementation or normalization.
+
 ## Remaining Human Work
 
 - approve and publish a secure support contact/workflow;
 - provide reviewed platform activation instructions;
 - replace every legal placeholder with counsel-approved real content;
-- perform human staging review after deployment.
 
-KS-11-07 and `SECURITY-READINESS` remain unapproved.
+UAT-002, UAT-015 and UAT-018 remain `PASS`. KS-11-07 remains incomplete and
+unapproved, `SECURITY-READINESS` remains `NOT_APPROVED`, and no production
+approval is granted.
