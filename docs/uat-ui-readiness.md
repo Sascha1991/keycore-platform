@@ -21,20 +21,20 @@ remain absent.
 | Catalog discovery           | `EXECUTABLE_NOW` / `PASS`               | Branded catalog, product, price, cart and eligibility-filtered fixtures                   | None for scoped UAT-001 result                                         |
 | Registered purchase         | `EXECUTABLE_NOW` / `PASS`               | Login, catalog, cart, synthetic payment, authoritative owned order and account projection | None for scoped UAT-002 result                                         |
 | Guest purchase/messaging    | `PARTIALLY_EXECUTABLE`                  | Woo guest checkout shell                                                                  | KeyCore guest completion and safe messaging                            |
-| Guest purchase claim        | `EXECUTABLE_NOW` / `PASS`               | One-time verified-same-email synthetic claim through Kauf hinzufügen                      | None for scoped UAT-015 result                                         |
+| Guest purchase claim        | `EXECUTABLE_NOW` / `PASS`               | One-time verified-same-email synthetic claim through Kauf hinzufügen                      | None for scoped UAT-004/UAT-005/UAT-015 results                        |
 | Product Key reveal          | `EXECUTABLE_NOW` / `PASS`               | Owner-only explicit synthetic reveal                                                      | Real-key task remains gated                                            |
 | Delayed/order status        | `PARTIALLY_EXECUTABLE`                  | Pending status is visible                                                                 | Authorized transition control                                          |
 | Payment failure/refund      | `PARTIALLY_EXECUTABLE`                  | Explicit synthetic failure/cancel paths; no captured order                                | Refund UI remains outside this task                                    |
 | Fraud review/deny           | `NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY` | No operator UI                                                                            | Least-privilege risk interface                                         |
-| Invoice                     | `EXECUTABLE_NOW`                        | Owner-only deterministic synthetic PDF through the signed account bridge                  | Human UAT-012 evidence and production tax/provider approval            |
+| Invoice                     | `EXECUTABLE_NOW` / `PASS`               | Owner-only deterministic synthetic PDF through the signed account bridge                  | Production tax/provider approval remains separate                      |
 | Support                     | `NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY` | No support UI                                                                             | Customer/operator support interface                                    |
-| Purchase history            | `EXECUTABLE_NOW`                        | Owner-filtered Meine Käufe and detail                                                     | Human staging review                                                   |
+| Purchase history            | `EXECUTABLE_NOW` / `PASS`               | Owner-filtered Meine Käufe and detail                                                     | None for scoped UAT-015 result                                         |
 | Authentication/verification | `PARTIALLY_EXECUTABLE`                  | Controlled synthetic WordPress login mapping                                              | Registration and production verification                               |
 | Emergency/degraded state    | `NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY` | Safe generic unavailable states only                                                      | Authorized operations interface                                        |
 | Full browser walkthrough    | `EXECUTABLE_NOW` / `PASS`               | Discovery, synthetic checkout, account, claim, reveal and invoice surfaces                | None for scoped UAT-018 result; broader production gates remain closed |
 
 The machine-readable `uat-readiness.json` and `uat-results.json` remain the
 binding status sources. Human acceptance is `IN_REVIEW`; UAT-001, UAT-002,
-UAT-006, UAT-015 and UAT-018 are `PASS`. Other required scenarios remain
-pending or not executable, so Phase 11 remains incomplete and
-`SECURITY-READINESS` remains `NOT_APPROVED`.
+UAT-004, UAT-005, UAT-006, UAT-012, UAT-015 and UAT-018 are `PASS`. Ten
+required scenarios remain pending or not executable, so Phase 11 remains
+incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`.
