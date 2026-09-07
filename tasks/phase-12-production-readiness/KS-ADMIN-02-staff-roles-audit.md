@@ -20,15 +20,13 @@ permission grants and a bounded, redacted audit view.
 - [x] Migration 029 is reversible and covered by PostgreSQL/recovery tests.
 - [x] Staff and audit views remain usable at mobile and desktop widths.
 - [x] Existing login, orders and fail-closed Product-Key behavior remain unchanged.
-- [ ] Product owner completes the documented Human-UAT checklist.
+- [x] Product owner completes the documented Human-UAT checklist.
 
-Human UAT was executed for all twelve scenarios. Ten are `PASS`; role-change
-session revocation and disabled-staff session/direct-access revocation are
-`PARTIAL` because the available synthetic staff profile has no login mechanism
-or active session. Under the repository acceptance rules this criterion remains
-open until both scenarios receive complete human verification. A guarded,
-CLI-only staging helper now makes those session-revocation retests executable;
-it does not change their recorded status or grant human approval.
+The Product Owner completed all twelve documented scenarios in isolated
+staging. Follow-up verification proved concurrent owner/staff sessions,
+per-identity role-change and disable revocation, and non-revival after
+reactivation. This scoped Human-UAT result does not grant any independent
+production or security-readiness approval.
 
 ## Non-approvals
 

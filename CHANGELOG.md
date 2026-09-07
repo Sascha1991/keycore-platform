@@ -2,25 +2,31 @@
 
 ## Unreleased
 
+- Completed all twelve KS-ADMIN-02 Human-UAT scenarios after successful
+  concurrent owner/staff role-change and disable/reactivation retests. The
+  complete Admin presentation is now German through centralized typed labels
+  for roles, permissions, operational states, audit events, outcomes and safe
+  details; internal and persisted identifiers remain unchanged. KS-11-07 stays
+  incomplete and `SECURITY-READINESS` stays `NOT_APPROVED`.
+
 - Added an explicitly enabled, CLI-only KS-ADMIN-02 staging UAT session helper
   for active managed synthetic `SUPPORT`/`FINANCE` identities. It reuses the
   hash-only Admin session authority so role-change and disable revocation can be
   verified in a real browser, while production, arbitrary origins, unmanaged or
-  sensitive identities fail closed. UAT-ADMIN-02-04 and UAT-ADMIN-02-08 remain
-  `PARTIAL` pending Product Owner retesting.
+  sensitive identities fail closed. The Product Owner subsequently completed
+  UAT-ADMIN-02-04 and UAT-ADMIN-02-08 successfully.
 
 - Clarified and regression-tested parallel KS-ADMIN-02 owner/staff UAT sessions:
   PostgreSQL sessions coexist and lifecycle mutations revoke only the target
   identity, while each browser login must use a genuinely separate cookie
-  store. No Admin cookie, authentication or Production behavior changed;
-  UAT-ADMIN-02-04 and UAT-ADMIN-02-08 remain `PARTIAL` pending manual retest.
+  store. No Admin cookie, authentication or Production behavior changed; both
+  session-lifecycle retests subsequently passed.
 
 - Added KS-ADMIN-02 staff, single-role and additive permission management on
   the existing secure Admin foundation, with session revocation, concurrency-safe
   last-owner protection, transactionally coupled audit evidence and a bounded,
   redacted audit UI. No password/production-auth system or Product-Key reveal
-  was enabled. Scoped Human UAT was executed with ten PASS and two PARTIAL
-  results; complete session-revocation verification remains open, KS-11-07 is
+  was enabled. Scoped Human UAT now has twelve PASS results; KS-11-07 is still
   incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`.
 
 - Added staging-only restricted-role Human-UAT support to the KS-ADMIN-01

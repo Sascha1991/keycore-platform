@@ -195,7 +195,12 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain(targetOrderId);
     expect(response.body).toContain("customer@example.test");
     expect(response.body).toContain("Arena Eleven");
-    expect(response.body).toContain("FULFILLMENT_PENDING");
+    expect(response.body).toContain("Auslieferung ausstehend");
+    expect(response.body).toContain('value="PAYMENT_AUTHORIZED"');
+    expect(response.body).toContain("Zahlung autorisiert");
+    expect(visibleText(response.body)).not.toMatch(
+      /CREATED|AWAITING_PAYMENT|PAYMENT_AUTHORIZED|PAYMENT_CAPTURED|PROCUREMENT_PENDING|PROCUREMENT_IN_PROGRESS|FULFILLMENT_PENDING|COMPLETED|CANCELLED|REFUND_PENDING|REFUNDED|MANUAL_REVIEW/u,
+    );
     expect(response.body).toContain("21,99 EUR");
     expect(response.body).not.toMatch(
       /ciphertext|wrapped_data|TEST-[A-Z0-9-]+/u,
@@ -234,7 +239,9 @@ describe("AdminHttpController", () => {
       authenticated("POST", path, { origin }, { csrf: required(csrf) }),
     );
     expect(response.statusCode).toBe(409);
-    expect(response.body).toContain("Es wurde kein Product Key offengelegt");
+    expect(response.body).toContain(
+      "Es wurde kein Produktschlüssel offengelegt",
+    );
     expect(response.body).not.toMatch(/TEST-[A-Z0-9-]+/u);
   });
 
@@ -266,6 +273,9 @@ describe("AdminHttpController", () => {
     expect(staff.body).toContain("Mitarbeiter &amp; Rollen");
     expect(staff.body).toContain('class="staff-table"');
     expect(staff.body).toContain('data-label="Mitarbeiter-ID"');
+    expect(staff.body).toContain('data-label="Anmeldekennung"');
+    expect(staff.body).toContain("Support");
+    expect(staff.body).toContain("Aktiv");
     expect(staff.body).toContain(
       "Synthetic &lt;script&gt;alert(1)&lt;/script&gt; Staff",
     );
@@ -277,13 +287,31 @@ describe("AdminHttpController", () => {
     const audit = await fixture().handle(authenticated("GET", "/admin/audit"));
     expect(audit.statusCode).toBe(200);
     expect(audit.body).toContain('class="audit-table"');
-    expect(audit.body).toContain("ADMIN_STAFF_CREATED");
+    expect(audit.body).toContain("Mitarbeiter angelegt");
+    expect(audit.body).toContain("Admin-Vorgang");
+    expect(audit.body).toContain("Erfolgreich");
+    expect(audit.body).toContain("Neue Rolle: Finanzen");
+    expect(audit.body).toContain("Vorherige Rolle: Support");
+    expect(audit.body).toContain("Berechtigung: Audit-Protokoll anzeigen");
     const auditTable =
       audit.body
         .split('<table class="audit-table">')[1]
         ?.split("</table>")[0] ?? "";
     expect(auditTable).not.toMatch(
       /cookie|authorization|csrf|session.?hash|product.?key/iu,
+    );
+    expect(visibleText(auditTable)).not.toMatch(
+      /ADMIN_STAFF_CREATED|ADMIN_ROLE_CHANGED|FINANCE|SUPPORT|AUDIT_VIEW|SUCCEEDED/u,
+    );
+
+    const detail = await fixture().handle(
+      authenticated("GET", `/admin/staff/${targetOrderId}`),
+    );
+    expect(detail.body).toContain("Standardberechtigungen");
+    expect(detail.body).toContain("Bestellungen anzeigen");
+    expect(detail.body).toContain("Rollen- und Berechtigungsverlauf");
+    expect(visibleText(detail.body)).not.toMatch(
+      /ADMIN_ACCESS|ORDER_VIEW|PROJECT_OWNER|SECURITY_AUDITOR/u,
     );
   });
 
@@ -464,7 +492,13 @@ const fixture = (
           id: targetOrderId,
           outcome: "SUCCEEDED",
           reasonCode: "ADMIN_STAFF_CREATED",
-          safeDetails: { action: "ADMIN_STAFF_CREATED" },
+          safeDetails: {
+            action: "ADMIN_ROLE_CHANGED",
+            capability: "AUDIT_VIEW",
+            newRole: "FINANCE",
+            previousRole: "SUPPORT",
+            sessionCode: "must-not-render",
+          },
           timestampUtc: new Date("2026-09-01T09:00:00.000Z"),
         },
       ],
@@ -537,3 +571,5 @@ const required = <T>(value: T | undefined): T => {
   if (value === undefined) throw new Error("Expected value");
   return value;
 };
+const visibleText = (html: string): string =>
+  html.replaceAll(/<[^>]+>/gu, " ").replaceAll(/\s+/gu, " ");

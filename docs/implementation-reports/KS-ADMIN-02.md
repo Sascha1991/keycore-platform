@@ -52,6 +52,7 @@ headers, CSRF values, invoice bytes or Product Keys.
 - `infra/postgres/admin-repositories.ts`
 - `infra/postgres/migrations/029_admin_staff_roles_permissions.*.sql`
 - `infra/admin/admin-http.ts`
+- `infra/admin/admin-presentation.ts`
 - `apps/admin/assets/admin.css`
 - `scripts/staging-admin-server.ts`
 
@@ -83,19 +84,17 @@ headers, CSRF values, invoice bytes or Product Keys.
 - Managed profiles do not receive passwords, session codes or production login access.
 - Production IdP/SSO, MFA, provisioning, offboarding governance and network policy remain open.
 - Product-Key decryption remains disabled.
-- Human UAT was executed and remains `IN_REVIEW / NOT_APPROVED`: ten scenarios
-  are `PASS`, while role-change session revocation and disabled-staff
-  session/direct-access revocation are `PARTIAL` because the available
-  synthetic profile has no login mechanism or active session. See
-  `docs/uat/ks-admin-02-human-uat.md`.
+- Scoped KS-ADMIN-02 Human UAT is complete with all twelve scenarios at `PASS`.
+  This does not approve production identity, MFA, deployment or broader
+  security readiness. See `docs/uat/ks-admin-02-human-uat.md`.
 - KS-11-07 remains incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`.
 - No production readiness, production deployment or live Stripe/Kinguin approval is claimed.
 
 ## Staging-only session UAT follow-up
 
-The Human-UAT review left UAT-ADMIN-02-04 and UAT-ADMIN-02-08 `PARTIAL`
+The initial Human-UAT review left UAT-ADMIN-02-04 and UAT-ADMIN-02-08 open
 because the managed synthetic profile had no active session. A narrowly scoped
-follow-up adds `scripts/staging-admin-uat-session.ts`. This manual CLI issues a
+follow-up added `scripts/staging-admin-uat-session.ts`. This manual CLI issues a
 one-hour session through the existing hash-only `admin_sessions` authority and
 does not create a password, login API or permanent UI.
 
@@ -105,8 +104,10 @@ opt-in. The target must be an active `managed-profile:<uuid>` synthetic identity
 with role `SUPPORT` or `FINANCE` and no active sensitive grant. Only the HMAC
 hash is persisted; safe output omits the raw value. Existing role-change,
 disable and grant/revoke operations remain responsible for session revocation.
-UAT-ADMIN-02-04 and UAT-ADMIN-02-08 remain `PARTIAL` pending actual Product
-Owner browser retesting.
+The Product Owner subsequently completed both browser retests successfully.
+Role changes and disable operations revoked only the target identity's session,
+the owner remained authenticated, and reactivation did not revive an old
+revoked session.
 
 Follow-up verification:
 
@@ -140,3 +141,32 @@ revoked. No runtime authentication or cookie behavior changed. The manual UAT
 procedure now requires a genuinely separate browser profile/application or a
 fresh isolated private window and explicitly rejects a second ordinary tab as a
 separate context.
+
+## German Admin presentation follow-up
+
+The server-rendered Admin UI now uses one typed German presentation mapping for
+all five roles, all nine capabilities, staff states, Admin order and workflow
+states, fixed audit event types, audit outcomes, known Admin actions/reasons,
+order-history reasons, entity types and allowlisted safe-detail fields. Stable
+English identifiers remain unchanged in domain objects, POST values, query
+contracts, CSS status hooks and PostgreSQL audit evidence.
+
+Audit rendering translates role and capability values inside safe metadata and
+does not render non-allowlisted fields. Unknown future status, event and reason
+values produce neutral German fallback labels instead of crashing or exposing a
+raw identifier. Existing authorization, exact-Origin/CSRF checks, session
+revocation and audit persistence behavior are unchanged. Denied self-disable
+and last-owner actions are regression-tested as audit evidence; the former
+stale missing-evidence observation is closed.
+
+Final follow-up verification:
+
+- focused Admin presentation, HTTP, authorization and staging guard suite: 43
+  passed;
+- focused Admin PostgreSQL persistence/bootstrap suite: 7 passed;
+- `npm run check`: 812 passed and 135 service-gated tests skipped;
+- security assessment: 60 passed and 345 intentionally excluded by the
+  focused assessment configuration;
+- `npm audit --audit-level=low`: 0 vulnerabilities; and
+- staging Compose configuration, UAT structure, secret scan and
+  `git diff --check`: passed.

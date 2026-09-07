@@ -127,6 +127,23 @@ describe("Admin staff authorization", () => {
     ).rejects.toMatchObject({ reasonCode: "ADMIN_ACCESS_DENIED" });
   });
 
+  it("audits denied self-disable attempts without exposing session material", async () => {
+    const fixture = serviceFixture();
+    const owner = principal("PROJECT_OWNER");
+
+    await expect(
+      fixture.service.setStatus(owner, owner.adminId, "DISABLED", requestId),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_ACCESS_DENIED" });
+    expect(fixture.audit.events.at(-1)).toMatchObject({
+      entity: { id: owner.adminId, type: "ADMIN_IDENTITY" },
+      outcome: "DENIED",
+      reasonCode: "ADMIN_SELF_DISABLE_DENIED",
+    });
+    expect(JSON.stringify(fixture.audit.events.at(-1))).not.toMatch(
+      /cookie|session.?code|session.?hash|authorization|product.?key/iu,
+    );
+  });
+
   it("rejects unsafe audit filters before querying persistence", async () => {
     const fixture = serviceFixture();
     await expect(

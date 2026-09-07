@@ -105,6 +105,19 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       await expect(
         repository.setStatus(ownerId, "DISABLED", context),
       ).resolves.toBe("LAST_OWNER_PROTECTED");
+      await expect(
+        database.query<{ reason_code: string; outcome: string }>(
+          `SELECT reason_code, outcome FROM audit_events WHERE entity->>'id' = $1 ORDER BY timestamp_utc DESC, id DESC LIMIT 1`,
+          [ownerId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            outcome: "DENIED",
+            reason_code: "ADMIN_LAST_OWNER_PROTECTED",
+          },
+        ],
+      });
       const targetId = randomUUID();
       await expect(
         repository.create(
