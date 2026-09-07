@@ -22,6 +22,12 @@ permission grants and a bounded, redacted audit view.
 - [x] Existing login, orders and fail-closed Product-Key behavior remain unchanged.
 - [ ] Product owner completes the documented Human-UAT checklist.
 
+Human UAT was executed for all twelve scenarios. Ten are `PASS`; role-change
+session revocation and disabled-staff session/direct-access revocation are
+`PARTIAL` because the available synthetic staff profile has no login mechanism
+or active session. Under the repository acceptance rules this criterion remains
+open until both scenarios receive complete human verification.
+
 ## Non-approvals
 
 This task does not provide production authentication, MFA, SSO or IdP

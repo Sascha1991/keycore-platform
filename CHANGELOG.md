@@ -6,8 +6,9 @@
   the existing secure Admin foundation, with session revocation, concurrency-safe
   last-owner protection, transactionally coupled audit evidence and a bounded,
   redacted audit UI. No password/production-auth system or Product-Key reveal
-  was enabled; Human UAT is pending, KS-11-07 is incomplete and
-  `SECURITY-READINESS` remains `NOT_APPROVED`.
+  was enabled. Scoped Human UAT was executed with ten PASS and two PARTIAL
+  results; complete session-revocation verification remains open, KS-11-07 is
+  incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`.
 
 - Added staging-only restricted-role Human-UAT support to the KS-ADMIN-01
   synthetic Admin bootstrap. The authoritative existing role allowlist is

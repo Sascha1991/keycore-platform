@@ -83,6 +83,10 @@ headers, CSRF values, invoice bytes or Product Keys.
 - Managed profiles do not receive passwords, session codes or production login access.
 - Production IdP/SSO, MFA, provisioning, offboarding governance and network policy remain open.
 - Product-Key decryption remains disabled.
-- Human UAT is `PENDING / IN_REVIEW`; see `docs/uat/ks-admin-02-human-uat.md`.
+- Human UAT was executed and remains `IN_REVIEW / NOT_APPROVED`: ten scenarios
+  are `PASS`, while role-change session revocation and disabled-staff
+  session/direct-access revocation are `PARTIAL` because the available
+  synthetic profile has no login mechanism or active session. See
+  `docs/uat/ks-admin-02-human-uat.md`.
 - KS-11-07 remains incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`.
 - No production readiness, production deployment or live Stripe/Kinguin approval is claimed.
