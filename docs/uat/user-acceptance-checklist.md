@@ -14,7 +14,11 @@ on 2026-09-02. The safe textual records are
 `docs/uat/human-uat-2026-08-30.md` and
 `docs/uat/open-scenario-reconciliation-2026-08-31.md`, with the later UAT-018
 result in `docs/uat/human-uat-2026-09-01-invoice.md` and the UAT-015 result in
-`docs/uat/human-uat-2026-09-02-account-history.md`.
+`docs/uat/human-uat-2026-09-02-account-history.md`. On 2026-09-08 the product
+owner completed UAT-012, then UAT-005 and UAT-004 in that safety-preserving
+order. Their safe textual record is
+`docs/uat/human-uat-2026-09-08-claims-invoice.md`; the one-time claim value is
+not recorded.
 
 | ID      | Where to go                                   | What to do                                                           | What should happen                                                   | Failure                                                         | Safe evidence                          |
 | ------- | --------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------- |

@@ -69,7 +69,7 @@
       "validatedRule": "Guest claim requires verified same-email identity and a one-time credential.",
       "automatedEvidence": ["EVIDENCE-01", "EVIDENCE-03", "EVIDENCE-04"],
       "uiReadiness": "EXECUTABLE_NOW",
-      "humanActionRequired": "The account claim transport is executable; retain only safe redacted evidence if this dedicated scenario is reviewed.",
+      "humanActionRequired": "Human execution was completed and recorded on 2026-09-08; retain only safe evidence and never record the one-time claim value.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {
@@ -84,7 +84,7 @@
       "validatedRule": "Immutable checkout email must match the verified account email.",
       "automatedEvidence": ["EVIDENCE-04"],
       "uiReadiness": "EXECUTABLE_NOW",
-      "humanActionRequired": "Execute only with isolated synthetic accounts and retain only the generic denial result.",
+      "humanActionRequired": "Human execution was completed and recorded on 2026-09-08 using isolated synthetic accounts; retain only the generic denial result.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {
@@ -199,7 +199,7 @@
       "validatedRule": "Invoice access requires exact ownership and invoices never carry key-delivery authority.",
       "automatedEvidence": ["EVIDENCE-04"],
       "uiReadiness": "EXECUTABLE_NOW",
-      "humanActionRequired": "Execute the owner, cross-owner and anonymous synthetic invoice procedure and capture only redacted safe evidence.",
+      "humanActionRequired": "Human execution was completed and recorded on 2026-09-08 for the owner and cross-owner invoice boundaries; retain only redacted safe evidence and do not infer durable PostgreSQL audit persistence.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {

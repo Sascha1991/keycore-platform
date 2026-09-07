@@ -7,7 +7,8 @@
   2026-08-30.
 - Human approval: `NOT_APPROVED`.
 - `SECURITY-READINESS`: `NOT_APPROVED`.
-- Human `PASS` results: five (`UAT-001`, `UAT-002`, `UAT-006`, `UAT-015`, `UAT-018`).
+- Human `PASS` results: eight (`UAT-001`, `UAT-002`, `UAT-004`, `UAT-005`,
+  `UAT-006`, `UAT-012`, `UAT-015`, `UAT-018`).
 - Phase 11: incomplete.
 
 The machine-readable source is
@@ -17,7 +18,10 @@ partially executable. The product owner accepted UAT-001 and UAT-006 on
 2026-08-30 using only synthetic staging data. The product owner completed and
 accepted UAT-002 on 2026-08-31. The product owner confirmed UAT-018 `PASS` on
 2026-09-01 after the secure invoice correction. The product owner confirmed
-UAT-015 `PASS` on 2026-09-02. Unchanged browser gaps remain
+UAT-015 `PASS` on 2026-09-02. The product owner completed and accepted UAT-012,
+UAT-005 and UAT-004 on
+2026-09-08. The claim scenarios used a freshly restored isolated synthetic
+fixture, with UAT-005 executed before UAT-004. Unchanged browser gaps remain
 `NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY`. Readiness is not acceptance.
 
 ## Allowed Results
@@ -47,13 +51,14 @@ the lifecycle:
   or review time; and
 - result and readiness scenario IDs/statuses must agree.
 
-The checked-in package is `IN_REVIEW`. Its five scoped `PASS` results identify
+The checked-in package is `IN_REVIEW`. Its eight scoped `PASS` results identify
 the product-owner role and date-normalized UTC timestamps. Safe textual records
 are stored in `docs/uat/human-uat-2026-08-30.md` and
 `docs/uat/open-scenario-reconciliation-2026-08-31.md`; the later UAT-018 and
 UAT-015 results are recorded in `docs/uat/human-uat-2026-09-01-invoice.md` and
-`docs/uat/human-uat-2026-09-02-account-history.md`. No overall approval is
-recorded.
+`docs/uat/human-uat-2026-09-02-account-history.md`. UAT-004, UAT-005 and UAT-012
+are recorded in `docs/uat/human-uat-2026-09-08-claims-invoice.md`. No overall
+approval is recorded.
 
 ## Acceptance Record
 
