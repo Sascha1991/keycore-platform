@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added KS-ADMIN-02 staff, single-role and additive permission management on
+  the existing secure Admin foundation, with session revocation, concurrency-safe
+  last-owner protection, transactionally coupled audit evidence and a bounded,
+  redacted audit UI. No password/production-auth system or Product-Key reveal
+  was enabled; Human UAT is pending, KS-11-07 is incomplete and
+  `SECURITY-READINESS` remains `NOT_APPROVED`.
+
 - Added staging-only restricted-role Human-UAT support to the KS-ADMIN-01
   synthetic Admin bootstrap. The authoritative existing role allowlist is
   enforced, `PROJECT_OWNER` remains the absent-variable default, role changes

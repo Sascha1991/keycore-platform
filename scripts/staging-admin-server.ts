@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import {
   AdminAuthenticationService,
   AdminOrderService,
+  AdminStaffService,
 } from "../packages/platform/src/contracts.js";
 import { AdminHttpController } from "../infra/admin/admin-http.js";
 import {
@@ -13,6 +14,7 @@ import {
 import {
   PostgresAdminOrderReadRepository,
   PostgresAdminSessionRepository,
+  PostgresAdminStaffRepository,
 } from "../infra/postgres/admin-repositories.js";
 import { PostgresAuditEventRepository } from "../infra/postgres/repositories.js";
 
@@ -45,6 +47,12 @@ const controller = new AdminHttpController(
   ),
   new AdminOrderService(
     new PostgresAdminOrderReadRepository(database),
+    audit,
+    required("KEYRANO_STAGING_ADMIN_CURSOR_SECRET"),
+    "STAGING",
+  ),
+  new AdminStaffService(
+    new PostgresAdminStaffRepository(database),
     audit,
     required("KEYRANO_STAGING_ADMIN_CURSOR_SECRET"),
     "STAGING",

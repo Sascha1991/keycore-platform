@@ -7,8 +7,8 @@ a separate server-rendered Node transport backed by the authoritative KeyCore
 PostgreSQL order, customer, fulfillment, guest-claim and audit records. It is
 not a WordPress administrator extension and does not trust customer sessions.
 
-The implemented modules are Dashboard and Bestellungen. Kunden, Produkte,
-Lieferanten, Finanzen and Sicherheit are visible only as disabled navigation
+The implemented modules are Dashboard, Bestellungen, Mitarbeiter & Rollen and
+Protokoll. Kunden, Produkte, Finanzen and System remain disabled navigation
 labels so that no unavailable workflow is implied.
 
 ## Trust boundary
@@ -24,7 +24,7 @@ labels so that no unavailable workflow is implied.
   shape and an HMAC CSRF value bound to the administrator, method and path.
 - Admin cookies are `HttpOnly`, `SameSite=Strict`, path-scoped and `Secure`.
   Non-Secure cookies are permitted only for explicit localhost HTTP staging.
-- Responses use no-store caching, a restrictive CSP, frame denial, no-referrer
+- Responses use no-store caching, a restrictive CSP, frame denial, same-origin referrer policy
   and MIME-sniffing protection.
 
 The staging synthetic session-code login is a development/UAT bootstrap, not a
@@ -41,6 +41,39 @@ MFA, lifecycle administration, credential rotation and network controls for
 | SUPPORT          | yes          | yes    | no                  | no         | no    |
 | FINANCE          | yes          | yes    | no                  | no         | no    |
 | SECURITY_AUDITOR | yes          | no     | no                  | no         | yes   |
+
+KS-ADMIN-02 adds `STAFF_VIEW`, `STAFF_MANAGE`, `ROLE_ASSIGN` and
+`PERMISSION_OVERRIDE_MANAGE`. `PROJECT_OWNER` receives all central Admin
+capabilities. Other roles retain their KS-ADMIN-01 defaults; an active,
+historized individual grant may add an allowlisted capability. There are no
+individual deny overrides. Effective access is the union of the active role's
+defaults and active grants.
+
+## Staff lifecycle and audit
+
+Migration 029 extends existing Admin identities with optional bounded staff
+profile fields and adds `admin_permission_grants`. It enforces one active role
+per identity, one active identical grant, a fixed capability allowlist and
+grant/revoke history. Existing staging identities remain valid without a staff
+profile.
+
+Create, role, status and grant operations are server-authorized and exact-origin
+CSRF-bound. Role changes, disable and permission changes revoke every active
+target session. Last-owner checks use a transaction-level advisory lock so two
+concurrent requests cannot remove the final active `PROJECT_OWNER`. Successful
+mutations and their audit records commit together; audit failure rolls the
+mutation back. Sensitive self-grants are denied, and only a current
+`PROJECT_OWNER` may individually grant sensitive capabilities.
+
+The audit view is limited to 50 newest entries per page, uses filter-bound
+HMAC-signed keyset cursors and parameterized exact filters. Rendering is
+omission-first: only a fixed list of safe action, identifier, role, capability
+and count fields may appear. Raw metadata JSON, request headers, credentials,
+sessions, CSRF material, invoice bytes and Product Keys are never rendered.
+
+The current server remains a staging/UAT transport. Creating a managed profile
+does not issue a password, session code or production login. Production IdP,
+MFA and account provisioning remain explicitly unresolved.
 
 `boundary` means that the dedicated capability, POST, CSRF and audit controls
 exist. Actual fulfillment-secret decryption is deliberately not enabled.

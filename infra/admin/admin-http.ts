@@ -4,10 +4,19 @@ import type {
   AdminOrderListResult,
   AdminOrderService,
   AdminPrincipal,
+  AdminStaffDetail,
+  AdminStaffService,
+  AdminStaffSummary,
+  AdminAuditEntry,
+  AdminRole,
+  AdminCapability,
 } from "../../packages/platform/src/contracts.js";
 import {
   AdminAccessError,
+  adminCapabilities,
+  adminRoles,
   createAdminCsrf,
+  hasAdminCapability,
   newAdminCorrelationId,
   verifyAdminCsrf,
 } from "../../packages/platform/src/contracts.js";
@@ -38,6 +47,7 @@ export class AdminHttpController {
   public constructor(
     private readonly authentication: AdminAuthenticationService,
     private readonly orders: AdminOrderService,
+    private readonly staff: AdminStaffService,
     private readonly config: AdminHttpConfig,
   ) {}
 
@@ -68,6 +78,36 @@ export class AdminHttpController {
         return await this.dashboard(principal);
       if (request.method === "GET" && request.path === "/admin/orders")
         return await this.orderList(principal, request);
+      if (request.method === "GET" && request.path === "/admin/staff")
+        return await this.staffList(principal);
+      if (request.path === "/admin/staff" && request.method === "POST")
+        return await this.createStaff(principal, request);
+      if (request.method === "GET" && request.path === "/admin/audit")
+        return await this.auditList(principal, request);
+      const staffDetailMatch = /^\/admin\/staff\/([0-9a-f-]{36})$/iu.exec(
+        request.path,
+      );
+      if (request.method === "GET" && staffDetailMatch?.[1])
+        return await this.staffDetail(principal, staffDetailMatch[1]);
+      const staffMutationMatch =
+        /^\/admin\/staff\/([0-9a-f-]{36})\/(disable|enable|role|permissions\/(grant|revoke))$/iu.exec(
+          request.path,
+        );
+      if (staffMutationMatch?.[1] && staffMutationMatch[2]) {
+        if (request.method !== "POST")
+          return this.render(
+            405,
+            errorContent("Anfrage nicht verfügbar."),
+            principal,
+            { Allow: "POST" },
+          );
+        return await this.staffMutation(
+          principal,
+          staffMutationMatch[1],
+          staffMutationMatch[2],
+          request,
+        );
+      }
       const detailMatch = /^\/admin\/orders\/([0-9a-f-]{36})$/iu.exec(
         request.path,
       );
@@ -275,12 +315,171 @@ export class AdminHttpController {
     );
   }
 
+  private async staffList(
+    principal: AdminPrincipal,
+  ): Promise<AdminHttpResponse> {
+    const rows = await this.staff.list(principal, newAdminCorrelationId());
+    const createPath = "/admin/staff";
+    const csrf = createAdminCsrf(
+      principal,
+      "POST",
+      createPath,
+      this.config.csrfSecret,
+    );
+    return this.render(200, staffListContent(rows, principal, csrf), principal);
+  }
+
+  private async createStaff(
+    principal: AdminPrincipal,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const path = "/admin/staff";
+    const fields = [
+      "csrf",
+      "first_name",
+      "last_name",
+      "employee_number",
+      "email",
+      "role",
+    ];
+    if (!this.validSensitivePost(request, principal, path, fields))
+      return this.render(
+        403,
+        errorContent("Anfrage nicht verfügbar."),
+        principal,
+      );
+    const adminId = await this.staff.create(
+      principal,
+      {
+        email: request.form.get("email") ?? "",
+        employeeNumber: request.form.get("employee_number") ?? "",
+        firstName: request.form.get("first_name") ?? "",
+        lastName: request.form.get("last_name") ?? "",
+        role: request.form.get("role") ?? "",
+      },
+      newAdminCorrelationId(),
+    );
+    return locationRedirect(`/admin/staff/${adminId}`);
+  }
+
+  private async staffDetail(
+    principal: AdminPrincipal,
+    adminId: string,
+  ): Promise<AdminHttpResponse> {
+    const detail = await this.staff.detail(
+      principal,
+      adminId,
+      newAdminCorrelationId(),
+    );
+    return this.render(
+      200,
+      staffDetailContent(detail, principal, this.config.csrfSecret),
+      principal,
+    );
+  }
+
+  private async staffMutation(
+    principal: AdminPrincipal,
+    adminId: string,
+    action: string,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const path = `/admin/staff/${adminId}/${action}`;
+    const fields =
+      action === "role"
+        ? ["csrf", "role"]
+        : action.startsWith("permissions/")
+          ? [
+              "csrf",
+              "capability",
+              ...(action.endsWith("grant") ? ["reason"] : []),
+            ]
+          : ["csrf"];
+    if (!this.validSensitivePost(request, principal, path, fields))
+      return this.render(
+        403,
+        errorContent("Anfrage nicht verfügbar."),
+        principal,
+      );
+    const correlationId = newAdminCorrelationId();
+    if (action === "disable" || action === "enable")
+      await this.staff.setStatus(
+        principal,
+        adminId,
+        action === "disable" ? "DISABLED" : "ACTIVE",
+        correlationId,
+      );
+    else if (action === "role")
+      await this.staff.changeRole(
+        principal,
+        adminId,
+        request.form.get("role") ?? "",
+        correlationId,
+      );
+    else if (action === "permissions/grant")
+      await this.staff.grantPermission(
+        principal,
+        adminId,
+        request.form.get("capability") ?? "",
+        request.form.get("reason") ?? "",
+        correlationId,
+      );
+    else
+      await this.staff.revokePermission(
+        principal,
+        adminId,
+        request.form.get("capability") ?? "",
+        correlationId,
+      );
+    return locationRedirect(`/admin/staff/${adminId}`);
+  }
+
+  private async auditList(
+    principal: AdminPrincipal,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const names = [
+      "from",
+      "to",
+      "event_type",
+      "outcome",
+      "actor_id",
+      "entity_id",
+      "reason_code",
+      "cursor",
+    ];
+    rejectDuplicateParameters(request.query, names);
+    const result = await this.staff.auditList(
+      principal,
+      {
+        actorId: optional(request.query, "actor_id"),
+        cursor: optional(request.query, "cursor"),
+        entityId: optional(request.query, "entity_id"),
+        eventType: optional(request.query, "event_type"),
+        from: optional(request.query, "from"),
+        outcome: optional(request.query, "outcome"),
+        reasonCode: optional(request.query, "reason_code"),
+        to: optional(request.query, "to"),
+      },
+      newAdminCorrelationId(),
+    );
+    return this.render(
+      200,
+      auditContent(result.entries, request.query, result.nextCursorValue),
+      principal,
+    );
+  }
+
   private validSensitivePost(
     request: AdminHttpRequest,
     principal: AdminPrincipal,
     path: string,
+    expectedFields: readonly string[] = ["csrf"],
   ): boolean {
-    if (!this.validOrigin(request) || !hasExactFields(request.form, ["csrf"]))
+    if (
+      !this.validOrigin(request) ||
+      !hasExactFields(request.form, expectedFields)
+    )
       return false;
     const actual = request.form.get("csrf") ?? "";
     return verifyAdminCsrf(
@@ -335,7 +534,7 @@ const shell = (
   csrfSecret: string,
 ): string => {
   const csrf = createAdminCsrf(principal, "POST", "/admin/logout", csrfSecret);
-  return `<div class="admin-shell"><aside><div class="brand">KeyRaNo <span>Admin</span></div><nav aria-label="Admin-Navigation"><a href="/admin/">Dashboard</a><a href="/admin/orders">Bestellungen</a><span aria-disabled="true">Kunden</span><span aria-disabled="true">Support</span><span aria-disabled="true">Rabatte / Kampagnen</span><span aria-disabled="true">Produkte / Katalog</span><span aria-disabled="true">Lieferanten</span><span aria-disabled="true">Finanzen</span><span aria-disabled="true">Sicherheit</span><span aria-disabled="true">System</span></nav><div class="identity"><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.join(", "))}</small><form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="${csrf}"><button type="submit">Abmelden</button></form></div></aside><main>${content}</main></div>`;
+  return `<div class="admin-shell"><aside><div class="brand">KeyRaNo <span>Admin</span></div><nav aria-label="Admin-Navigation"><a href="/admin/">Dashboard</a><a href="/admin/orders">Bestellungen</a>${hasAdminCapability(principal, "STAFF_VIEW") ? '<a href="/admin/staff">Mitarbeiter &amp; Rollen</a>' : ""}${hasAdminCapability(principal, "AUDIT_VIEW") ? '<a href="/admin/audit">Protokoll</a>' : ""}<span aria-disabled="true">Kunden</span><span aria-disabled="true">Support</span><span aria-disabled="true">Produkte / Katalog</span><span aria-disabled="true">Finanzen</span><span aria-disabled="true">System</span></nav><div class="identity"><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.join(", "))}</small><form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="${csrf}"><button type="submit">Abmelden</button></form></div></aside><main>${content}</main></div>`;
 };
 
 const securityHeaders = (
@@ -356,6 +555,11 @@ const securityHeaders = (
 const redirect = (location: string, cookie: string): AdminHttpResponse => ({
   body: "",
   headers: securityHeaders({ Location: location, "Set-Cookie": cookie }),
+  statusCode: 303,
+});
+const locationRedirect = (location: string): AdminHttpResponse => ({
+  body: "",
+  headers: securityHeaders({ Location: location }),
   statusCode: 303,
 });
 const sessionCookie = (value: string, secure: boolean): string =>
@@ -461,6 +665,92 @@ const orderDetailContent = (
   `<header class="page-heading"><p>Bestelldetails</p><h1>${escapeHtml(order.orderId)}</h1></header><section class="detail-grid"><article><h2>Bestellung</h2>${detailRow("Produkt", order.productTitle)}${detailRow("Menge", String(order.quantity))}${detailRow("Kunde", order.customerEmail ?? "Nicht verfügbar")}${detailRow("Betrag", formatMinor(order.amountMinor, order.currency))}${detailRow("Status", order.status)}${detailRow("Zahlung", order.paymentStatus)}${detailRow("Beschaffung", order.procurementStatus)}${detailRow("Fulfillment", order.fulfillmentStatus)}${detailRow("Risiko", order.riskStatus)}</article><article><h2>Operativer Kontext</h2>${detailRow("Gast-Claim", order.guestClaimStatus)}${detailRow("Rechnung", order.invoiceStatus)}${detailRow("Lieferant", order.supplierId ?? "Nicht verfügbar")}${detailRow("Supplier Order", order.externalSupplierOrderId ?? "Nicht verfügbar")}${detailRow("Retrieval", order.retrievalState ?? "Nicht verfügbar")}${detailRow("Delivery", order.deliveryState ?? "Nicht verfügbar")}</article></section><section class="content-section sensitive"><div class="section-heading"><div><p>Sensibler Vorgang</p><h2>Product Key</h2></div></div><p>${order.encryptedSecretAvailable ? "Verschlüsseltes Material ist vorhanden. Eine Offenlegung ist nur über den kontrollierten separaten Vorgang möglich." : "Für diese Bestellung ist kein verschlüsseltes Material verfügbar."}</p><form method="post" action="${escapeHtml(revealPath)}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit"${order.encryptedSecretAvailable ? "" : " disabled"}>Kontrollierten Zugriff anfordern</button></form></section><section class="content-section"><div class="section-heading"><h2>Statushistorie</h2></div>${order.history.length === 0 ? '<div class="empty-state"><strong>Keine Statushistorie verfügbar</strong></div>' : `<ol class="timeline">${order.history.map((entry) => `<li><strong>${escapeHtml(entry.toStatus)}</strong><span>${escapeHtml(entry.reasonCode)} · ${escapeHtml(formatDate(entry.occurredAt))}</span></li>`).join("")}</ol>`}</section>`;
 const detailRow = (label: string, value: string): string =>
   `<dl><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></dl>`;
+const staffListContent = (
+  staff: readonly AdminStaffSummary[],
+  principal: AdminPrincipal,
+  csrf: string,
+): string => {
+  const rows =
+    staff.length === 0
+      ? '<div class="empty-state"><strong>Keine Mitarbeitenden vorhanden</strong></div>'
+      : `<div class="table-wrap"><table class="staff-table"><thead><tr><th scope="col">Name</th><th scope="col">Mitarbeiter-ID</th><th scope="col">Login-Identifier</th><th scope="col">Rolle</th><th scope="col">Status</th><th scope="col">Zusatzrechte</th><th scope="col">Letzter Login</th><th scope="col">Erstellt</th><th scope="col">Aktionen</th></tr></thead><tbody>${staff.map((item) => `<tr><td data-label="Name">${escapeHtml(item.displayName)}</td><td data-label="Mitarbeiter-ID" class="order-reference">${escapeHtml(item.employeeNumber ?? item.adminId)}</td><td data-label="Login-Identifier">${escapeHtml(item.emailNormalized ?? "Nicht eingerichtet")}</td><td data-label="Rolle">${escapeHtml(item.role ?? "Keine aktive Rolle")}</td><td data-label="Status"><span class="status status-${item.status.toLowerCase()}">${escapeHtml(item.status)}</span></td><td data-label="Zusatzrechte">${item.hasAdditionalPermissions ? "Ja" : "Nein"}</td><td data-label="Letzter Login">${item.lastLoginAt ? escapeHtml(formatDate(item.lastLoginAt)) : "Nie"}</td><td data-label="Erstellt">${escapeHtml(formatDate(item.createdAt))}</td><td data-label="Aktionen"><a href="/admin/staff/${encodeURIComponent(item.adminId)}">Öffnen</a></td></tr>`).join("")}</tbody></table></div>`;
+  const create = hasAdminCapability(principal, "STAFF_MANAGE")
+    ? `<section class="content-section"><div class="section-heading"><h2>Mitarbeiter anlegen</h2></div><form class="staff-form" method="post" action="/admin/staff"><input type="hidden" name="csrf" value="${csrf}"><label>Vorname<input name="first_name" maxlength="80" required></label><label>Nachname<input name="last_name" maxlength="80" required></label><label>Mitarbeiter-ID<input name="employee_number" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" required></label><label>E-Mail / Login-Identifier (optional)<input name="email" type="email" maxlength="254"></label><label>Rolle<select name="role">${roleOptions()}</select></label><button type="submit">Mitarbeiter anlegen</button></form><p class="muted">Es wird kein Passwort und keine Anmeldemöglichkeit erzeugt.</p></section>`
+    : "";
+  return `<header class="page-heading"><p>Administration</p><h1>Mitarbeiter &amp; Rollen</h1></header><section class="content-section staff-section"><div class="section-heading"><h2>Mitarbeitende</h2><span>${staff.length} Einträge</span></div>${rows}</section>${create}`;
+};
+
+const staffDetailContent = (
+  staff: AdminStaffDetail,
+  principal: AdminPrincipal,
+  secret: string,
+): string => {
+  const path = (suffix: string) => `/admin/staff/${staff.adminId}/${suffix}`;
+  const csrfFor = (suffix: string) =>
+    createAdminCsrf(principal, "POST", path(suffix), secret);
+  const roleForm = hasAdminCapability(principal, "ROLE_ASSIGN")
+    ? `<form class="inline-form" method="post" action="${path("role")}"><input type="hidden" name="csrf" value="${csrfFor("role")}"><label>Neue Rolle<select name="role">${roleOptions(staff.role)}</select></label><button type="submit">Rolle ändern</button></form>`
+    : "";
+  const statusAction = staff.status === "ACTIVE" ? "disable" : "enable";
+  const statusForm = hasAdminCapability(principal, "STAFF_MANAGE")
+    ? `<form class="inline-form" method="post" action="${path(statusAction)}"><input type="hidden" name="csrf" value="${csrfFor(statusAction)}"><button class="button-secondary" type="submit">${staff.status === "ACTIVE" ? "Mitarbeiter deaktivieren" : "Mitarbeiter reaktivieren"}</button></form>`
+    : "";
+  const permissionForm = hasAdminCapability(
+    principal,
+    "PERMISSION_OVERRIDE_MANAGE",
+  )
+    ? `<form class="inline-form" method="post" action="${path("permissions/grant")}"><input type="hidden" name="csrf" value="${csrfFor("permissions/grant")}"><label>Zusatzrecht<select name="capability">${capabilityOptions(staff.activeIndividualCapabilities)}</select></label><label>Grund (optional)<input name="reason" maxlength="240"></label><button type="submit">Recht vergeben</button></form>`
+    : "";
+  const grants =
+    staff.activeIndividualCapabilities.length === 0
+      ? '<div class="empty-state"><strong>Keine individuellen Zusatzrechte</strong></div>'
+      : `<ul class="capability-list">${staff.activeIndividualCapabilities.map((capability) => `<li><code>${escapeHtml(capability)}</code>${hasAdminCapability(principal, "PERMISSION_OVERRIDE_MANAGE") ? `<form method="post" action="${path("permissions/revoke")}"><input type="hidden" name="csrf" value="${csrfFor("permissions/revoke")}"><input type="hidden" name="capability" value="${escapeHtml(capability)}"><button class="button-secondary" type="submit">Widerrufen</button></form>` : ""}</li>`).join("")}</ul>`;
+  return `<header class="page-heading"><p>Mitarbeiterdetails</p><h1>${escapeHtml(staff.displayName)}</h1></header><section class="detail-grid"><article><h2>Stammdaten</h2>${detailRow("Vorname", staff.firstName ?? "Nicht hinterlegt")}${detailRow("Nachname", staff.lastName ?? "Nicht hinterlegt")}${detailRow("Mitarbeiter-ID", staff.employeeNumber ?? staff.adminId)}${detailRow("Login-Identifier", staff.emailNormalized ?? "Nicht eingerichtet")}${detailRow("Status", staff.status)}${detailRow("Erstellt", formatDate(staff.createdAt))}${detailRow("Geändert", formatDate(staff.updatedAt))}</article><article><h2>Rolle</h2>${detailRow("Primäre Rolle", staff.role ?? "Keine aktive Rolle")}${roleForm}</article></section><section class="content-section"><div class="section-heading"><h2>Standardrechte</h2></div>${capabilityList(staff.roleCapabilities)}</section><section class="content-section"><div class="section-heading"><h2>Zusätzliche Rechte</h2></div>${grants}${permissionForm}</section><section class="content-section"><div class="section-heading"><h2>Effektive Rechte</h2></div>${capabilityList(staff.effectiveCapabilities)}</section><section class="content-section"><div class="section-heading"><h2>Rollen- und Rechtehistorie</h2></div><ol class="timeline">${staff.roleHistory.map((entry) => `<li><strong>${escapeHtml(entry.role)}</strong><span>${escapeHtml(formatDate(entry.grantedAt))}${entry.revokedAt ? ` · widerrufen ${escapeHtml(formatDate(entry.revokedAt))}` : " · aktiv"}</span></li>`).join("")}${staff.permissionHistory.map((entry) => `<li><strong>${escapeHtml(entry.capability)}</strong><span>${escapeHtml(formatDate(entry.grantedAt))}${entry.revokedAt ? ` · widerrufen ${escapeHtml(formatDate(entry.revokedAt))}` : " · aktiv"}</span></li>`).join("")}</ol></section><section class="content-section sensitive"><div class="section-heading"><h2>Sicherheitsaktionen</h2></div>${statusForm}<p class="muted">Rollen- und Rechteänderungen widerrufen aktive Sitzungen.</p></section>`;
+};
+
+const auditContent = (
+  entries: readonly AdminAuditEntry[],
+  query: URLSearchParams,
+  nextCursor?: string,
+): string => {
+  const rows =
+    entries.length === 0
+      ? '<div class="empty-state"><strong>Keine Protokolleinträge gefunden</strong></div>'
+      : `<div class="table-wrap"><table class="audit-table"><thead><tr><th scope="col">Zeit</th><th scope="col">Event</th><th scope="col">Actor</th><th scope="col">Ziel</th><th scope="col">Outcome</th><th scope="col">Reason</th><th scope="col">Sichere Details</th></tr></thead><tbody>${entries
+          .map(
+            (entry) =>
+              `<tr><td data-label="Zeit">${escapeHtml(formatDate(entry.timestampUtc))}</td><td data-label="Event">${escapeHtml(entry.eventType)}</td><td data-label="Actor" class="order-reference">${escapeHtml(entry.actorId)}</td><td data-label="Ziel" class="order-reference">${escapeHtml(`${entry.entityType}:${entry.entityId}`)}</td><td data-label="Outcome"><span class="status status-${entry.outcome.toLowerCase()}">${escapeHtml(entry.outcome)}</span></td><td data-label="Reason">${escapeHtml(entry.reasonCode)}</td><td data-label="Sichere Details">${escapeHtml(
+                Object.entries(entry.safeDetails)
+                  .map(([key, value]) => `${key}: ${String(value)}`)
+                  .join(" · ") || "Keine",
+              )}</td></tr>`,
+          )
+          .join("")}</tbody></table></div>`;
+  const next = nextCursor
+    ? (() => {
+        const value = new URLSearchParams(query);
+        value.set("cursor", nextCursor);
+        return `<a class="pagination" href="/admin/audit?${escapeHtml(value.toString())}">Weitere Einträge</a>`;
+      })()
+    : "";
+  return `<header class="page-heading"><p>Sicherheitsnachweise</p><h1>Protokoll</h1></header><form class="filter-bar audit-filter" method="get" action="/admin/audit"><label>Von<input type="date" name="from" value="${escapeHtml(query.get("from") ?? "")}"></label><label>Bis<input type="date" name="to" value="${escapeHtml(query.get("to") ?? "")}"></label><label>Event Type<input name="event_type" maxlength="100" value="${escapeHtml(query.get("event_type") ?? "")}"></label><label>Outcome<select name="outcome"><option value="">Alle</option>${["SUCCEEDED", "FAILED", "DENIED"].map((value) => `<option${query.get("outcome") === value ? " selected" : ""}>${value}</option>`).join("")}</select></label><label>Actor-ID<input name="actor_id" maxlength="36" value="${escapeHtml(query.get("actor_id") ?? "")}"></label><label>Entity-ID<input name="entity_id" maxlength="36" value="${escapeHtml(query.get("entity_id") ?? "")}"></label><label>Reason Code<input name="reason_code" maxlength="100" value="${escapeHtml(query.get("reason_code") ?? "")}"></label><button type="submit">Filtern</button></form><section class="content-section audit-section"><div class="section-heading"><h2>Einträge</h2><span>${entries.length} Ergebnisse</span></div>${rows}${next}</section>`;
+};
+const roleOptions = (selected?: AdminRole | null): string =>
+  adminRoles
+    .map(
+      (role) =>
+        `<option${selected === role ? " selected" : ""}>${role}</option>`,
+    )
+    .join("");
+const capabilityOptions = (excluded: readonly AdminCapability[]): string =>
+  adminCapabilities
+    .filter((capability) => !excluded.includes(capability))
+    .map((capability) => `<option>${capability}</option>`)
+    .join("");
+const capabilityList = (capabilities: readonly AdminCapability[]): string =>
+  capabilities.length === 0
+    ? '<div class="empty-state"><strong>Keine Rechte</strong></div>'
+    : `<ul class="capability-list">${capabilities.map((capability) => `<li><code>${escapeHtml(capability)}</code></li>`).join("")}</ul>`;
 const errorContent = (message: string): string =>
   `<div class="notice notice-error"><strong>KeyRaNo Admin</strong><p>${escapeHtml(message)}</p></div>`;
 const requiredSecret = (value: string | undefined): string => {

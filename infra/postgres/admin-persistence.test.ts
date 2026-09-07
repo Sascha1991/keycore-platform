@@ -3,12 +3,14 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  correlationId,
   hashAdminSession,
   orderId,
 } from "../../packages/platform/src/contracts.js";
 import {
   PostgresAdminOrderReadRepository,
   PostgresAdminSessionRepository,
+  PostgresAdminStaffRepository,
 } from "./admin-repositories.js";
 import { PostgresTestDatabase } from "./test-database.js";
 
@@ -83,6 +85,182 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       expect(JSON.stringify(detail)).not.toMatch(
         /ciphertext|encryption_nonce|wrapped_data_encryption_key/iu,
       );
+    } finally {
+      await database.cleanup();
+    }
+  }, 30_000);
+
+  it("histories roles and grants, revokes sessions and protects the final active owner", async () => {
+    const database = await initDatabase();
+    try {
+      const ownerId = await insertAdmin(database, "a".repeat(64));
+      const repository = new PostgresAdminStaffRepository(database);
+      const context = {
+        actorId: ownerId,
+        at: now,
+        correlationId: correlationId("corr-admin-staff-pg"),
+        environment: "CI" as const,
+      };
+
+      await expect(
+        repository.setStatus(ownerId, "DISABLED", context),
+      ).resolves.toBe("LAST_OWNER_PROTECTED");
+      const targetId = randomUUID();
+      await expect(
+        repository.create(
+          {
+            adminId: targetId,
+            displayName: "Ada Lovelace",
+            emailNormalized: "ada@example.test",
+            employeeNumber: "STAFF-002",
+            firstName: "Ada",
+            lastName: "Lovelace",
+            role: "SUPPORT",
+          },
+          context,
+        ),
+      ).resolves.toBe("UPDATED");
+      await database.query(
+        `INSERT INTO admin_sessions(id, admin_id, session_hash, assurance, issued_at, expires_at) VALUES ($1, $2, $3, 'STAGING_SYNTHETIC', $4, $5)`,
+        [
+          randomUUID(),
+          targetId,
+          "b".repeat(64),
+          now,
+          new Date(now.getTime() + 60_000),
+        ],
+      );
+
+      await expect(
+        repository.grantPermission(
+          targetId,
+          "AUDIT_VIEW",
+          "Synthetic UAT duty",
+          context,
+        ),
+      ).resolves.toBe("UPDATED");
+      await expect(
+        repository.grantPermission(
+          targetId,
+          "AUDIT_VIEW",
+          "Synthetic UAT duty",
+          context,
+        ),
+      ).resolves.toBe("UNCHANGED");
+      let detail = await repository.findDetail(targetId);
+      expect(detail?.effectiveCapabilities).toEqual([
+        "ADMIN_ACCESS",
+        "AUDIT_VIEW",
+        "ORDER_VIEW",
+      ]);
+      expect(detail?.permissionHistory).toHaveLength(1);
+      expect(
+        (
+          await database.query<{ revoked_at: Date | null }>(
+            `SELECT revoked_at FROM admin_sessions WHERE admin_id = $1`,
+            [targetId],
+          )
+        ).rows[0]?.revoked_at,
+      ).toEqual(now);
+
+      await expect(
+        repository.revokePermission(targetId, "AUDIT_VIEW", context),
+      ).resolves.toBe("UPDATED");
+      await expect(
+        repository.changeRole(targetId, "FINANCE", context),
+      ).resolves.toBe("UPDATED");
+      detail = await repository.findDetail(targetId);
+      expect(detail?.role).toBe("FINANCE");
+      expect(detail?.activeIndividualCapabilities).toEqual([]);
+      expect(detail?.roleHistory).toHaveLength(2);
+      expect(
+        detail?.roleHistory.filter((entry) => entry.revokedAt === null),
+      ).toHaveLength(1);
+      expect(detail?.permissionHistory[0]?.revokedAt).toEqual(now);
+      const audit = await repository.listAudit({
+        filters: { entityId: targetId },
+        limit: 20,
+      });
+      expect(audit.entries.map((entry) => entry.reasonCode)).toEqual(
+        expect.arrayContaining([
+          "ADMIN_STAFF_CREATED",
+          "ADMIN_PERMISSION_GRANTED",
+          "ADMIN_PERMISSION_REVOKED",
+          "ADMIN_ROLE_CHANGED",
+        ]),
+      );
+      expect(JSON.stringify(audit.entries)).not.toMatch(
+        /session_hash|cookie|authorization|TEST-[A-Z0-9-]+/iu,
+      );
+    } finally {
+      await database.cleanup();
+    }
+  }, 30_000);
+
+  it("enforces staff uniqueness, capability allowlists and audit-atomic permission grants", async () => {
+    const database = await initDatabase();
+    try {
+      const ownerId = await insertAdmin(database, "c".repeat(64));
+      const repository = new PostgresAdminStaffRepository(database);
+      const context = {
+        actorId: ownerId,
+        at: now,
+        correlationId: correlationId("corr-admin-atomic-pg"),
+        environment: "CI" as const,
+      };
+      const targetId = randomUUID();
+      await expect(
+        repository.create(
+          {
+            adminId: targetId,
+            displayName: "Grace Hopper",
+            emailNormalized: "grace@example.test",
+            employeeNumber: "STAFF-003",
+            firstName: "Grace",
+            lastName: "Hopper",
+            role: "SUPPORT",
+          },
+          context,
+        ),
+      ).resolves.toBe("UPDATED");
+      await expect(
+        repository.create(
+          {
+            adminId: randomUUID(),
+            displayName: "Duplicate Number",
+            emailNormalized: null,
+            employeeNumber: "STAFF-003",
+            firstName: "Duplicate",
+            lastName: "Number",
+            role: "SUPPORT",
+          },
+          context,
+        ),
+      ).resolves.toBe("DUPLICATE");
+      await expect(
+        database.query(
+          `INSERT INTO admin_permission_grants(admin_id, capability, granted_at, granted_by_admin_id) VALUES ($1, 'ROOT', $2, $3)`,
+          [targetId, now, ownerId],
+        ),
+      ).rejects.toThrow();
+
+      await database.query(
+        `CREATE FUNCTION reject_admin_permission_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.reason_code = 'ADMIN_PERMISSION_GRANTED' THEN RAISE EXCEPTION 'synthetic audit failure'; END IF; RETURN NEW; END $$`,
+      );
+      await database.query(
+        `CREATE TRIGGER reject_admin_permission_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_admin_permission_audit()`,
+      );
+      await expect(
+        repository.grantPermission(targetId, "AUDIT_VIEW", null, context),
+      ).rejects.toThrow("synthetic audit failure");
+      expect(
+        (
+          await database.query<{ count: string }>(
+            `SELECT count(*)::text AS count FROM admin_permission_grants WHERE admin_id = $1`,
+            [targetId],
+          )
+        ).rows[0]?.count,
+      ).toBe("0");
     } finally {
       await database.cleanup();
     }
