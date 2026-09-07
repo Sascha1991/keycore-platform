@@ -90,3 +90,34 @@ headers, CSRF values, invoice bytes or Product Keys.
   `docs/uat/ks-admin-02-human-uat.md`.
 - KS-11-07 remains incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`.
 - No production readiness, production deployment or live Stripe/Kinguin approval is claimed.
+
+## Staging-only session UAT follow-up
+
+The Human-UAT review left UAT-ADMIN-02-04 and UAT-ADMIN-02-08 `PARTIAL`
+because the managed synthetic profile had no active session. A narrowly scoped
+follow-up adds `scripts/staging-admin-uat-session.ts`. This manual CLI issues a
+one-hour session through the existing hash-only `admin_sessions` authority and
+does not create a password, login API or permanent UI.
+
+The CLI requires the existing `STAGING` environment, a safe `staging-*`
+deployment ID, an explicitly approved Admin staging origin and a per-command
+opt-in. The target must be an active `managed-profile:<uuid>` synthetic identity
+with role `SUPPORT` or `FINANCE` and no active sensitive grant. Only the HMAC
+hash is persisted; safe output omits the raw value. Existing role-change,
+disable and grant/revoke operations remain responsible for session revocation.
+UAT-ADMIN-02-04 and UAT-ADMIN-02-08 remain `PARTIAL` pending actual Product
+Owner browser retesting.
+
+Follow-up verification:
+
+- focused environment/Compose guard tests: 11 passed;
+- focused Admin bootstrap/staff PostgreSQL tests: 7 passed;
+- `npm run check`: 804 passed and 135 service-gated tests skipped;
+- security assessment: 60 passed and 345 intentionally excluded by the
+  focused assessment configuration;
+- staging Compose configuration, UAT structure, secret scan and
+  `git diff --check`: passed; and
+- `npm audit --audit-level=low`: 0 vulnerabilities.
+
+No migration, external dependency, Production configuration, Product-Key
+decryption path or live integration was added or changed.

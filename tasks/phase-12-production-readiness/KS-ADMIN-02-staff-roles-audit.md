@@ -26,7 +26,9 @@ Human UAT was executed for all twelve scenarios. Ten are `PASS`; role-change
 session revocation and disabled-staff session/direct-access revocation are
 `PARTIAL` because the available synthetic staff profile has no login mechanism
 or active session. Under the repository acceptance rules this criterion remains
-open until both scenarios receive complete human verification.
+open until both scenarios receive complete human verification. A guarded,
+CLI-only staging helper now makes those session-revocation retests executable;
+it does not change their recorded status or grant human approval.
 
 ## Non-approvals
 

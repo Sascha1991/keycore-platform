@@ -41,6 +41,17 @@ describe("staging Admin Compose wiring", () => {
     expect(bootstrap).toContain(
       "KEYRANO_STAGING_ADMIN_ROLE: ${KEYRANO_STAGING_ADMIN_ROLE-PROJECT_OWNER}",
     );
+    expect(bootstrap).toContain(
+      "KEYCORE_DEPLOYMENT_ID: ${KEYCORE_DEPLOYMENT_ID:?staging deployment ID is required}",
+    );
+    expect(bootstrap).toContain(
+      "KEYRANO_STAGING_ADMIN_ORIGIN: ${KEYRANO_STAGING_ADMIN_ORIGIN:?explicit staging admin origin is required}",
+    );
+    expect(bootstrap).not.toContain(
+      "KEYRANO_STAGING_ADMIN_UAT_SESSION_ENABLED:",
+    );
+    expect(bootstrap).not.toContain("KEYRANO_STAGING_ADMIN_UAT_SESSION_CODE:");
+    expect(bootstrap).not.toContain("KEYRANO_STAGING_ADMIN_UAT_TARGET_ID:");
     expect(serviceBlock("keycore-admin")).not.toContain(
       "KEYRANO_STAGING_ADMIN_ROLE:",
     );

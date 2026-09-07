@@ -140,6 +140,37 @@ staging-only, idempotently provisions one synthetic `PROJECT_OWNER`, replaces
 its previous synthetic session, persists only the HMAC hash and expires the new
 session after eight hours.
 
+### Temporary managed-staff UAT session
+
+KS-ADMIN-02 provides a separate CLI for testing role-change and disable session
+revocation. It is not part of the Admin HTTP surface and does not create or
+change identities, roles or grants. It accepts only an existing active
+`STAGING_SYNTHETIC` identity whose provider subject is exactly
+`managed-profile:<admin-id>`, whose active role is `SUPPORT` or `FINANCE`, and
+which has no active sensitive individual capability.
+
+The CLI requires all of the following at runtime:
+
+- `KEYCORE_ENV=STAGING`;
+- a deployment ID matching the existing `staging-*` deployment convention;
+- the exact approved `https://admin.staging.keyrano.de` origin (or the isolated
+  `.invalid` CI origin);
+- explicit `KEYRANO_STAGING_ADMIN_UAT_SESSION_ENABLED=true`; and
+- a runtime-only opaque session value between 32 and 512 characters.
+
+The opt-in, target ID and session value are deliberately absent from the
+long-running Admin service and the normal bootstrap environment. The CLI stores
+only the existing HMAC-SHA256 session hash, expires the session after one hour
+and returns only the target ID, role, expiry and `READY` status. Production,
+arbitrary origins, disabled/unmanaged identities, owner/operations/auditor
+roles and sensitive grants fail closed.
+
+Generate the runtime session value outside the repository, keep it out of shell
+history, logs and files, and enter the same value into the existing Admin login
+form. The role/status services remain authoritative: role change, disable and
+permission mutation revoke the session normally, and reactivation cannot revive
+it.
+
 ## Remaining approvals
 
 Admin browser UAT, production IdP/MFA, role assignment governance, real invoice

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added an explicitly enabled, CLI-only KS-ADMIN-02 staging UAT session helper
+  for active managed synthetic `SUPPORT`/`FINANCE` identities. It reuses the
+  hash-only Admin session authority so role-change and disable revocation can be
+  verified in a real browser, while production, arbitrary origins, unmanaged or
+  sensitive identities fail closed. UAT-ADMIN-02-04 and UAT-ADMIN-02-08 remain
+  `PARTIAL` pending Product Owner retesting.
+
 - Added KS-ADMIN-02 staff, single-role and additive permission management on
   the existing secure Admin foundation, with session revocation, concurrency-safe
   last-owner protection, transactionally coupled audit evidence and a bounded,

@@ -65,6 +65,74 @@ UAT-ADMIN-02-04 and UAT-ADMIN-02-08 therefore remain open for a future human
 retest with a synthetic staff identity that has its own active session and
 direct-access capability.
 
+## Staging Retest Preparation
+
+Use two separate browser contexts: one existing `PROJECT_OWNER` context and one
+private context for the managed synthetic staff member. In the owner context,
+reactivate the target if necessary, set its role to `SUPPORT`, confirm it has no
+sensitive individual grant, and copy only its non-secret Admin UUID.
+
+On the staging server, update the branch and rebuild the bootstrap image:
+
+```bash
+git fetch origin
+git checkout feature/ks-admin-02-staff-roles-audit
+git pull --ff-only origin feature/ks-admin-02-staff-roles-audit
+docker compose --env-file .env.staging -f infra/docker/compose.staging.yaml build keycore-admin-bootstrap
+```
+
+Choose a fresh random URL-safe value of at least 32 characters in a password
+manager. Paste it silently when prompted, and provide the target UUID:
+
+```bash
+read -r -p "Synthetic staff Admin UUID: " KEYRANO_STAGING_ADMIN_UAT_TARGET_ID
+read -r -s -p "Fresh runtime-only UAT session value: " KEYRANO_STAGING_ADMIN_UAT_SESSION_CODE
+printf '\n'
+export KEYRANO_STAGING_ADMIN_UAT_TARGET_ID KEYRANO_STAGING_ADMIN_UAT_SESSION_CODE
+docker compose --env-file .env.staging -f infra/docker/compose.staging.yaml run --rm \
+  -e KEYRANO_STAGING_ADMIN_UAT_SESSION_ENABLED=true \
+  -e KEYRANO_STAGING_ADMIN_UAT_TARGET_ID \
+  -e KEYRANO_STAGING_ADMIN_UAT_SESSION_CODE \
+  keycore-admin-bootstrap \
+  node --import tsx scripts/staging-admin-uat-session.ts
+unset KEYRANO_STAGING_ADMIN_UAT_TARGET_ID KEYRANO_STAGING_ADMIN_UAT_SESSION_CODE
+```
+
+The command may display only safe `READY` metadata. It must not display the raw
+session value. Do not place that value in `.env.staging`, shell history,
+screenshots, audit evidence or this document.
+
+### UAT-ADMIN-02-04 Retest
+
+1. In the private staff browser context, open `/admin/login`, enter the same
+   runtime-only value and confirm protected order access works with only the
+   effective `SUPPORT` permissions.
+2. In the separate owner context, change the target from `SUPPORT` to `FINANCE`.
+3. Confirm role history remains, exactly one active role remains and the current
+   role is `FINANCE`.
+4. Refresh or directly revisit a protected Admin URL in the old staff context.
+   Confirm it is denied neutrally and no protected staff/order data appears.
+5. Confirm safe `ADMIN_ROLE_CHANGED` evidence with previous role `SUPPORT` and
+   new role `FINANCE`. Do not capture cookies or the session value.
+
+### UAT-ADMIN-02-08 Retest
+
+1. Keep the target active with role `FINANCE` (or restore `SUPPORT`) and run the
+   preparation command again with a different fresh runtime-only value.
+2. Log in with that value in the private staff context and confirm the session
+   works with only the target's effective permissions.
+3. In the owner context, disable the target.
+4. Refresh or directly revisit a protected Admin URL in the staff context.
+   Confirm neutral denial with no staff or order disclosure.
+5. Confirm target status `DISABLED` and safe `ADMIN_STAFF_DISABLED` evidence.
+6. Reactivate the target in the owner context, then retry the old staff context.
+   Confirm the old session remains invalid. A new explicit CLI issuance is
+   required for any later session.
+
+These instructions make the two checks executable but do not change their
+`PARTIAL` status. Only the Product Owner may record `PASS` after completing the
+browser retests.
+
 ## Gates
 
 - KS-11-07 remains incomplete and unapproved.
