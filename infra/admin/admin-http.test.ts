@@ -21,8 +21,10 @@ const hmacMaterial = [
   "material-longer-than-thirty-two-bytes",
 ].join("-");
 const rawSession = "http-admin-opaque-session-1234567890abcdef";
+const staffRawSession = "http-staff-opaque-session-1234567890abcdef";
 const origin = "https://admin.staging.keyrano.de";
 const adminId = "a1000000-0000-4000-8000-000000000001";
+const staffAdminId = "a1000000-0000-4000-8000-000000000002";
 const targetOrderId = orderId("20000000-0000-4000-8000-000000000001");
 
 describe("AdminHttpController", () => {
@@ -61,6 +63,59 @@ describe("AdminHttpController", () => {
     expect(response.headers["Content-Security-Policy"]).toContain(
       "frame-ancestors 'none'",
     );
+  });
+
+  it("keeps owner and synthetic staff sessions independent across separate cookie jars", async () => {
+    const controller = fixture({
+      additionalSession: {
+        adminId: staffAdminId,
+        rawSession: staffRawSession,
+        role: "SUPPORT",
+      },
+    });
+    const ownerLogin = await controller.handle(
+      request("POST", "/admin/login", { origin }, { session_code: rawSession }),
+    );
+    const staffLogin = await controller.handle(
+      request(
+        "POST",
+        "/admin/login",
+        { origin },
+        { session_code: staffRawSession },
+      ),
+    );
+    const ownerCookie = required(ownerLogin.headers["Set-Cookie"]);
+    const staffCookie = required(staffLogin.headers["Set-Cookie"]);
+
+    expect(ownerLogin.statusCode).toBe(303);
+    expect(staffLogin.statusCode).toBe(303);
+    expect(ownerCookie).not.toBe(staffCookie);
+    await expect(
+      controller.handle(
+        request("GET", "/admin/staff", {
+          cookie: cookiePair(ownerCookie),
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      controller.handle(
+        request("GET", "/admin/orders", {
+          cookie: cookiePair(staffCookie),
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      controller.handle(
+        request("GET", "/admin/staff", {
+          cookie: cookiePair(staffCookie),
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      controller.handle(
+        request("GET", "/admin/", { cookie: cookiePair(ownerCookie) }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 200 });
   });
 
   it("keeps browser form POSTs compatible with strict exact-origin validation", async () => {
@@ -284,24 +339,43 @@ describe("AdminHttpController", () => {
 
 const fixture = (
   options: {
+    readonly additionalSession?: {
+      readonly adminId: string;
+      readonly rawSession: string;
+      readonly role: "FINANCE" | "SUPPORT";
+    };
     readonly backendUnavailable?: boolean;
     readonly role?: "PROJECT_OWNER" | "SUPPORT";
   } = {},
 ): AdminHttpController => {
   const audit = new MemoryAudit();
   const sessions: AdminSessionRepository = {
-    findByHash: async (hash) =>
-      hash === hashAdminSession(rawSession, hmacMaterial)
+    findByHash: async (hash) => {
+      if (hash === hashAdminSession(rawSession, hmacMaterial)) {
+        return {
+          adminId,
+          assurance: "MFA",
+          displayName: "Project Owner",
+          expiresAt: new Date("2026-09-03T00:00:00.000Z"),
+          identityStatus: "ACTIVE",
+          revokedAt: null,
+          roles: [options.role ?? "PROJECT_OWNER"],
+        };
+      }
+      const additional = options.additionalSession;
+      return additional &&
+        hash === hashAdminSession(additional.rawSession, hmacMaterial)
         ? {
-            adminId,
-            assurance: "MFA",
-            displayName: "Project Owner",
+            adminId: additional.adminId,
+            assurance: "STAGING_SYNTHETIC",
+            displayName: "Synthetic Staff",
             expiresAt: new Date("2026-09-03T00:00:00.000Z"),
             identityStatus: "ACTIVE",
             revokedAt: null,
-            roles: [options.role ?? "PROJECT_OWNER"],
+            roles: [additional.role],
           }
-        : null,
+        : null;
+    },
     revoke: async () => undefined,
     touch: async () => undefined,
   };
@@ -457,6 +531,8 @@ const authenticated = (
     { cookie: `keyrano_admin_session=${rawSession}`, ...headers },
     form,
   );
+const cookiePair = (setCookie: string): string =>
+  required(setCookie.split(";", 1)[0]);
 const required = <T>(value: T | undefined): T => {
   if (value === undefined) throw new Error("Expected value");
   return value;

@@ -9,6 +9,12 @@
   sensitive identities fail closed. UAT-ADMIN-02-04 and UAT-ADMIN-02-08 remain
   `PARTIAL` pending Product Owner retesting.
 
+- Clarified and regression-tested parallel KS-ADMIN-02 owner/staff UAT sessions:
+  PostgreSQL sessions coexist and lifecycle mutations revoke only the target
+  identity, while each browser login must use a genuinely separate cookie
+  store. No Admin cookie, authentication or Production behavior changed;
+  UAT-ADMIN-02-04 and UAT-ADMIN-02-08 remain `PARTIAL` pending manual retest.
+
 - Added KS-ADMIN-02 staff, single-role and additive permission management on
   the existing secure Admin foundation, with session revocation, concurrency-safe
   last-owner protection, transactionally coupled audit evidence and a bounded,

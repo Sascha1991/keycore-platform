@@ -110,9 +110,9 @@ Owner browser retesting.
 
 Follow-up verification:
 
-- focused environment/Compose guard tests: 11 passed;
+- focused Admin HTTP/environment/Compose guard tests: 18 passed;
 - focused Admin bootstrap/staff PostgreSQL tests: 7 passed;
-- `npm run check`: 804 passed and 135 service-gated tests skipped;
+- `npm run check`: 805 passed and 135 service-gated tests skipped;
 - security assessment: 60 passed and 345 intentionally excluded by the
   focused assessment configuration;
 - staging Compose configuration, UAT structure, secret scan and
@@ -121,3 +121,22 @@ Follow-up verification:
 
 No migration, external dependency, Production configuration, Product-Key
 decryption path or live integration was added or changed.
+
+### Parallel browser-context clarification
+
+Follow-up investigation found no global server-side session slot. The schema
+allows multiple active session hashes, login does not revoke another session,
+and role/status/permission mutations revoke rows only for the target
+`admin_id`. The apparent owner/staff replacement occurs when both logins use the
+same browser cookie store: `keyrano_admin_session` is intentionally one
+host-scoped cookie, so a later login in another tab or ordinary window replaces
+that profile's earlier cookie.
+
+HTTP regression coverage now models two independent cookie jars and proves both
+identities retain only their effective permissions concurrently. PostgreSQL
+coverage keeps an active owner session throughout SUPPORT issuance, role change,
+fresh FINANCE issuance, disable and reactivation; only the target sessions are
+revoked. No runtime authentication or cookie behavior changed. The manual UAT
+procedure now requires a genuinely separate browser profile/application or a
+fresh isolated private window and explicitly rejects a second ordinary tab as a
+separate context.

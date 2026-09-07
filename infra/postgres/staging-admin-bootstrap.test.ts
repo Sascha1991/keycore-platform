@@ -156,6 +156,12 @@ describePostgres("staging Admin role bootstrap persistence", () => {
     );
 
     try {
+      await bootstrapStagingAdmin(database, {
+        hashSecret,
+        now: new Date("2026-09-07T10:30:00.000Z"),
+        rawSession: ownerSession,
+        role: "PROJECT_OWNER",
+      });
       await createUatStaff(database);
       await database.query(
         `INSERT INTO admin_permission_grants(
@@ -183,6 +189,7 @@ describePostgres("staging Admin role bootstrap persistence", () => {
         revokedAt: null,
         roles: ["SUPPORT"],
       });
+      await expectOwnerSessionActive(sessions);
 
       await expect(
         authentication.authenticate(
@@ -209,6 +216,7 @@ describePostgres("staging Admin role bootstrap persistence", () => {
         authenticated: false,
         reasonCode: "ADMIN_SESSION_UNAVAILABLE",
       });
+      await expectOwnerSessionActive(sessions);
 
       await issueStagingAdminUatSession(database, {
         adminId: uatStaffId,
@@ -229,6 +237,7 @@ describePostgres("staging Admin role bootstrap persistence", () => {
         authenticated: false,
         reasonCode: "ADMIN_SESSION_UNAVAILABLE",
       });
+      await expectOwnerSessionActive(sessions);
 
       await expect(
         staff.setStatus(uatStaffId, "ACTIVE", mutationContext(14)),
@@ -242,6 +251,7 @@ describePostgres("staging Admin role bootstrap persistence", () => {
         authenticated: false,
         reasonCode: "ADMIN_SESSION_UNAVAILABLE",
       });
+      await expectOwnerSessionActive(sessions);
 
       const leaked = await database.query<{ readonly payload: string }>(
         `SELECT concat_ws(' ', reason_code, metadata::text) AS payload
@@ -368,4 +378,16 @@ const expectSessionRevoked = async (
     [hashAdminSession(rawSession, hashSecret)],
   );
   expect(result.rows[0]?.revoked_at).toBeInstanceOf(Date);
+};
+
+const expectOwnerSessionActive = async (
+  sessions: PostgresAdminSessionRepository,
+): Promise<void> => {
+  await expect(
+    sessions.findByHash(hashAdminSession(ownerSession, hashSecret)),
+  ).resolves.toMatchObject({
+    adminId: stagingAdminId,
+    revokedAt: null,
+    roles: ["PROJECT_OWNER"],
+  });
 };

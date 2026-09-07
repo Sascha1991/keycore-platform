@@ -67,10 +67,19 @@ direct-access capability.
 
 ## Staging Retest Preparation
 
-Use two separate browser contexts: one existing `PROJECT_OWNER` context and one
-private context for the managed synthetic staff member. In the owner context,
-reactivate the target if necessary, set its role to `SUPPORT`, confirm it has no
-sensitive individual grant, and copy only its non-secret Admin UUID.
+Use two genuinely separate browser cookie stores: keep the `PROJECT_OWNER` in
+the normal browser profile and open the managed synthetic staff member in a
+different browser application/profile or in a fresh private/incognito window
+after closing every existing private window for that browser. Two tabs or two
+ordinary windows in the same profile are not separate contexts: they share the
+single host-scoped `keyrano_admin_session` cookie and the later login replaces
+the earlier browser-side cookie, even though both server-side sessions remain
+valid.
+
+In the owner context, reactivate the target if necessary, set its role to
+`SUPPORT`, confirm it has no sensitive individual grant, and copy only its
+non-secret Admin UUID. Do not run the normal owner bootstrap between the two
+retests; it intentionally rotates the owner's staging session.
 
 On the staging server, update the branch and rebuild the bootstrap image:
 
@@ -104,27 +113,33 @@ screenshots, audit evidence or this document.
 
 ### UAT-ADMIN-02-04 Retest
 
-1. In the private staff browser context, open `/admin/login`, enter the same
-   runtime-only value and confirm protected order access works with only the
-   effective `SUPPORT` permissions.
-2. In the separate owner context, change the target from `SUPPORT` to `FINANCE`.
-3. Confirm role history remains, exactly one active role remains and the current
+1. Without logging the owner out, open `/admin/login` in the separate staff
+   cookie store, enter the same runtime-only value and confirm protected order
+   access works with only the effective `SUPPORT` permissions.
+2. Return to the owner browser and confirm its existing Dashboard and Staff
+   access still work. If this fails before any owner mutation, stop and verify
+   that the two windows do not share a browser profile/cookie store.
+3. In the owner context, change the target from `SUPPORT` to `FINANCE`.
+4. Confirm role history remains, exactly one active role remains and the current
    role is `FINANCE`.
-4. Refresh or directly revisit a protected Admin URL in the old staff context.
+5. Refresh or directly revisit a protected Admin URL in the old staff context.
    Confirm it is denied neutrally and no protected staff/order data appears.
-5. Confirm safe `ADMIN_ROLE_CHANGED` evidence with previous role `SUPPORT` and
+6. Confirm the owner context remains authenticated and safe
+   `ADMIN_ROLE_CHANGED` evidence shows previous role `SUPPORT` and
    new role `FINANCE`. Do not capture cookies or the session value.
 
 ### UAT-ADMIN-02-08 Retest
 
 1. Keep the target active with role `FINANCE` (or restore `SUPPORT`) and run the
    preparation command again with a different fresh runtime-only value.
-2. Log in with that value in the private staff context and confirm the session
-   works with only the target's effective permissions.
+2. Log in with that value in the separate staff cookie store and confirm the
+   session works with only the target's effective permissions. Confirm the owner
+   context remains authenticated before continuing.
 3. In the owner context, disable the target.
 4. Refresh or directly revisit a protected Admin URL in the staff context.
    Confirm neutral denial with no staff or order disclosure.
-5. Confirm target status `DISABLED` and safe `ADMIN_STAFF_DISABLED` evidence.
+5. Confirm the owner remains authenticated, target status is `DISABLED`, and
+   safe `ADMIN_STAFF_DISABLED` evidence is present.
 6. Reactivate the target in the owner context, then retry the old staff context.
    Confirm the old session remains invalid. A new explicit CLI issuance is
    required for any later session.
