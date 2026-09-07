@@ -110,6 +110,37 @@ describe("secure admin authentication and orders", () => {
     });
   });
 
+  it("fails closed for a disabled admin identity", async () => {
+    const audit = new MemoryAudit();
+    const touch = vi.fn(async () => undefined);
+    const service = new AdminAuthenticationService(
+      {
+        findByHash: async () => ({
+          ...owner,
+          identityStatus: "DISABLED",
+          revokedAt: null,
+        }),
+        revoke: async () => undefined,
+        touch,
+      },
+      audit,
+      hmacMaterial,
+      "STAGING",
+      () => now,
+    );
+
+    await expect(
+      service.authenticate(
+        "disabled-admin-session-1234567890abcdef",
+        correlationId("disabled-test"),
+      ),
+    ).resolves.toEqual({
+      authenticated: false,
+      reasonCode: "ADMIN_SESSION_UNAVAILABLE",
+    });
+    expect(touch).not.toHaveBeenCalled();
+  });
+
   it("denies order access before the repository for an insufficient role and audits it", async () => {
     const repository = repositoryFixture();
     const audit = new MemoryAudit();

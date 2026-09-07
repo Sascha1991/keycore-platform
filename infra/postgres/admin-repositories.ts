@@ -1,16 +1,27 @@
 import type {
   AdminDashboard,
+  AdminAuditEntry,
+  AdminCapability,
   AdminOrderDetail,
   AdminOrderFilters,
   AdminOrderPage,
   AdminOrderReadRepository,
   AdminRole,
+  AdminStaffDetail,
+  AdminStaffMutationResult,
+  AdminStaffRepository,
+  AdminStaffSummary,
+  AdminMutationContext,
   AdminSessionRepository,
   OrderId,
   StoredAdminSession,
 } from "../../packages/platform/src/contracts.js";
-import { orderId } from "../../packages/platform/src/contracts.js";
-import type { Queryable } from "./client.js";
+import {
+  capabilitiesForRole,
+  effectiveAdminCapabilities,
+  orderId,
+} from "../../packages/platform/src/contracts.js";
+import type { Queryable, TransactionalQueryable } from "./client.js";
 
 interface OrderSummaryRow {
   readonly id: string;
@@ -42,6 +53,7 @@ export class PostgresAdminSessionRepository implements AdminSessionRepository {
       readonly expires_at: Date;
       readonly revoked_at: Date | null;
       readonly identity_status: StoredAdminSession["identityStatus"];
+      readonly individual_capabilities: AdminCapability[];
     }>(
       `
         SELECT
@@ -56,6 +68,12 @@ export class PostgresAdminSessionRepository implements AdminSessionRepository {
           session.expires_at,
           session.revoked_at,
           identity.status AS identity_status
+          , COALESCE(
+            (SELECT array_agg(grant_row.capability ORDER BY grant_row.capability)
+             FROM admin_permission_grants grant_row
+             WHERE grant_row.admin_id = identity.id AND grant_row.revoked_at IS NULL),
+            ARRAY[]::text[]
+          ) AS individual_capabilities
         FROM admin_sessions session
         JOIN admin_identities identity ON identity.id = session.admin_id
         LEFT JOIN admin_role_assignments assignment
@@ -73,6 +91,7 @@ export class PostgresAdminSessionRepository implements AdminSessionRepository {
           displayName: row.display_name,
           expiresAt: row.expires_at,
           identityStatus: row.identity_status,
+          individualCapabilities: row.individual_capabilities,
           revokedAt: row.revoked_at,
           roles: row.roles,
         }
@@ -93,6 +112,469 @@ export class PostgresAdminSessionRepository implements AdminSessionRepository {
     );
   }
 }
+
+interface StaffRow {
+  readonly admin_id: string;
+  readonly first_name: string | null;
+  readonly last_name: string | null;
+  readonly display_name: string;
+  readonly employee_number: string | null;
+  readonly email_normalized: string | null;
+  readonly status: AdminStaffSummary["status"];
+  readonly role: AdminRole | null;
+  readonly has_additional_permissions: boolean;
+  readonly last_login_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
+export class PostgresAdminStaffRepository implements AdminStaffRepository {
+  public constructor(private readonly database: TransactionalQueryable) {}
+
+  public async list(
+    limit: number,
+    after?: string,
+  ): Promise<readonly AdminStaffSummary[]> {
+    const result = await this.database.query<StaffRow>(
+      `${staffSelect}
+       ${after ? "WHERE identity.id > $2::uuid" : ""}
+       ORDER BY identity.id ASC
+       LIMIT $1`,
+      after ? [limit, after] : [limit],
+    );
+    return result.rows.map(mapStaff);
+  }
+
+  public async findDetail(adminId: string): Promise<AdminStaffDetail | null> {
+    const staff = await this.database.query<StaffRow>(
+      `${staffSelect} WHERE identity.id = $1::uuid`,
+      [adminId],
+    );
+    const row = staff.rows[0];
+    if (!row) return null;
+    const [roles, permissions, audit] = await Promise.all([
+      this.database.query<{
+        role: AdminRole;
+        granted_at: Date;
+        revoked_at: Date | null;
+      }>(
+        `SELECT role, granted_at, revoked_at FROM admin_role_assignments WHERE admin_id = $1 ORDER BY granted_at DESC, id DESC`,
+        [adminId],
+      ),
+      this.database.query<{
+        capability: AdminCapability;
+        granted_at: Date;
+        revoked_at: Date | null;
+        reason: string | null;
+      }>(
+        `SELECT capability, granted_at, revoked_at, reason FROM admin_permission_grants WHERE admin_id = $1 ORDER BY granted_at DESC, id DESC`,
+        [adminId],
+      ),
+      this.database.query<{ last_audit_at: Date | null }>(
+        `SELECT max(timestamp_utc) AS last_audit_at FROM audit_events WHERE entity->>'type' = 'ADMIN_IDENTITY' AND entity->>'id' = $1`,
+        [adminId],
+      ),
+    ]);
+    const summary = mapStaff(row);
+    const active = permissions.rows
+      .filter((item) => item.revoked_at === null)
+      .map((item) => item.capability);
+    return {
+      ...summary,
+      activeIndividualCapabilities: active,
+      effectiveCapabilities: effectiveAdminCapabilities(summary.role, active),
+      lastAuditAt: audit.rows[0]?.last_audit_at ?? null,
+      permissionHistory: permissions.rows.map((item) => ({
+        capability: item.capability,
+        grantedAt: item.granted_at,
+        reason: item.reason,
+        revokedAt: item.revoked_at,
+      })),
+      roleCapabilities: summary.role ? capabilitiesForRole(summary.role) : [],
+      roleHistory: roles.rows.map((item) => ({
+        grantedAt: item.granted_at,
+        revokedAt: item.revoked_at,
+        role: item.role,
+      })),
+    };
+  }
+
+  public async create(
+    input: Parameters<AdminStaffRepository["create"]>[0],
+    context: AdminMutationContext,
+  ): Promise<AdminStaffMutationResult> {
+    try {
+      return await this.database.transaction<AdminStaffMutationResult>(
+        async (client) => {
+          await client.query(
+            `INSERT INTO admin_identities(id, provider, provider_subject, display_name, first_name, last_name, employee_number, email_normalized, status, created_at, updated_at)
+           VALUES ($1, 'STAGING_SYNTHETIC', $2, $3, $4, $5, $6, $7, 'ACTIVE', $8, $8)`,
+            [
+              input.adminId,
+              `managed-profile:${input.adminId}`,
+              input.displayName,
+              input.firstName,
+              input.lastName,
+              input.employeeNumber,
+              input.emailNormalized,
+              context.at,
+            ],
+          );
+          await client.query(
+            `INSERT INTO admin_role_assignments(admin_id, role, granted_by, granted_at) VALUES ($1, $2, $3, $4)`,
+            [input.adminId, input.role, context.actorId, context.at],
+          );
+          await appendAdminAudit(
+            client,
+            context,
+            input.adminId,
+            "ADMIN_STAFF_CREATED",
+            { targetAdminId: input.adminId, newRole: input.role },
+          );
+          return "UPDATED";
+        },
+      );
+    } catch (error) {
+      if (isUniqueViolation(error)) return "DUPLICATE";
+      throw error;
+    }
+  }
+
+  public async setStatus(
+    targetAdminId: string,
+    status: "ACTIVE" | "DISABLED",
+    context: AdminMutationContext,
+  ): Promise<AdminStaffMutationResult> {
+    return this.database.transaction(async (client) => {
+      await lockOwnerLifecycle(client);
+      const current = await client.query<{
+        status: AdminStaffSummary["status"];
+        role: AdminRole | null;
+      }>(
+        `SELECT identity.status, assignment.role
+         FROM admin_identities identity
+         LEFT JOIN admin_role_assignments assignment ON assignment.admin_id = identity.id AND assignment.revoked_at IS NULL
+         WHERE identity.id = $1 FOR UPDATE OF identity`,
+        [targetAdminId],
+      );
+      const row = current.rows[0];
+      if (!row) return "NOT_FOUND";
+      if (row.status === status) return "UNCHANGED";
+      if (
+        status === "DISABLED" &&
+        row.role === "PROJECT_OWNER" &&
+        (await activeOwnerCount(client)) <= 1
+      ) {
+        await appendAdminAudit(
+          client,
+          context,
+          targetAdminId,
+          "ADMIN_LAST_OWNER_PROTECTED",
+          { targetAdminId },
+          "DENIED",
+        );
+        return "LAST_OWNER_PROTECTED";
+      }
+      await client.query(
+        `UPDATE admin_identities SET status = $2, updated_at = $3 WHERE id = $1`,
+        [targetAdminId, status, context.at],
+      );
+      if (status === "DISABLED")
+        await revokeSessions(client, targetAdminId, context.at);
+      await appendAdminAudit(
+        client,
+        context,
+        targetAdminId,
+        status === "ACTIVE" ? "ADMIN_STAFF_ENABLED" : "ADMIN_STAFF_DISABLED",
+        { targetAdminId },
+      );
+      return "UPDATED";
+    });
+  }
+
+  public async changeRole(
+    targetAdminId: string,
+    role: AdminRole,
+    context: AdminMutationContext,
+  ): Promise<AdminStaffMutationResult> {
+    return this.database.transaction(async (client) => {
+      await lockOwnerLifecycle(client);
+      const current = await client.query<{ role: AdminRole }>(
+        `SELECT role FROM admin_role_assignments WHERE admin_id = $1 AND revoked_at IS NULL FOR UPDATE`,
+        [targetAdminId],
+      );
+      const previous = current.rows[0]?.role;
+      if (!previous) return "NOT_FOUND";
+      if (previous === role) return "UNCHANGED";
+      if (
+        previous === "PROJECT_OWNER" &&
+        role !== "PROJECT_OWNER" &&
+        (await activeOwnerCount(client)) <= 1
+      ) {
+        await appendAdminAudit(
+          client,
+          context,
+          targetAdminId,
+          "ADMIN_LAST_OWNER_PROTECTED",
+          { targetAdminId, previousRole: previous, newRole: role },
+          "DENIED",
+        );
+        return "LAST_OWNER_PROTECTED";
+      }
+      await client.query(
+        `UPDATE admin_role_assignments SET revoked_at = $2 WHERE admin_id = $1 AND revoked_at IS NULL`,
+        [targetAdminId, context.at],
+      );
+      await client.query(
+        `INSERT INTO admin_role_assignments(admin_id, role, granted_by, granted_at) VALUES ($1, $2, $3, $4)`,
+        [targetAdminId, role, context.actorId, context.at],
+      );
+      await revokeSessions(client, targetAdminId, context.at);
+      await appendAdminAudit(
+        client,
+        context,
+        targetAdminId,
+        "ADMIN_ROLE_CHANGED",
+        { targetAdminId, previousRole: previous, newRole: role },
+      );
+      return "UPDATED";
+    });
+  }
+
+  public async grantPermission(
+    targetAdminId: string,
+    capability: AdminCapability,
+    reason: string | null,
+    context: AdminMutationContext,
+  ): Promise<AdminStaffMutationResult> {
+    try {
+      return await this.database.transaction(async (client) => {
+        const target = await client.query(
+          `SELECT 1 FROM admin_identities WHERE id = $1 FOR UPDATE`,
+          [targetAdminId],
+        );
+        if (target.rowCount === 0) return "NOT_FOUND";
+        await client.query(
+          `INSERT INTO admin_permission_grants(admin_id, capability, granted_at, granted_by_admin_id, reason) VALUES ($1, $2, $3, $4, $5)`,
+          [targetAdminId, capability, context.at, context.actorId, reason],
+        );
+        await revokeSessions(client, targetAdminId, context.at);
+        await appendAdminAudit(
+          client,
+          context,
+          targetAdminId,
+          "ADMIN_PERMISSION_GRANTED",
+          { targetAdminId, capability },
+        );
+        return "UPDATED";
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) return "UNCHANGED";
+      throw error;
+    }
+  }
+
+  public async revokePermission(
+    targetAdminId: string,
+    capability: AdminCapability,
+    context: AdminMutationContext,
+  ): Promise<AdminStaffMutationResult> {
+    return this.database.transaction(async (client) => {
+      const result = await client.query(
+        `UPDATE admin_permission_grants SET revoked_at = $3, revoked_by_admin_id = $2 WHERE admin_id = $1 AND capability = $4 AND revoked_at IS NULL`,
+        [targetAdminId, context.actorId, context.at, capability],
+      );
+      if (result.rowCount === 0) {
+        const target = await client.query(
+          `SELECT 1 FROM admin_identities WHERE id = $1`,
+          [targetAdminId],
+        );
+        return target.rowCount === 0 ? "NOT_FOUND" : "UNCHANGED";
+      }
+      await revokeSessions(client, targetAdminId, context.at);
+      await appendAdminAudit(
+        client,
+        context,
+        targetAdminId,
+        "ADMIN_PERMISSION_REVOKED",
+        { targetAdminId, capability },
+      );
+      return "UPDATED";
+    });
+  }
+
+  public async listAudit(
+    input: Parameters<AdminStaffRepository["listAudit"]>[0],
+  ): Promise<Awaited<ReturnType<AdminStaffRepository["listAudit"]>>> {
+    const values: unknown[] = [];
+    const predicates: string[] = [];
+    const add = (value: unknown) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    if (input.filters.from)
+      predicates.push(
+        `timestamp_utc >= ${add(`${input.filters.from}T00:00:00.000Z`)}::timestamptz`,
+      );
+    if (input.filters.to)
+      predicates.push(
+        `timestamp_utc < (${add(`${input.filters.to}T00:00:00.000Z`)}::timestamptz + interval '1 day')`,
+      );
+    if (input.filters.eventType)
+      predicates.push(`event_type = ${add(input.filters.eventType)}`);
+    if (input.filters.outcome)
+      predicates.push(`outcome = ${add(input.filters.outcome)}`);
+    if (input.filters.actorId)
+      predicates.push(`actor->>'id' = ${add(input.filters.actorId)}`);
+    if (input.filters.entityId)
+      predicates.push(`entity->>'id' = ${add(input.filters.entityId)}`);
+    if (input.filters.reasonCode)
+      predicates.push(`reason_code = ${add(input.filters.reasonCode)}`);
+    if (input.after)
+      predicates.push(
+        `(timestamp_utc, id) < (${add(input.after.timestampUtc)}, ${add(input.after.id)}::uuid)`,
+      );
+    const result = await this.database.query<{
+      id: string;
+      timestamp_utc: Date;
+      event_type: string;
+      actor: { id?: unknown };
+      entity: { id?: unknown; type?: unknown };
+      outcome: AdminAuditEntry["outcome"];
+      reason_code: string;
+      metadata: Record<string, unknown>;
+    }>(
+      `SELECT id::text, timestamp_utc, event_type, actor, entity, outcome, reason_code, metadata
+       FROM audit_events ${predicates.length ? `WHERE ${predicates.join(" AND ")}` : ""}
+       ORDER BY timestamp_utc DESC, id DESC LIMIT ${add(input.limit + 1)}`,
+      values,
+    );
+    const rows = result.rows.slice(0, input.limit);
+    const entries = rows.map(mapAuditEntry);
+    const last = rows.at(-1);
+    return {
+      entries,
+      ...(result.rows.length > input.limit && last
+        ? { nextCursor: { id: last.id, timestampUtc: last.timestamp_utc } }
+        : {}),
+    };
+  }
+}
+
+const staffSelect = `
+  SELECT identity.id::text AS admin_id, identity.first_name, identity.last_name,
+    identity.display_name, identity.employee_number, identity.email_normalized,
+    identity.status, assignment.role,
+    EXISTS (SELECT 1 FROM admin_permission_grants grant_row WHERE grant_row.admin_id = identity.id AND grant_row.revoked_at IS NULL) AS has_additional_permissions,
+    (SELECT max(COALESCE(session.last_seen_at, session.issued_at)) FROM admin_sessions session WHERE session.admin_id = identity.id) AS last_login_at,
+    identity.created_at, identity.updated_at
+  FROM admin_identities identity
+  LEFT JOIN admin_role_assignments assignment ON assignment.admin_id = identity.id AND assignment.revoked_at IS NULL
+`;
+const mapStaff = (row: StaffRow): AdminStaffSummary => ({
+  adminId: row.admin_id,
+  createdAt: row.created_at,
+  displayName: row.display_name,
+  emailNormalized: row.email_normalized,
+  employeeNumber: row.employee_number,
+  firstName: row.first_name,
+  hasAdditionalPermissions: row.has_additional_permissions,
+  lastLoginAt: row.last_login_at,
+  lastName: row.last_name,
+  role: row.role,
+  status: row.status,
+  updatedAt: row.updated_at,
+});
+const safeAuditDetailKeys = new Set([
+  "action",
+  "targetAdminId",
+  "previousRole",
+  "newRole",
+  "capability",
+  "resultCount",
+  "filtered",
+  "found",
+]);
+const mapAuditEntry = (row: {
+  id: string;
+  timestamp_utc: Date;
+  event_type: string;
+  actor: { id?: unknown };
+  entity: { id?: unknown; type?: unknown };
+  outcome: AdminAuditEntry["outcome"];
+  reason_code: string;
+  metadata: Record<string, unknown>;
+}): AdminAuditEntry => {
+  const safeDetails: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(row.metadata))
+    if (
+      safeAuditDetailKeys.has(key) &&
+      (typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean")
+    )
+      safeDetails[key] = value;
+  return {
+    actorId: typeof row.actor.id === "string" ? row.actor.id : "unknown",
+    entityId: typeof row.entity.id === "string" ? row.entity.id : "unknown",
+    entityType:
+      typeof row.entity.type === "string" ? row.entity.type : "unknown",
+    eventType: row.event_type,
+    id: row.id,
+    outcome: row.outcome,
+    reasonCode: row.reason_code,
+    safeDetails,
+    timestampUtc: row.timestamp_utc,
+  };
+};
+const lockOwnerLifecycle = async (client: Queryable): Promise<void> => {
+  await client.query(
+    `SELECT pg_advisory_xact_lock(hashtext('keycore-admin-owner-lifecycle'))`,
+  );
+};
+const activeOwnerCount = async (client: Queryable): Promise<number> => {
+  const result = await client.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM admin_role_assignments assignment JOIN admin_identities identity ON identity.id = assignment.admin_id WHERE assignment.role = 'PROJECT_OWNER' AND assignment.revoked_at IS NULL AND identity.status = 'ACTIVE'`,
+  );
+  return Number(result.rows[0]?.count ?? "0");
+};
+const revokeSessions = async (
+  client: Queryable,
+  adminId: string,
+  at: Date,
+): Promise<void> => {
+  await client.query(
+    `UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, $2) WHERE admin_id = $1 AND revoked_at IS NULL`,
+    [adminId, at],
+  );
+};
+const appendAdminAudit = async (
+  client: Queryable,
+  context: AdminMutationContext,
+  targetAdminId: string,
+  reasonCode: string,
+  metadata: Record<string, string>,
+  outcome: "SUCCEEDED" | "DENIED" = "SUCCEEDED",
+): Promise<void> => {
+  await client.query(
+    `INSERT INTO audit_events(id, event_type, timestamp_utc, actor, correlation_id, entity, environment, outcome, reason_code, metadata) VALUES (gen_random_uuid(), 'ADMIN_ACTION', $1, $2::jsonb, $3, $4::jsonb, $5, $6, $7, $8::jsonb)`,
+    [
+      context.at,
+      JSON.stringify({ id: context.actorId, type: "ADMIN" }),
+      context.correlationId,
+      JSON.stringify({ id: targetAdminId, type: "ADMIN_IDENTITY" }),
+      context.environment,
+      outcome,
+      reasonCode,
+      JSON.stringify({ action: reasonCode, ...metadata }),
+    ],
+  );
+};
+const isUniqueViolation = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  error.code === "23505";
 
 export class PostgresAdminOrderReadRepository implements AdminOrderReadRepository {
   public constructor(private readonly database: Queryable) {}

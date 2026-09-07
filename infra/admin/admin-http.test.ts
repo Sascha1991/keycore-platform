@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 import {
   AdminAuthenticationService,
   AdminOrderService,
+  AdminStaffService,
   hashAdminSession,
   orderId,
   type AdminOrderReadRepository,
   type AdminSessionRepository,
+  type AdminStaffRepository,
   type AuditEvent,
   type AuditEventPort,
 } from "../../packages/platform/src/contracts.js";
@@ -19,8 +21,10 @@ const hmacMaterial = [
   "material-longer-than-thirty-two-bytes",
 ].join("-");
 const rawSession = "http-admin-opaque-session-1234567890abcdef";
+const staffRawSession = "http-staff-opaque-session-1234567890abcdef";
 const origin = "https://admin.staging.keyrano.de";
 const adminId = "a1000000-0000-4000-8000-000000000001";
+const staffAdminId = "a1000000-0000-4000-8000-000000000002";
 const targetOrderId = orderId("20000000-0000-4000-8000-000000000001");
 
 describe("AdminHttpController", () => {
@@ -59,6 +63,59 @@ describe("AdminHttpController", () => {
     expect(response.headers["Content-Security-Policy"]).toContain(
       "frame-ancestors 'none'",
     );
+  });
+
+  it("keeps owner and synthetic staff sessions independent across separate cookie jars", async () => {
+    const controller = fixture({
+      additionalSession: {
+        adminId: staffAdminId,
+        rawSession: staffRawSession,
+        role: "SUPPORT",
+      },
+    });
+    const ownerLogin = await controller.handle(
+      request("POST", "/admin/login", { origin }, { session_code: rawSession }),
+    );
+    const staffLogin = await controller.handle(
+      request(
+        "POST",
+        "/admin/login",
+        { origin },
+        { session_code: staffRawSession },
+      ),
+    );
+    const ownerCookie = required(ownerLogin.headers["Set-Cookie"]);
+    const staffCookie = required(staffLogin.headers["Set-Cookie"]);
+
+    expect(ownerLogin.statusCode).toBe(303);
+    expect(staffLogin.statusCode).toBe(303);
+    expect(ownerCookie).not.toBe(staffCookie);
+    await expect(
+      controller.handle(
+        request("GET", "/admin/staff", {
+          cookie: cookiePair(ownerCookie),
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      controller.handle(
+        request("GET", "/admin/orders", {
+          cookie: cookiePair(staffCookie),
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      controller.handle(
+        request("GET", "/admin/staff", {
+          cookie: cookiePair(staffCookie),
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      controller.handle(
+        request("GET", "/admin/", { cookie: cookiePair(ownerCookie) }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 200 });
   });
 
   it("keeps browser form POSTs compatible with strict exact-origin validation", async () => {
@@ -138,7 +195,12 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain(targetOrderId);
     expect(response.body).toContain("customer@example.test");
     expect(response.body).toContain("Arena Eleven");
-    expect(response.body).toContain("FULFILLMENT_PENDING");
+    expect(response.body).toContain("Auslieferung ausstehend");
+    expect(response.body).toContain('value="PAYMENT_AUTHORIZED"');
+    expect(response.body).toContain("Zahlung autorisiert");
+    expect(visibleText(response.body)).not.toMatch(
+      /CREATED|AWAITING_PAYMENT|PAYMENT_AUTHORIZED|PAYMENT_CAPTURED|PROCUREMENT_PENDING|PROCUREMENT_IN_PROGRESS|FULFILLMENT_PENDING|COMPLETED|CANCELLED|REFUND_PENDING|REFUNDED|MANUAL_REVIEW/u,
+    );
     expect(response.body).toContain("21,99 EUR");
     expect(response.body).not.toMatch(
       /ciphertext|wrapped_data|TEST-[A-Z0-9-]+/u,
@@ -177,7 +239,9 @@ describe("AdminHttpController", () => {
       authenticated("POST", path, { origin }, { csrf: required(csrf) }),
     );
     expect(response.statusCode).toBe(409);
-    expect(response.body).toContain("Es wurde kein Product Key offengelegt");
+    expect(response.body).toContain(
+      "Es wurde kein Produktschlüssel offengelegt",
+    );
     expect(response.body).not.toMatch(/TEST-[A-Z0-9-]+/u);
   });
 
@@ -195,25 +259,151 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain("vorübergehend nicht verfügbar");
     expect(response.body).not.toContain("synthetic backend detail");
   });
+
+  it("protects staff and audit routes server-side and renders responsive safe views", async () => {
+    await expect(
+      fixture({ role: "SUPPORT" }).handle(authenticated("GET", "/admin/staff")),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      fixture({ role: "SUPPORT" }).handle(authenticated("GET", "/admin/audit")),
+    ).resolves.toMatchObject({ statusCode: 403 });
+
+    const staff = await fixture().handle(authenticated("GET", "/admin/staff"));
+    expect(staff.statusCode).toBe(200);
+    expect(staff.body).toContain("Mitarbeiter &amp; Rollen");
+    expect(staff.body).toContain('class="staff-table"');
+    expect(staff.body).toContain('data-label="Mitarbeiter-ID"');
+    expect(staff.body).toContain('data-label="Anmeldekennung"');
+    expect(staff.body).toContain("Support");
+    expect(staff.body).toContain("Aktiv");
+    expect(staff.body).toContain(
+      "Synthetic &lt;script&gt;alert(1)&lt;/script&gt; Staff",
+    );
+    expect(staff.body).not.toContain("<script>alert(1)</script>");
+    expect(staff.body).not.toMatch(
+      /TEST-[A-Z0-9-]+|session_code|session_hash/iu,
+    );
+
+    const audit = await fixture().handle(authenticated("GET", "/admin/audit"));
+    expect(audit.statusCode).toBe(200);
+    expect(audit.body).toContain('class="audit-table"');
+    expect(audit.body).toContain("Mitarbeiter angelegt");
+    expect(audit.body).toContain("Admin-Vorgang");
+    expect(audit.body).toContain("Erfolgreich");
+    expect(audit.body).toContain("Neue Rolle: Finanzen");
+    expect(audit.body).toContain("Vorherige Rolle: Support");
+    expect(audit.body).toContain("Berechtigung: Audit-Protokoll anzeigen");
+    const auditTable =
+      audit.body
+        .split('<table class="audit-table">')[1]
+        ?.split("</table>")[0] ?? "";
+    expect(auditTable).not.toMatch(
+      /cookie|authorization|csrf|session.?hash|product.?key/iu,
+    );
+    expect(visibleText(auditTable)).not.toMatch(
+      /ADMIN_STAFF_CREATED|ADMIN_ROLE_CHANGED|FINANCE|SUPPORT|AUDIT_VIEW|SUCCEEDED/u,
+    );
+
+    const detail = await fixture().handle(
+      authenticated("GET", `/admin/staff/${targetOrderId}`),
+    );
+    expect(detail.body).toContain("Standardberechtigungen");
+    expect(detail.body).toContain("Bestellungen anzeigen");
+    expect(detail.body).toContain("Rollen- und Berechtigungsverlauf");
+    expect(visibleText(detail.body)).not.toMatch(
+      /ADMIN_ACCESS|ORDER_VIEW|PROJECT_OWNER|SECURITY_AUDITOR/u,
+    );
+  });
+
+  it("keeps staff mutations POST-only and exact-origin CSRF-bound", async () => {
+    const controller = fixture();
+    const detailPath = `/admin/staff/${targetOrderId}`;
+    const detail = await controller.handle(authenticated("GET", detailPath));
+    expect(detail.statusCode).toBe(200);
+    const action = `${detailPath}/role`;
+    const csrf = new RegExp(
+      `action="${action.replaceAll("/", "\\/")}"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"`,
+      "u",
+    ).exec(detail.body)?.[1];
+    expect(csrf).toBeTruthy();
+    await expect(
+      controller.handle(authenticated("GET", action)),
+    ).resolves.toMatchObject({ statusCode: 405 });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          action,
+          {},
+          { csrf: required(csrf), role: "FINANCE" },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          action,
+          { origin: "https://attacker.invalid" },
+          { csrf: required(csrf), role: "FINANCE" },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          action,
+          { origin },
+          { csrf: required(csrf), role: "FINANCE" },
+        ),
+      ),
+    ).resolves.toMatchObject({
+      statusCode: 303,
+      headers: { Location: detailPath },
+    });
+  });
 });
 
 const fixture = (
-  options: { readonly backendUnavailable?: boolean } = {},
+  options: {
+    readonly additionalSession?: {
+      readonly adminId: string;
+      readonly rawSession: string;
+      readonly role: "FINANCE" | "SUPPORT";
+    };
+    readonly backendUnavailable?: boolean;
+    readonly role?: "PROJECT_OWNER" | "SUPPORT";
+  } = {},
 ): AdminHttpController => {
   const audit = new MemoryAudit();
   const sessions: AdminSessionRepository = {
-    findByHash: async (hash) =>
-      hash === hashAdminSession(rawSession, hmacMaterial)
+    findByHash: async (hash) => {
+      if (hash === hashAdminSession(rawSession, hmacMaterial)) {
+        return {
+          adminId,
+          assurance: "MFA",
+          displayName: "Project Owner",
+          expiresAt: new Date("2026-09-03T00:00:00.000Z"),
+          identityStatus: "ACTIVE",
+          revokedAt: null,
+          roles: [options.role ?? "PROJECT_OWNER"],
+        };
+      }
+      const additional = options.additionalSession;
+      return additional &&
+        hash === hashAdminSession(additional.rawSession, hmacMaterial)
         ? {
-            adminId,
-            assurance: "MFA",
-            displayName: "Project Owner",
+            adminId: additional.adminId,
+            assurance: "STAGING_SYNTHETIC",
+            displayName: "Synthetic Staff",
             expiresAt: new Date("2026-09-03T00:00:00.000Z"),
             identityStatus: "ACTIVE",
             revokedAt: null,
-            roles: ["PROJECT_OWNER"],
+            roles: [additional.role],
           }
-        : null,
+        : null;
+    },
     revoke: async () => undefined,
     touch: async () => undefined,
   };
@@ -246,6 +436,76 @@ const fixture = (
     }),
     list: async () => ({ orders: [summary()] }),
   };
+  const staff: AdminStaffRepository = {
+    changeRole: async () => "UPDATED",
+    create: async () => "UPDATED",
+    findDetail: async () => ({
+      activeIndividualCapabilities: [],
+      adminId: targetOrderId,
+      createdAt: new Date("2026-09-01T09:00:00.000Z"),
+      displayName: "Synthetic <script>alert(1)</script> Staff",
+      effectiveCapabilities: ["ADMIN_ACCESS", "ORDER_VIEW"],
+      emailNormalized: "synthetic.staff@example.test",
+      employeeNumber: "STAFF-001",
+      firstName: "Synthetic",
+      hasAdditionalPermissions: false,
+      lastAuditAt: null,
+      lastLoginAt: null,
+      lastName: "Staff",
+      permissionHistory: [],
+      role: "SUPPORT",
+      roleCapabilities: ["ADMIN_ACCESS", "ORDER_VIEW"],
+      roleHistory: [
+        {
+          grantedAt: new Date("2026-09-01T09:00:00.000Z"),
+          revokedAt: null,
+          role: "SUPPORT",
+        },
+      ],
+      status: "ACTIVE",
+      updatedAt: new Date("2026-09-01T09:00:00.000Z"),
+    }),
+    grantPermission: async () => "UPDATED",
+    list: async () => [
+      {
+        adminId: targetOrderId,
+        createdAt: new Date("2026-09-01T09:00:00.000Z"),
+        displayName: "Synthetic <script>alert(1)</script> Staff",
+        emailNormalized: "synthetic.staff@example.test",
+        employeeNumber: "STAFF-001",
+        firstName: "Synthetic",
+        hasAdditionalPermissions: false,
+        lastLoginAt: null,
+        lastName: "Staff",
+        role: "SUPPORT",
+        status: "ACTIVE",
+        updatedAt: new Date("2026-09-01T09:00:00.000Z"),
+      },
+    ],
+    listAudit: async () => ({
+      entries: [
+        {
+          actorId: adminId,
+          entityId: targetOrderId,
+          entityType: "ADMIN_IDENTITY",
+          eventType: "ADMIN_ACTION",
+          id: targetOrderId,
+          outcome: "SUCCEEDED",
+          reasonCode: "ADMIN_STAFF_CREATED",
+          safeDetails: {
+            action: "ADMIN_ROLE_CHANGED",
+            capability: "AUDIT_VIEW",
+            newRole: "FINANCE",
+            previousRole: "SUPPORT",
+            sessionCode: "must-not-render",
+          },
+          timestampUtc: new Date("2026-09-01T09:00:00.000Z"),
+        },
+      ],
+    }),
+    revokePermission: async () => "UPDATED",
+    setStatus: async () => "UPDATED",
+  };
   return new AdminHttpController(
     new AdminAuthenticationService(
       sessions,
@@ -255,6 +515,7 @@ const fixture = (
       () => new Date("2026-09-02T10:00:00.000Z"),
     ),
     new AdminOrderService(orders, audit, hmacMaterial, "STAGING"),
+    new AdminStaffService(staff, audit, hmacMaterial, "STAGING"),
     { allowedOrigin: origin, csrfSecret: hmacMaterial, secureCookies: true },
   );
 };
@@ -304,7 +565,11 @@ const authenticated = (
     { cookie: `keyrano_admin_session=${rawSession}`, ...headers },
     form,
   );
+const cookiePair = (setCookie: string): string =>
+  required(setCookie.split(";", 1)[0]);
 const required = <T>(value: T | undefined): T => {
   if (value === undefined) throw new Error("Expected value");
   return value;
 };
+const visibleText = (html: string): string =>
+  html.replaceAll(/<[^>]+>/gu, " ").replaceAll(/\s+/gu, " ");

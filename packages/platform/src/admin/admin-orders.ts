@@ -28,6 +28,10 @@ export const adminCapabilities = [
   "SENSITIVE_OPERATION",
   "PRODUCT_KEY_REVEAL",
   "AUDIT_VIEW",
+  "STAFF_VIEW",
+  "STAFF_MANAGE",
+  "ROLE_ASSIGN",
+  "PERMISSION_OVERRIDE_MANAGE",
 ] as const;
 export type AdminCapability = (typeof adminCapabilities)[number];
 
@@ -47,6 +51,7 @@ export interface AdminPrincipal {
   readonly roles: readonly AdminRole[];
   readonly assurance: "MFA" | "STAGING_SYNTHETIC";
   readonly expiresAt: Date;
+  readonly individualCapabilities?: readonly AdminCapability[];
 }
 
 export interface StoredAdminSession {
@@ -57,6 +62,7 @@ export interface StoredAdminSession {
   readonly expiresAt: Date;
   readonly revokedAt: Date | null;
   readonly identityStatus: "ACTIVE" | "DISABLED";
+  readonly individualCapabilities?: readonly AdminCapability[];
 }
 
 export interface AdminSessionRepository {
@@ -122,6 +128,7 @@ export class AdminAuthenticationService {
       displayName: stored.displayName,
       expiresAt: stored.expiresAt,
       roles: [...stored.roles],
+      individualCapabilities: [...(stored.individualCapabilities ?? [])],
     };
     await this.sessions.touch(sessionHash, at);
     await this.auditAuthentication(
@@ -175,7 +182,12 @@ export const hasAdminCapability = (
   principal: AdminPrincipal,
   capability: AdminCapability,
 ): boolean =>
-  principal.roles.some((role) => roleCapabilities[role].includes(capability));
+  principal.roles.some((role) => roleCapabilities[role].includes(capability)) ||
+  (principal.individualCapabilities ?? []).includes(capability);
+
+export const capabilitiesForRole = (
+  role: AdminRole,
+): readonly AdminCapability[] => [...roleCapabilities[role]];
 
 export class AdminAccessError extends Error {
   public constructor(

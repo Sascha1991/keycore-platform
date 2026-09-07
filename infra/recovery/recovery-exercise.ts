@@ -39,10 +39,11 @@ import { loadMigrations } from "../postgres/migrations.js";
 import { PostgresOperationsControlRepository } from "../postgres/operations-control-repositories.js";
 import { PostgresOrderRepository } from "../postgres/order-repositories.js";
 
-const expectedMigrationBaseline = "028";
-const expectedMigrationCount = 28;
+const expectedMigrationBaseline = "029";
+const expectedMigrationCount = 29;
 const requiredTables = [
   "admin_identities",
+  "admin_permission_grants",
   "admin_role_assignments",
   "admin_sessions",
   "customer_key_delivery_approvals",
@@ -104,7 +105,7 @@ export interface RecoveryExerciseResult {
   readonly invariantCounts: Readonly<Record<string, number>>;
   readonly keyManagementRecovery: "DEFERRED_TO_PHASE_12";
   readonly manifestSha256: string;
-  readonly migrationBaseline: "028";
+  readonly migrationBaseline: "029";
   readonly productionRpoTarget: "NOT_YET_APPROVED";
   readonly productionRtoTarget: "NOT_YET_APPROVED";
   readonly redis: {
