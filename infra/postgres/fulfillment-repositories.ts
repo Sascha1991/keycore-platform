@@ -77,7 +77,7 @@ export class PostgresFulfillmentRepository implements FulfillmentRepository {
               input.operation.orderId,
               input.operation.procurementOperationId,
             )
-          : null;
+          : await findById(client, input.operation.id);
       if (existing) {
         return { operation: existing, status: "EXISTING" };
       }

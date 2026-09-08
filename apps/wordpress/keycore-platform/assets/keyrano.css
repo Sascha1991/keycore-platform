@@ -526,3 +526,15 @@ footer:has(.keyrano-footer-columns) figure img { height: auto; max-width: min(10
   .keyrano-footer-columns { gap: 30px; }
   footer:has(.keyrano-footer-columns) > .wp-block-group { padding-block: 40px 24px !important; }
 }
+.keyrano-checkout-result-error {
+  border: 1px solid #7f1d1d;
+  border-radius: 6px;
+  background: #2b1116;
+  color: #fff1f2;
+  padding: 1rem;
+}
+
+.keyrano-checkout-result-error a {
+  color: #e9d5ff;
+  font-weight: 700;
+}

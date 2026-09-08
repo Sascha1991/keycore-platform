@@ -21,7 +21,10 @@ accepted UAT-002 on 2026-08-31. The product owner confirmed UAT-018 `PASS` on
 UAT-015 `PASS` on 2026-09-02. The product owner completed and accepted UAT-012,
 UAT-005 and UAT-004 on
 2026-09-08. The claim scenarios used a freshly restored isolated synthetic
-fixture, with UAT-005 executed before UAT-004. Unchanged browser gaps remain
+fixture, with UAT-005 executed before UAT-004. The Phase-12 end-to-end
+storefront integration makes UAT-003, UAT-007 and UAT-009 technically
+executable after reviewed staging deployment; their human results remain
+pending. Other unchanged browser gaps remain
 `NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY`. Readiness is not acceptance.
 
 ## Allowed Results

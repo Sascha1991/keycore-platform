@@ -17,6 +17,13 @@ import {
   PostgresAdminStaffRepository,
 } from "../infra/postgres/admin-repositories.js";
 import { PostgresAuditEventRepository } from "../infra/postgres/repositories.js";
+import { inspectStagingMigrationStatus } from "../infra/postgres/staging-preflight.js";
+import { PostgresStagingDelayedFulfillment } from "../infra/storefront/staging-delayed-fulfillment.js";
+import { MailpitStagingTransport } from "../infra/storefront/staging-mailpit.js";
+import {
+  StagingPreflightService,
+  loadStagingPreflightConfiguration,
+} from "../packages/platform/src/staging/staging-preflight.js";
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -38,6 +45,33 @@ const pool = createPostgresPool({
 });
 const database = new PostgresTransactionBoundary(pool);
 const audit = new PostgresAuditEventRepository(database);
+const preflightEnvironment = {
+  ...process.env,
+  KEYCORE_DATABASE_URL: internalDatabaseUrl(
+    required("KEYCORE_STAGING_POSTGRES_PASSWORD"),
+  ),
+  KEYCORE_REDIS_URL: internalRedisUrl(
+    required("KEYCORE_STAGING_REDIS_PASSWORD"),
+  ),
+};
+const preflight = new StagingPreflightService().verify(
+  loadStagingPreflightConfiguration(preflightEnvironment),
+  await inspectStagingMigrationStatus(
+    preflightEnvironment.KEYCORE_DATABASE_URL,
+  ),
+);
+const delayedFulfillment =
+  preflight.status === "READY"
+    ? new PostgresStagingDelayedFulfillment({
+        database,
+        masterKeyMaterialBase64: required("KEYCORE_FULFILLMENT_MASTER_KEY"),
+        masterKeyVersion: required("KEYCORE_FULFILLMENT_MASTER_KEY_ID"),
+        notification: new MailpitStagingTransport(
+          required("KEYCORE_STAGING_MAILPIT_URL"),
+        ),
+        syntheticKey: required("KEYRANO_STAGING_SYNTHETIC_KEY"),
+      })
+    : undefined;
 const controller = new AdminHttpController(
   new AdminAuthenticationService(
     new PostgresAdminSessionRepository(database),
@@ -62,6 +96,7 @@ const controller = new AdminHttpController(
     csrfSecret: required("KEYRANO_STAGING_ADMIN_CSRF_SECRET"),
     secureCookies,
   },
+  delayedFulfillment,
 );
 const css = await readFile(
   new URL("../apps/admin/assets/admin.css", import.meta.url),
@@ -174,6 +209,12 @@ function internalDatabaseUrl(password: string): string {
   const url = new URL(
     "postgresql://keycore_staging@postgres:5432/keycore_staging",
   );
+  url.password = password;
+  return url.toString();
+}
+
+function internalRedisUrl(password: string): string {
+  const url = new URL("redis://redis:6379");
   url.password = password;
   return url.toString();
 }

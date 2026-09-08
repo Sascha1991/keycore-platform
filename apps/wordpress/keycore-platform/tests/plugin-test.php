@@ -13,6 +13,8 @@ $GLOBALS['keyrano_products'] = [];
 $GLOBALS['keyrano_order'] = null;
 $GLOBALS['keyrano_notices'] = [];
 $GLOBALS['keyrano_nonce_fields'] = [];
+$GLOBALS['keyrano_logged_in'] = true;
+$GLOBALS['keyrano_current_user_id'] = 20;
 
 function add_action(string $name, mixed $callback, int $priority = 10): void { $GLOBALS['keyrano_test_actions'][] = $name; }
 function add_filter(string $name, mixed $callback): void { $GLOBALS['keyrano_test_filters'][] = $name; }
@@ -46,8 +48,8 @@ function wp_nonce_field(string $action, string $name = '_wpnonce', bool $referer
 function flush_rewrite_rules(): void {}
 function add_rewrite_endpoint(string $name, int $places): void {}
 function wc_print_notice(string $message, string $type): void {}
-function is_user_logged_in(): bool { return true; }
-function get_current_user_id(): int { return 20; }
+function is_user_logged_in(): bool { return $GLOBALS['keyrano_logged_in']; }
+function get_current_user_id(): int { return $GLOBALS['keyrano_current_user_id']; }
 function get_user_meta(int $user_id, string $key, bool $single = true): string { return '10000000-0000-4000-8000-000000000001'; }
 function wc_get_order(int $order_id): mixed { return $GLOBALS['keyrano_order']; }
 function wc_add_notice(string $message, string $type): void { $GLOBALS['keyrano_notices'][] = [$message, $type]; }
@@ -68,8 +70,12 @@ class WC_Payment_Gateway
 
 class WC_Order
 {
-    public function __construct(private int $customer_id) {}
+    private array $meta = [];
+    public function __construct(private int $customer_id, private string $billing_email = '') {}
     public function get_customer_id(): int { return $this->customer_id; }
+    public function get_billing_email(): string { return $this->billing_email; }
+    public function get_meta(string $key, bool $single = true): string { return (string) ($this->meta[$key] ?? ''); }
+    public function update_meta_data(string $key, string $value): void { $this->meta[$key] = $value; }
 }
 
 class WC_Product
@@ -115,7 +121,7 @@ final class FakeBridge implements Bridge
     public array $products;
     public function __construct() { $this->products = [fixture('safe-one'), fixture('safe-two')]; }
     public function catalog(): ?array { return ['products' => $this->products, 'status' => 'OK']; }
-    public function checkout(int $wp_user_id, string $customer_id, array $command): ?array { return null; }
+    public function checkout(?int $wp_user_id, ?string $customer_id, array $command): ?array { return null; }
     public function orders(int $wp_user_id, string $customer_id): ?array { return null; }
     public function order(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
     public function invoice(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
@@ -304,6 +310,40 @@ assert_true(
     'A checkout for another WordPress customer was not denied'
 );
 assert_true(1 === count($GLOBALS['keyrano_notices']), 'Cross-customer checkout denial did not produce a safe notice');
+
+$GLOBALS['keyrano_logged_in'] = false;
+$guest_order = new WC_Order(0, 'guest-checkout@example.test');
+$guest_order->update_meta_data('_keyrano_keycore_order_id', '20000000-0000-4000-8000-000000000099');
+$guest_order->update_meta_data('_keyrano_checkout_status', 'CAPTURED');
+$guest_order->update_meta_data('_keyrano_guest_claim_delivery', 'ACCEPTED');
+$GLOBALS['keyrano_order'] = $guest_order;
+ob_start();
+$success_gateway->thankyou_page(101);
+$guest_confirmation = (string) ob_get_clean();
+assert_true(false !== strpos($guest_confirmation, 'KeyRaNo-Konto'), 'Guest confirmation omitted the account requirement');
+assert_true(false !== strpos($guest_confirmation, 'derselben E-Mail-Adresse'), 'Guest confirmation omitted exact-email guidance');
+assert_true(false === stripos($guest_confirmation, 'SYNTHETIC_'), 'Guest confirmation leaked claim or key material');
+
+$failed_order = new WC_Order(0, 'guest-checkout@example.test');
+$failed_order->update_meta_data('_keyrano_checkout_status', 'FAILED');
+$GLOBALS['keyrano_order'] = $failed_order;
+ob_start();
+$success_gateway->thankyou_page(102);
+$failed_confirmation = (string) ob_get_clean();
+assert_true(false !== strpos($failed_confirmation, 'Zahlung fehlgeschlagen'), 'Stable failed-payment result is missing');
+assert_true(false !== strpos($failed_confirmation, 'Zurück zum Warenkorb'), 'Failed-payment retry path is missing');
+assert_true(false !== strpos($failed_confirmation, 'kein Produktschlüssel'), 'Failed-payment no-key statement is missing');
+
+$cancelled_order = new WC_Order(0, 'guest-checkout@example.test');
+$cancelled_order->update_meta_data('_keyrano_checkout_status', 'CANCELLED');
+$GLOBALS['keyrano_order'] = $cancelled_order;
+ob_start();
+$success_gateway->thankyou_page(103);
+$cancelled_confirmation = (string) ob_get_clean();
+assert_true(false !== strpos($cancelled_confirmation, 'Zahlung abgebrochen'), 'Stable cancelled-payment result is missing');
+assert_true(false === strpos($cancelled_confirmation, 'Zahlung fehlgeschlagen'), 'Cancellation was rendered as payment failure');
+assert_true(false !== strpos($cancelled_confirmation, 'Zurück zum Warenkorb'), 'Cancelled-payment return path is missing');
+$GLOBALS['keyrano_logged_in'] = true;
 
 $bridge = new FakeBridge();
 $publisher = new Publisher($bridge);

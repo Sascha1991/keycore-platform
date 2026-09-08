@@ -22,6 +22,7 @@ services:
       KEYRANO_STAGING_BRIDGE_SECRET: ${KEYRANO_STAGING_BRIDGE_SECRET:?staging bridge secret is required}
       KEYRANO_STAGING_ORIGIN: ${KEYRANO_STAGING_ORIGIN:?explicit staging origin is required}
       KEYRANO_STAGING_FORCE_SSL_ADMIN: ${KEYRANO_STAGING_FORCE_SSL_ADMIN:-true}
+      KEYRANO_STAGING_GUEST_CHECKOUT_EMAIL: ${KEYRANO_STAGING_GUEST_CHECKOUT_EMAIL:-guest-checkout@example.test}
       WORDPRESS_CONFIG_EXTRA: |
         define('WP_ENVIRONMENT_TYPE', 'staging');
         define('DISALLOW_FILE_EDIT', true);
@@ -54,6 +55,7 @@ services:
       KEYCORE_ENV: STAGING
       KEYCORE_DEPLOYMENT_ID: ${KEYCORE_DEPLOYMENT_ID:?staging deployment ID is required}
       KEYCORE_STAGING_POSTGRES_PASSWORD: ${KEYCORE_STAGING_POSTGRES_PASSWORD:?staging PostgreSQL password is required}
+      KEYCORE_STAGING_REDIS_PASSWORD: ${KEYCORE_STAGING_REDIS_PASSWORD:?staging Redis password is required}
       KEYRANO_STAGING_GUEST_CLAIM_CODE: ${KEYRANO_STAGING_GUEST_CLAIM_CODE:?synthetic staging guest claim code is required}
     command:
       ["node", "--import", "tsx", "scripts/staging-checkout-bootstrap.ts"]
@@ -68,6 +70,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      mail:
+        condition: service_started
     environment:
       KEYCORE_ENV: STAGING
       KEYCORE_DEPLOYMENT_ID: ${KEYCORE_DEPLOYMENT_ID:?staging deployment ID is required}
@@ -77,6 +81,8 @@ services:
       KEYRANO_STAGING_ORIGIN: ${KEYRANO_STAGING_ORIGIN:?explicit staging origin is required}
       KEYRANO_STAGING_BROWSER_MASTER_KEY: ${KEYRANO_STAGING_BROWSER_MASTER_KEY:?staging browser master key is required}
       KEYRANO_STAGING_SYNTHETIC_KEY: ${KEYRANO_STAGING_SYNTHETIC_KEY:?synthetic staging key is required}
+      KEYRANO_STAGING_GUEST_CHECKOUT_EMAIL: ${KEYRANO_STAGING_GUEST_CHECKOUT_EMAIL:-guest-checkout@example.test}
+      KEYCORE_STAGING_MAILPIT_URL: http://mail:8025
       KEYRANO_STAGING_CUSTOMER_A_WP_USER_ID: ${KEYRANO_STAGING_CUSTOMER_A_WP_USER_ID:-2}
       KEYRANO_STAGING_CUSTOMER_B_WP_USER_ID: ${KEYRANO_STAGING_CUSTOMER_B_WP_USER_ID:-3}
     healthcheck:
@@ -120,15 +126,49 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      mail:
+        condition: service_started
     environment:
       KEYCORE_ENV: STAGING
       KEYCORE_STAGING_POSTGRES_PASSWORD: ${KEYCORE_STAGING_POSTGRES_PASSWORD:?staging PostgreSQL password is required}
+      KEYCORE_STAGING_REDIS_PASSWORD: ${KEYCORE_STAGING_REDIS_PASSWORD:?staging Redis password is required}
       KEYRANO_STAGING_ADMIN_PORT: 3001
       KEYRANO_STAGING_ADMIN_ORIGIN: ${KEYRANO_STAGING_ADMIN_ORIGIN:?explicit staging admin origin is required}
       KEYRANO_STAGING_ADMIN_SECURE_COOKIES: ${KEYRANO_STAGING_ADMIN_SECURE_COOKIES:-true}
       KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET: ${KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET:?staging admin session hash secret is required}
       KEYRANO_STAGING_ADMIN_CURSOR_SECRET: ${KEYRANO_STAGING_ADMIN_CURSOR_SECRET:?staging admin cursor secret is required}
       KEYRANO_STAGING_ADMIN_CSRF_SECRET: ${KEYRANO_STAGING_ADMIN_CSRF_SECRET:?staging admin CSRF secret is required}
+      KEYRANO_STAGING_SYNTHETIC_KEY: ${KEYRANO_STAGING_SYNTHETIC_KEY:?synthetic staging key is required}
+      KEYCORE_STAGING_MAILPIT_URL: http://mail:8025
+      KEYCORE_DEPLOYMENT_ID: ${KEYCORE_DEPLOYMENT_ID:?staging deployment ID is required}
+      KEYCORE_POSTGRES_RESOURCE_ENV: ${KEYCORE_POSTGRES_RESOURCE_ENV:?staging PostgreSQL resource environment is required}
+      KEYCORE_POSTGRES_RESOURCE_ID: ${KEYCORE_POSTGRES_RESOURCE_ID:?staging PostgreSQL resource ID is required}
+      KEYCORE_REDIS_RESOURCE_ENV: ${KEYCORE_REDIS_RESOURCE_ENV:?staging Redis resource environment is required}
+      KEYCORE_REDIS_RESOURCE_ID: ${KEYCORE_REDIS_RESOURCE_ID:?staging Redis resource ID is required}
+      KEYCORE_REDIS_NAMESPACE: ${KEYCORE_REDIS_NAMESPACE:?staging Redis namespace is required}
+      KEYCORE_STAGING_PUBLIC_ORIGIN: ${KEYCORE_STAGING_PUBLIC_ORIGIN:?staging public origin is required}
+      KEYCORE_SECURE_COOKIES: ${KEYCORE_SECURE_COOKIES:-true}
+      KEYCORE_CSRF_ENABLED: ${KEYCORE_CSRF_ENABLED:-true}
+      KEYCORE_DEBUG: ${KEYCORE_DEBUG:-false}
+      KEYCORE_STAGING_MAIL_MODE: ${KEYCORE_STAGING_MAIL_MODE:-CAPTURE}
+      KEYCORE_MAIL_ALLOW_EXTERNAL: ${KEYCORE_MAIL_ALLOW_EXTERNAL:-false}
+      KEYCORE_STAGING_SUPPLIER_MODE: ${KEYCORE_STAGING_SUPPLIER_MODE:-MOCK}
+      KINGUIN_ENVIRONMENT: ${KINGUIN_ENVIRONMENT:-SANDBOX}
+      KINGUIN_API_BASE_URL: ${KINGUIN_API_BASE_URL-}
+      KINGUIN_API_KEY: ${KINGUIN_API_KEY-}
+      KEYCORE_ALLOW_KINGUIN_LIVE_READONLY: ${KEYCORE_ALLOW_KINGUIN_LIVE_READONLY:-false}
+      KEYCORE_ALLOW_KINGUIN_LIVE_KEY_RETRIEVAL: ${KEYCORE_ALLOW_KINGUIN_LIVE_KEY_RETRIEVAL:-false}
+      KEYCORE_KINGUIN_CONTROLLED_MUTATION_MODE: ${KEYCORE_KINGUIN_CONTROLLED_MUTATION_MODE-}
+      KEYCORE_KINGUIN_CONTROLLED_KEY_RETRIEVAL_MODE: ${KEYCORE_KINGUIN_CONTROLLED_KEY_RETRIEVAL_MODE-}
+      STRIPE_ENVIRONMENT: ${STRIPE_ENVIRONMENT:-TEST}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?staging Stripe test key is required}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?staging Stripe test webhook secret is required}
+      KEYCORE_ENCRYPTION_RESOURCE_ENV: ${KEYCORE_ENCRYPTION_RESOURCE_ENV:?staging encryption resource environment is required}
+      KEYCORE_FULFILLMENT_MASTER_KEY: ${KEYCORE_FULFILLMENT_MASTER_KEY:?staging fulfillment master key is required}
+      KEYCORE_FULFILLMENT_MASTER_KEY_ID: ${KEYCORE_FULFILLMENT_MASTER_KEY_ID:?staging fulfillment master key ID is required}
+      KEYCORE_OPERATIONS_AUTHORITY_MODE: ${KEYCORE_OPERATIONS_AUTHORITY_MODE:-DISABLED}
     command: ["node", "--import", "tsx", "scripts/staging-admin-server.ts"]
     healthcheck:
       test:
@@ -198,7 +238,7 @@ services:
       - redis-data:/data
 
   mail:
-    image: axllent/mailpit:v1.21.8
+    image: axllent/mailpit:v1.30.6
     ports:
       - "127.0.0.1:${KEYCORE_STAGING_MAIL_UI_PORT:-18025}:8025"
       - "127.0.0.1:${KEYCORE_STAGING_MAIL_SMTP_PORT:-11025}:1025"
@@ -221,6 +261,7 @@ services:
       KEYRANO_STAGING_ORIGIN: ${KEYRANO_STAGING_ORIGIN:?explicit staging origin is required}
       KEYRANO_STAGING_BRIDGE_URL: http://keycore-storefront:3000
       KEYRANO_STAGING_BRIDGE_SECRET: ${KEYRANO_STAGING_BRIDGE_SECRET:?staging bridge secret is required}
+      KEYRANO_STAGING_GUEST_CHECKOUT_EMAIL: ${KEYRANO_STAGING_GUEST_CHECKOUT_EMAIL:-guest-checkout@example.test}
       KEYRANO_STAGING_ADMIN_USER: ${KEYRANO_STAGING_ADMIN_USER:?staging admin user is required}
       KEYRANO_STAGING_ADMIN_PASSWORD: ${KEYRANO_STAGING_ADMIN_PASSWORD:?staging admin password is required}
       KEYRANO_STAGING_CUSTOMER_A_PASSWORD: ${KEYRANO_STAGING_CUSTOMER_A_PASSWORD:?customer A staging password is required}

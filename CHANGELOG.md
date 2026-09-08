@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compose synthetic guest checkout, delayed fulfillment and stable payment
+  failure/cancellation browser journeys for Phase-12 staging Human-UAT.
+- Pin the local/staging Mailpit capture sink to 1.30.6 for bounded Send API use.
+
 - Completed all twelve KS-ADMIN-02 Human-UAT scenarios after successful
   concurrent owner/staff role-change and disable/reactivation retests. The
   complete Admin presentation is now German through centralized typed labels

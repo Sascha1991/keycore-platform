@@ -31,8 +31,6 @@ abstract class Checkout_Gateway extends \WC_Payment_Gateway
     {
         return
             'staging' === wp_get_environment_type() &&
-            is_user_logged_in() &&
-            null !== self::current_identity() &&
             parent::is_available();
     }
 
@@ -41,20 +39,20 @@ abstract class Checkout_Gateway extends \WC_Payment_Gateway
     {
         $order = wc_get_order((int) $order_id);
         $identity = self::current_identity();
+        $is_guest = $order instanceof \WC_Order && ! is_user_logged_in() && 0 === $order->get_customer_id();
         if (
             ! $order instanceof \WC_Order ||
-            null === $identity ||
-            $order->get_customer_id() !== $identity['wpUserId']
+            (! $is_guest && (null === $identity || $order->get_customer_id() !== $identity['wpUserId']))
         ) {
             return $this->failed(__('Der sichere Staging-Checkout ist nicht verfügbar.', 'keycore-platform'));
         }
-        $command = $this->command($order);
+        $command = $this->command($order, $is_guest);
         if (null === $command) {
             return $this->failed(__('Der Warenkorb kann nicht sicher verarbeitet werden.', 'keycore-platform'));
         }
         $payload = (new Bridge_Client())->checkout(
-            $identity['wpUserId'],
-            $identity['customerId'],
+            $identity['wpUserId'] ?? null,
+            $identity['customerId'] ?? null,
             $command
         );
         $status = is_array($payload) ? (string) ($payload['status'] ?? '') : '';
@@ -66,6 +64,10 @@ abstract class Checkout_Gateway extends \WC_Payment_Gateway
         ) {
             $order->update_meta_data('_keyrano_keycore_order_id', $keycore_order_id);
             $order->update_meta_data('_keyrano_checkout_status', 'CAPTURED');
+            $order->update_meta_data(
+                '_keyrano_guest_claim_delivery',
+                $is_guest ? (string) ($payload['claimDeliveryStatus'] ?? 'UNAVAILABLE') : 'NOT_APPLICABLE'
+            );
             $order->save();
             $order->payment_complete('keyrano-synthetic-staging');
             return [
@@ -81,11 +83,10 @@ abstract class Checkout_Gateway extends \WC_Payment_Gateway
                 __('Synthetisches Staging-Zahlungsergebnis von KeyCore bestätigt.', 'keycore-platform')
             );
             $order->save();
-            return $this->failed(
-                'FAILED' === $status
-                    ? __('Die synthetische Zahlung ist fehlgeschlagen.', 'keycore-platform')
-                    : __('Die synthetische Zahlung wurde abgebrochen.', 'keycore-platform')
-            );
+            return [
+                'redirect' => $this->get_return_url($order),
+                'result' => 'success',
+            ];
         }
 
         return $this->failed(__('Der sichere Staging-Checkout konnte nicht bestätigt werden.', 'keycore-platform'));
@@ -98,7 +99,25 @@ abstract class Checkout_Gateway extends \WC_Payment_Gateway
             return;
         }
         $keycore_order_id = (string) $order->get_meta('_keyrano_keycore_order_id', true);
+        $checkout_status = (string) $order->get_meta('_keyrano_checkout_status', true);
+        if (in_array($checkout_status, ['FAILED', 'CANCELLED'], true)) {
+            echo '<div class="keyrano-checkout-result keyrano-checkout-result-error">';
+            echo '<h2>' . esc_html('FAILED' === $checkout_status ? __('Zahlung fehlgeschlagen', 'keycore-platform') : __('Zahlung abgebrochen', 'keycore-platform')) . '</h2>';
+            echo '<p>' . esc_html__('Es wurde keine Bestellung erfüllt und kein Produktschlüssel bereitgestellt.', 'keycore-platform') . '</p>';
+            echo '<p><a href="' . esc_url(wc_get_cart_url()) . '">' . esc_html__('Zurück zum Warenkorb', 'keycore-platform') . '</a></p>';
+            echo '</div>';
+            return;
+        }
         if (! self::is_uuid($keycore_order_id)) {
+            return;
+        }
+        if (0 === $order->get_customer_id()) {
+            $delivery = (string) $order->get_meta('_keyrano_guest_claim_delivery', true);
+            echo '<p class="keyrano-checkout-result">';
+            echo esc_html__('Die synthetische Zahlung wurde bestätigt. Ein Produktschlüssel wird hier nicht angezeigt.', 'keycore-platform');
+            echo ' ' . esc_html__('Für den Zugriff ist ein KeyRaNo-Konto mit exakt derselben E-Mail-Adresse wie beim Checkout erforderlich.', 'keycore-platform');
+            echo ' ' . esc_html('ACCEPTED' === $delivery ? __('Der einmalige Kauf-Code wurde an die Staging-Mailbox gesendet.', 'keycore-platform') : __('Die Kauf-Code-Anleitung ist vorübergehend nicht verfügbar.', 'keycore-platform'));
+            echo '</p>';
             return;
         }
         $url = wc_get_account_endpoint_url('kauf-details') . rawurlencode($keycore_order_id) . '/';
@@ -109,7 +128,7 @@ abstract class Checkout_Gateway extends \WC_Payment_Gateway
     }
 
     /** @return array<string, int|string>|null */
-    private function command(\WC_Order $order): ?array
+    private function command(\WC_Order $order, bool $is_guest): ?array
     {
         $items = array_values($order->get_items('line_item'));
         if (1 !== count($items)) {
@@ -137,8 +156,9 @@ abstract class Checkout_Gateway extends \WC_Payment_Gateway
         ) {
             return null;
         }
-        return [
+        $command = [
             'checkoutCreatedAt' => gmdate('c', $created_at->getTimestamp()),
+            'checkoutMode' => $is_guest ? 'GUEST' : 'ACCOUNT',
             'checkoutToken' => hash(
                 'sha256',
                 'keyrano-checkout-v1|' . $order->get_id() . '|' . $order->get_order_key()
@@ -149,6 +169,15 @@ abstract class Checkout_Gateway extends \WC_Payment_Gateway
             'productReference' => $reference,
             'quantity' => 1,
         ];
+        if ($is_guest) {
+            $email = strtolower(trim((string) $order->get_billing_email()));
+            $configured = strtolower(trim((string) getenv('KEYRANO_STAGING_GUEST_CHECKOUT_EMAIL')));
+            if ('' === $configured || $email !== $configured || 1 !== preg_match('/^[a-z0-9.!#$%&\'*+\/=?^_`{|}~-]+@(?:[a-z0-9-]+\.)*example\.test$/', $email)) {
+                return null;
+            }
+            $command['checkoutEmailNormalized'] = $email;
+        }
+        return $command;
     }
 
     /** @return array{result:string} */
