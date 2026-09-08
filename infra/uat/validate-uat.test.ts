@@ -168,6 +168,7 @@ describe("KS-11-07 UAT package lifecycle validator", () => {
       "UAT-004",
       "UAT-005",
       "UAT-006",
+      "UAT-007",
       "UAT-009",
       "UAT-012",
       "UAT-015",

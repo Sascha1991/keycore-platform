@@ -2,10 +2,9 @@
 
 ## Status
 
-Implementation complete for technical review. UAT-007 is technically
-executable after staging deployment, but remains human `PENDING`. UAT-003 and
-UAT-009 passed hosted Human-UAT. The authoritative Human-UAT total is 10 of 18
-`PASS`. KS-11-07 remains
+Implementation complete for technical review. UAT-003, UAT-007 and UAT-009
+passed hosted Human-UAT. The authoritative Human-UAT total is 11 of 18 `PASS`.
+KS-11-07 remains
 incomplete, Human Approval remains `NOT_APPROVED`, and `SECURITY-READINESS`
 remains `NOT_APPROVED`.
 
@@ -102,3 +101,18 @@ staging port `18025` and exposed the already delivered message. Hosted Mailpit
 and the storefront had not restarted, and the internal Mailpit API remained
 reachable. This was an operator endpoint collision, not an application or
 deployment defect; no remediation was required.
+
+## UAT-007 Human Acceptance
+
+On 2026-09-09, Customer A completed a dedicated synthetic success checkout for
+`Neonpfad: Berlin` and observed the owned order as `In Bearbeitung`, with no
+key action available. An authorized staging `PROJECT_OWNER` used the explicit
+delayed-fulfillment action once. The Admin and customer views then showed the
+same order as completed, while Product Key access remained a separate action
+and no key material was exposed.
+
+One controlled form replay returned the same successful result. PostgreSQL
+verification showed one fulfillment operation, one encrypted secret, one
+completion audit and no claim challenge. Mailpit contained exactly one
+status-only readiness message and no Product Key. No supplier connection, live
+payment, fixture reset or production provider was used.

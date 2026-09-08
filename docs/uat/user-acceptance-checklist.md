@@ -22,7 +22,9 @@ not recorded. The product owner also completed UAT-009 and UAT-003 on hosted
 staging. Their safe records are
 `docs/uat/human-uat-2026-09-08-payment-terminal-states.md` and
 `docs/uat/human-uat-2026-09-08-guest-checkout.md`; no claim value or hash is
-recorded.
+recorded. The product owner completed UAT-007 on hosted staging on 2026-09-09;
+its redacted delayed-fulfillment record is
+`docs/uat/human-uat-2026-09-09-delayed-fulfillment.md`.
 
 | ID      | Where to go                                   | What to do                                                           | What should happen                                                   | Failure                                                         | Safe evidence                          |
 | ------- | --------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------- |
