@@ -32,6 +32,7 @@ final class Plugin
         add_filter('woocommerce_payment_gateways', [Checkout_Registration_Loader::class, 'gateways']);
         add_filter('woocommerce_thankyou_order_received_title', [self::class, 'terminal_order_received_title'], 10, 2);
         add_filter('woocommerce_thankyou_order_received_text', [self::class, 'terminal_order_received_text'], 10, 2);
+        add_filter('render_block_woocommerce/order-confirmation-status', [self::class, 'terminal_order_confirmation_block']);
         add_action('woocommerce_blocks_loaded', [Checkout_Registration_Loader::class, 'blocks_loaded']);
         add_action('wp_enqueue_scripts', [self::class, 'assets']);
         add_action('woocommerce_single_product_summary', [self::class, 'product_facts'], 25);
@@ -179,6 +180,20 @@ final class Plugin
     public static function terminal_result_was_rendered(\WC_Order $order): bool
     {
         return true === (self::$rendered_terminal_results[$order->get_id()] ?? false);
+    }
+
+    public static function terminal_order_confirmation_block(string $content): string
+    {
+        if (null === self::terminal_checkout(null)) {
+            return $content;
+        }
+        $processor = new \WP_HTML_Tag_Processor($content);
+        if (! $processor->next_tag(['class_name' => 'wc-block-order-confirmation-status__actions'])) {
+            return $content;
+        }
+        $processor->set_attribute('hidden', 'hidden');
+        $processor->set_attribute('aria-hidden', 'true');
+        return $processor->get_updated_html();
     }
 
     /** @return array{order:\WC_Order,status:'FAILED'|'CANCELLED'}|null */

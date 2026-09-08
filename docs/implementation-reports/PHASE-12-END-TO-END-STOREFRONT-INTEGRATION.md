@@ -70,3 +70,11 @@ failed-payment actions on that marked result, and retains the existing hook as
 a non-block fallback. Payment, procurement, fulfillment and claim semantics are
 unchanged. UAT-009 remains human `PENDING` until the corrected browser flow is
 redeployed and retested.
+
+The first hosted retest confirmed the deterministic failure content and refresh
+stability but exposed that the CSS action guard targeted the classic checkout
+wrapper rather than the active Order Confirmation Block wrapper. The follow-up
+uses the dynamic block render filter to mark WooCommerce's same-order payment
+action hidden and inaccessible only for a validated synthetic terminal order;
+the corrected block-scoped selector is defense in depth. The approved fresh
+`Zurueck zum Warenkorb` path remains visible, and UAT-009 remains `PENDING`.

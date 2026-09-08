@@ -92,6 +92,44 @@ class WC_Order
     public function update_meta_data(string $key, string $value): void { $this->meta[$key] = $value; }
 }
 
+class WP_HTML_Tag_Processor
+{
+    private ?string $opening_tag = null;
+    /** @var array<string, string> */
+    private array $attributes = [];
+
+    public function __construct(private string $html) {}
+
+    /** @param array{class_name:string} $query */
+    public function next_tag(array $query): bool
+    {
+        $class = preg_quote($query['class_name'], '/');
+        if (1 !== preg_match('/<[^>]+class=["\'][^"\']*\\b' . $class . '\\b[^"\']*["\'][^>]*>/i', $this->html, $match)) {
+            return false;
+        }
+        $this->opening_tag = $match[0];
+        return true;
+    }
+
+    public function set_attribute(string $name, string $value): void
+    {
+        $this->attributes[$name] = $value;
+    }
+
+    public function get_updated_html(): string
+    {
+        if (null === $this->opening_tag) {
+            return $this->html;
+        }
+        $attributes = '';
+        foreach ($this->attributes as $name => $value) {
+            $attributes .= ' ' . $name . '="' . htmlspecialchars($value, ENT_QUOTES) . '"';
+        }
+        $updated = substr($this->opening_tag, 0, -1) . $attributes . '>';
+        return preg_replace('/' . preg_quote($this->opening_tag, '/') . '/', $updated, $this->html, 1) ?? $this->html;
+    }
+}
+
 class WC_Product
 {
     protected int $id = 0;
@@ -196,6 +234,7 @@ assert_true(in_array('woocommerce_account_menu_items', $GLOBALS['keyrano_test_fi
 assert_true(in_array('woocommerce_payment_gateways', $GLOBALS['keyrano_test_filters'], true), 'Synthetic staging gateways are not registered');
 assert_true(in_array('woocommerce_thankyou_order_received_title', $GLOBALS['keyrano_test_filters'], true), 'Order Confirmation Block title filter is not registered');
 assert_true(in_array('woocommerce_thankyou_order_received_text', $GLOBALS['keyrano_test_filters'], true), 'Order Confirmation Block text filter is not registered');
+assert_true(in_array('render_block_woocommerce/order-confirmation-status', $GLOBALS['keyrano_test_filters'], true), 'Order Confirmation Block output filter is not registered');
 $account = new \KeyRaNo\Storefront\Account(new FakeBridge());
 ob_start();
 $account->render_claim_shell();
@@ -345,6 +384,7 @@ $failed_order->update_meta_data('_keyrano_checkout_status', 'FAILED');
 $GLOBALS['keyrano_order'] = $failed_order;
 $title_filter = $GLOBALS['keyrano_test_filter_callbacks']['woocommerce_thankyou_order_received_title']['callback'];
 $text_filter = $GLOBALS['keyrano_test_filter_callbacks']['woocommerce_thankyou_order_received_text']['callback'];
+$block_filter = $GLOBALS['keyrano_test_filter_callbacks']['render_block_woocommerce/order-confirmation-status']['callback'];
 $failed_title = $title_filter('Bestellung fehlgeschlagen', $failed_order);
 $failed_text = $text_filter('Generischer WooCommerce-Fehler', null);
 assert_true('Zahlung fehlgeschlagen' === $failed_title, 'Order Confirmation Block retained the generic failed title');
@@ -354,6 +394,10 @@ assert_true(false !== strpos($failed_text, 'href="/cart/"'), 'Block failure retu
 assert_true(false === strpos($failed_text, 'Generischer WooCommerce-Fehler'), 'Generic WooCommerce failure text remained visible');
 assert_true($failed_title === $title_filter('Bestellung fehlgeschlagen', $failed_order), 'Refreshed failure title changed');
 assert_true($failed_text === $text_filter('Generischer WooCommerce-Fehler', null), 'Refreshed failure text changed');
+$failed_block = '<div class="wp-block-woocommerce-order-confirmation-status wc-block-order-confirmation-status"><h1>' . $failed_title . '</h1><p>' . $failed_text . '</p><p class="wc-block-order-confirmation-status__actions"><a href="/checkout/order-pay/102/">Erneut versuchen</a></p></div>';
+$filtered_failed_block = $block_filter($failed_block);
+assert_true(false !== strpos($filtered_failed_block, 'wc-block-order-confirmation-status__actions" hidden="hidden" aria-hidden="true"'), 'WooCommerce failed-order retry action remains visible');
+assert_true(false !== strpos($filtered_failed_block, 'Zurück zum Warenkorb'), 'Approved failure cart action was removed');
 ob_start();
 $success_gateway->thankyou_page(102);
 $failed_confirmation = (string) ob_get_clean();
@@ -371,6 +415,10 @@ assert_true(false !== strpos($cancelled_text, 'href="/cart/"'), 'Block cancellat
 assert_true(false === strpos($cancelled_text, 'Die Bestellung wurde storniert.'), 'Generic WooCommerce cancellation text remained visible');
 assert_true($cancelled_title === $title_filter('Bestellung abgebrochen', $cancelled_order), 'Refreshed cancellation title changed');
 assert_true($cancelled_text === $text_filter('Die Bestellung wurde storniert.', $cancelled_order), 'Refreshed cancellation text changed');
+$cancelled_block = '<div class="wp-block-woocommerce-order-confirmation-status wc-block-order-confirmation-status"><h1>' . $cancelled_title . '</h1><p>' . $cancelled_text . '</p><p class="wc-block-order-confirmation-status__actions"><a href="/checkout/order-pay/103/">Erneut versuchen</a></p></div>';
+$filtered_cancelled_block = $block_filter($cancelled_block);
+assert_true(false !== strpos($filtered_cancelled_block, 'wc-block-order-confirmation-status__actions" hidden="hidden" aria-hidden="true"'), 'WooCommerce cancelled-order retry action remains visible');
+assert_true(false !== strpos($filtered_cancelled_block, 'Zurück zum Warenkorb'), 'Approved cancellation cart action was removed');
 ob_start();
 $success_gateway->thankyou_page(103);
 $cancelled_confirmation = (string) ob_get_clean();
@@ -381,6 +429,8 @@ $unrelated_order->update_meta_data('_keyrano_checkout_status', 'FAILED');
 $GLOBALS['keyrano_order'] = $unrelated_order;
 assert_true('Bestellung fehlgeschlagen' === $title_filter('Bestellung fehlgeschlagen', $unrelated_order), 'Unrelated failed order title was changed');
 assert_true('Generischer WooCommerce-Fehler' === $text_filter('Generischer WooCommerce-Fehler', $unrelated_order), 'Unrelated failed order text was changed');
+$unrelated_block = '<div class="wp-block-woocommerce-order-confirmation-status wc-block-order-confirmation-status"><p class="wc-block-order-confirmation-status__actions"><a href="/checkout/order-pay/104/">Erneut versuchen</a></p></div>';
+assert_true($unrelated_block === $block_filter($unrelated_block), 'Unrelated WooCommerce retry action was hidden');
 
 $inconsistent_order = new WC_Order(20, 'customer-a@example.test', 105, 'pending', 'keyrano_synthetic_failure');
 $inconsistent_order->update_meta_data('_keyrano_checkout_status', 'FAILED');
