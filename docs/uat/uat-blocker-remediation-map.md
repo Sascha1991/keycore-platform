@@ -8,11 +8,12 @@
 | Secure reveal        | Explicit owner-only synthetic vault reveal with CSRF, origin, rate and audit controls   | `PRE-UAT-KEY-REAL-01`, separately approved and never automatic    |
 | Guest claim          | One-time verified-same-email browser adapter; UAT-004/UAT-005/UAT-015 passed            | Production identity remains separately gated                      |
 | Invoice              | Owner-only deterministic PDF through the signed staging bridge; UAT-012 passed          | Production tax/provider approval                                  |
-| Checkout             | Synthetic payment and KeyCore order orchestration compose registered and guest journeys | Delayed-fulfillment Human-UAT remains separately gated            |
-| KS-11-07             | Ten scoped Human-UAT scenarios passed                                                   | Eight scenarios and complete human approval remain open           |
+| Checkout             | Synthetic payment and KeyCore order orchestration compose registered and guest journeys | Production payment and provider approval remain gated             |
+| Delayed fulfillment  | Authorized staging transition, encrypted material and status-only readiness mail        | Real supplier fulfillment and production KMS remain gated         |
+| KS-11-07             | Eleven scoped Human-UAT scenarios passed                                                | Seven scenarios and complete human approval remain open           |
 | Phase 12             | Narrow registered-customer checkout integration completed on the feature branch         | Broader production-readiness work and approvals remain gated      |
 
 This change remediates historical integration gaps without rewriting completed
-foundation tasks. The scoped guest checkout, claim, invoice and
-terminal-payment Human-UAT results do not make production identity, real
-fulfillment or full UAT complete.
+foundation tasks. The scoped guest checkout, claim, invoice, terminal-payment
+and synthetic delayed-fulfillment Human-UAT results do not make production
+identity, real fulfillment or full UAT complete.

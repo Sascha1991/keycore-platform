@@ -3,5 +3,5 @@
   "reviewer": null,
   "approvedAt": null,
   "scope": "KS-11-07",
-  "notes": "Visible-storefront UAT-001 and UAT-006 passed human review on 2026-08-30, UAT-002 passed on 2026-08-31, UAT-018 passed on 2026-09-01, UAT-015 passed on 2026-09-02, and UAT-003, UAT-004, UAT-005, UAT-009 and UAT-012 passed on 2026-09-08. Complete KS-11-07 approval remains withheld because eight scenarios remain pending or not executable."
+  "notes": "Visible-storefront UAT-001 and UAT-006 passed human review on 2026-08-30, UAT-002 passed on 2026-08-31, UAT-018 passed on 2026-09-01, UAT-015 passed on 2026-09-02, UAT-003, UAT-004, UAT-005, UAT-009 and UAT-012 passed on 2026-09-08, and UAT-007 passed on 2026-09-09. Complete KS-11-07 approval remains withheld because seven scenarios remain not executable or pending."
 }

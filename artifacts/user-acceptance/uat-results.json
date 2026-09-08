@@ -56,11 +56,11 @@
     },
     {
       "scenario": "UAT-007",
-      "status": "PENDING",
-      "reviewer": null,
-      "reviewedAt": null,
-      "evidence": [],
-      "notes": "The pending view and authorized synthetic delayed-fulfillment Admin action are technically executable after reviewed staging deployment; Human-UAT has not been performed."
+      "status": "PASS",
+      "reviewer": "KeyRaNo product owner",
+      "reviewedAt": "2026-09-09T00:00:00Z",
+      "evidence": ["docs/uat/human-uat-2026-09-09-delayed-fulfillment.md"],
+      "notes": "Accepted on hosted staging after Customer A observed the pending owned order without key access, a PROJECT_OWNER completed the synthetic delayed-fulfillment action, and the same order became ready without exposing key material. One controlled replay remained idempotent. PostgreSQL verification confirmed one fulfillment operation, one encrypted secret, one completion audit and no claim challenge; Mailpit contained exactly one status-only readiness message."
     },
     {
       "scenario": "UAT-008",

@@ -191,7 +191,7 @@
       "validatedRule": "Delayed fulfillment is durable, idempotent, and never falsely represented as ready.",
       "automatedEvidence": ["EVIDENCE-01", "EVIDENCE-03", "EVIDENCE-05"],
       "uiReadiness": "EXECUTABLE_NOW",
-      "humanActionRequired": "After reviewed staging deployment, capture the pending owner view, use the authorized CSRF-protected Admin staging action once, then capture the refreshed ready view without recording any synthetic secret.",
+      "humanActionRequired": "Human execution was completed and recorded on 2026-09-09 using the pending owner view, authorized PROJECT_OWNER action, controlled idempotency replay and refreshed ready view without recording any synthetic secret.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {
