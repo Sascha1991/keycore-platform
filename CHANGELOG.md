@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Hide WooCommerce's same-order retry action server-side for validated
+  synthetic terminal checkout results while retaining the fresh-cart action.
+
 - Correct the synthetic failed/cancelled checkout presentation for the pinned
   WooCommerce Order Confirmation Block while preserving terminal payment state.
 
