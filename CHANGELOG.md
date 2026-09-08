@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Correct the synthetic failed/cancelled checkout presentation for the pinned
+  WooCommerce Order Confirmation Block while preserving terminal payment state.
+
 - Compose synthetic guest checkout, delayed fulfillment and stable payment
   failure/cancellation browser journeys for Phase-12 staging Human-UAT.
 - Pin the local/staging Mailpit capture sink to 1.30.6 for bounded Send API use.

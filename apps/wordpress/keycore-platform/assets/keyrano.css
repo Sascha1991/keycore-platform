@@ -538,3 +538,13 @@ footer:has(.keyrano-footer-columns) figure img { height: auto; max-width: min(10
   color: #e9d5ff;
   font-weight: 700;
 }
+
+.woocommerce-order:has(.keyrano-checkout-terminal-message)
+  .wc-block-order-confirmation-status__actions {
+  display: none;
+}
+
+.keyrano-checkout-terminal-return {
+  color: #e9d5ff;
+  font-weight: 700;
+}

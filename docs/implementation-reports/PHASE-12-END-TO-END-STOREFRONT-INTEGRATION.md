@@ -59,3 +59,14 @@ secret omission.
 - Staging Compose rendering and UAT structure validation: passed.
 - `npm audit --audit-level=low`: 0 vulnerabilities.
 - `git diff --check`: passed.
+
+## UAT-009 Browser Correction
+
+Hosted Human-UAT exposed that WooCommerce 11 renders failed and cancelled
+orders through its Order Confirmation Status block before the gateway-specific
+Additional Information hook. The adapter now uses the block's supported title
+and text filters for verified synthetic terminal orders, suppresses the generic
+failed-payment actions on that marked result, and retains the existing hook as
+a non-block fallback. Payment, procurement, fulfillment and claim semantics are
+unchanged. UAT-009 remains human `PENDING` until the corrected browser flow is
+redeployed and retested.
