@@ -20,7 +20,7 @@ remain absent.
 | --------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Catalog discovery           | `EXECUTABLE_NOW` / `PASS`               | Branded catalog, product, price, cart and eligibility-filtered fixtures                   | None for scoped UAT-001 result                                         |
 | Registered purchase         | `EXECUTABLE_NOW` / `PASS`               | Login, catalog, cart, synthetic payment, authoritative owned order and account projection | None for scoped UAT-002 result                                         |
-| Guest purchase/messaging    | `PARTIALLY_EXECUTABLE`                  | Woo guest checkout shell                                                                  | KeyCore guest completion and safe messaging                            |
+| Guest purchase/messaging    | `EXECUTABLE_NOW` / `PASS`               | Logged-out synthetic checkout, safe confirmation and private Mailpit claim delivery       | None for scoped UAT-003 result                                         |
 | Guest purchase claim        | `EXECUTABLE_NOW` / `PASS`               | One-time verified-same-email synthetic claim through Kauf hinzufügen                      | None for scoped UAT-004/UAT-005/UAT-015 results                        |
 | Product Key reveal          | `EXECUTABLE_NOW` / `PASS`               | Owner-only explicit synthetic reveal                                                      | Real-key task remains gated                                            |
 | Delayed/order status        | `PARTIALLY_EXECUTABLE`                  | Pending status is visible                                                                 | Authorized transition control                                          |
@@ -35,6 +35,6 @@ remain absent.
 
 The machine-readable `uat-readiness.json` and `uat-results.json` remain the
 binding status sources. Human acceptance is `IN_REVIEW`; UAT-001, UAT-002,
-UAT-004, UAT-005, UAT-006, UAT-009, UAT-012, UAT-015 and UAT-018 are `PASS`.
-Nine required scenarios remain pending or not executable, so Phase 11 remains
-incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`.
+UAT-003, UAT-004, UAT-005, UAT-006, UAT-009, UAT-012, UAT-015 and UAT-018 are
+`PASS`. Eight required scenarios remain pending or not executable, so Phase 11
+remains incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`.

@@ -91,7 +91,7 @@
       "validatedRule": "Guest orders remain unowned until a verified same-email claim succeeds.",
       "automatedEvidence": ["EVIDENCE-01", "EVIDENCE-04"],
       "uiReadiness": "EXECUTABLE_NOW",
-      "humanActionRequired": "After reviewed staging deployment, execute the logged-out synthetic guest checkout and retain only redacted confirmation and Mailpit evidence; never capture the claim value.",
+      "humanActionRequired": "Human execution was completed and recorded on 2026-09-08 using the logged-out synthetic guest checkout and private hosted-staging Mailpit; retain only safe evidence and never record the claim value or hash.",
       "approvalRequirement": "Explicit ROLE-UAT-05 result"
     },
     {

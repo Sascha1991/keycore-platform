@@ -164,6 +164,7 @@ describe("KS-11-07 UAT package lifecycle validator", () => {
     ).toEqual([
       "UAT-001",
       "UAT-002",
+      "UAT-003",
       "UAT-004",
       "UAT-005",
       "UAT-006",

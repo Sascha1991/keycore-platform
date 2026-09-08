@@ -2,10 +2,10 @@
 
 ## Status
 
-Implementation complete for technical review. UAT-003 and UAT-007 are
-technically executable after staging deployment, but remain human `PENDING`.
-UAT-009 passed hosted Human-UAT after the terminal-result corrections. The
-authoritative Human-UAT total is 9 of 18 `PASS`. KS-11-07 remains
+Implementation complete for technical review. UAT-007 is technically
+executable after staging deployment, but remains human `PENDING`. UAT-003 and
+UAT-009 passed hosted Human-UAT. The authoritative Human-UAT total is 10 of 18
+`PASS`. KS-11-07 remains
 incomplete, Human Approval remains `NOT_APPROVED`, and `SECURITY-READINESS`
 remains `NOT_APPROVED`.
 
@@ -81,3 +81,24 @@ the corrected block-scoped selector is defense in depth. The approved fresh
 `Zurueck zum Warenkorb` path remains visible. The product owner subsequently
 confirmed both terminal browser paths, refresh stability and the corresponding
 fail-closed database states and accepted UAT-009 on 2026-09-08.
+
+## UAT-003 Human Acceptance
+
+The product owner completed the logged-out guest checkout on hosted staging
+using `Neonpfad: Berlin`, quantity one, the dedicated synthetic guest address
+and the synthetic success payment method. The browser confirmed payment,
+displayed no Product Key, required a KeyRaNo account with the exact checkout
+email and reported private delivery of the one-time purchase code.
+
+PostgreSQL verification showed an unowned `PAYMENT_CAPTURED` order with payment
+`CAPTURED`, procurement and fulfillment `NOT_STARTED`, exactly one active
+unconsumed claim, and no fulfillment operation or secret. The authorized
+Mailpit inbox contained the expected claim message. Its raw code and hash are
+intentionally absent from this record.
+
+The initial empty Mailpit view was traced to local Windows port `18025` being
+owned by Docker Desktop. A new SSH tunnel on local port `28025` reached hosted
+staging port `18025` and exposed the already delivered message. Hosted Mailpit
+and the storefront had not restarted, and the internal Mailpit API remained
+reachable. This was an operator endpoint collision, not an application or
+deployment defect; no remediation was required.
