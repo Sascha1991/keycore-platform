@@ -137,15 +137,6 @@ export class StagingStorefrontBridge {
       });
     }
 
-    const principal = this.resolvePrincipal(request);
-    if (!principal) {
-      return respond(401, {
-        code: "AUTHENTICATION_REQUIRED",
-        status: "ERROR",
-      });
-    }
-    const requestCorrelationId = correlationId(`storefront-${randomUUID()}`);
-
     if (request.method === "POST" && request.path === "/v1/checkout") {
       if (!request.csrfVerified) {
         return respond(403, { code: "ACCESS_DENIED", status: "ERROR" });
@@ -157,10 +148,26 @@ export class StagingStorefrontBridge {
           status: "ERROR",
         });
       }
-      const result = await this.options.checkout.checkout({
-        ...command,
-        customerId: principal.customerId,
-      });
+      const principal = this.resolvePrincipal(request);
+      if (command.checkoutMode === "ACCOUNT" && !principal) {
+        return respond(401, {
+          code: "AUTHENTICATION_REQUIRED",
+          status: "ERROR",
+        });
+      }
+      if (command.checkoutMode === "GUEST" && principal) {
+        return respond(400, {
+          code: "CHECKOUT_REQUEST_INVALID",
+          status: "ERROR",
+        });
+      }
+      const result =
+        command.checkoutMode === "ACCOUNT"
+          ? await this.options.checkout.checkout({
+              ...command,
+              customerId: requiredPrincipal(principal).customerId,
+            })
+          : await this.options.checkout.checkout(command);
       const statusCode =
         result.status === "CAPTURED" || result.status === "IDEMPOTENT"
           ? 200
@@ -173,6 +180,15 @@ export class StagingStorefrontBridge {
                 : 503;
       return respond(statusCode, result);
     }
+
+    const principal = this.resolvePrincipal(request);
+    if (!principal) {
+      return respond(401, {
+        code: "AUTHENTICATION_REQUIRED",
+        status: "ERROR",
+      });
+    }
+    const requestCorrelationId = correlationId(`storefront-${randomUUID()}`);
 
     if (request.method === "POST" && request.path === "/v1/account/claim") {
       if (!request.csrfVerified) {
@@ -500,6 +516,13 @@ const isAllowedStagingOrigin = (origin: string): boolean =>
   origin === "https://staging.example.invalid" ||
   /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/u.test(origin);
 
+const requiredPrincipal = <TPrincipal>(
+  principal: TPrincipal | null,
+): TPrincipal => {
+  if (!principal) throw new Error("Authenticated principal is required");
+  return principal;
+};
+
 const constantTimeEqual = (left: string, right: string): boolean => {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
@@ -510,20 +533,35 @@ const unavailable = () => ({ code: "RESOURCE_NOT_AVAILABLE", status: "ERROR" });
 
 const parseCheckoutBody = (
   body: string,
-): {
-  readonly checkoutCreatedAt: string;
-  readonly checkoutToken: string;
-  readonly currency: string;
-  readonly expectedTotalMinor: string;
-  readonly outcome: StagingPaymentOutcome;
-  readonly productReference: string;
-  readonly quantity: number;
-} | null => {
+):
+  | {
+      readonly checkoutMode: "ACCOUNT";
+      readonly checkoutCreatedAt: string;
+      readonly checkoutToken: string;
+      readonly currency: string;
+      readonly expectedTotalMinor: string;
+      readonly outcome: StagingPaymentOutcome;
+      readonly productReference: string;
+      readonly quantity: number;
+    }
+  | {
+      readonly checkoutMode: "GUEST";
+      readonly checkoutCreatedAt: string;
+      readonly checkoutEmailNormalized: string;
+      readonly checkoutToken: string;
+      readonly currency: string;
+      readonly expectedTotalMinor: string;
+      readonly outcome: StagingPaymentOutcome;
+      readonly productReference: string;
+      readonly quantity: number;
+    }
+  | null => {
   try {
     const value = JSON.parse(body) as unknown;
     if (!isRecord(value)) return null;
-    const expectedKeys = [
+    const commonKeys = [
       "checkoutCreatedAt",
+      "checkoutMode",
       "checkoutToken",
       "currency",
       "expectedTotalMinor",
@@ -532,7 +570,16 @@ const parseCheckoutBody = (
       "quantity",
     ];
     if (
-      Object.keys(value).sort().join("\n") !== expectedKeys.sort().join("\n") ||
+      (value.checkoutMode !== "ACCOUNT" && value.checkoutMode !== "GUEST") ||
+      Object.keys(value).sort().join("\n") !==
+        [
+          ...commonKeys,
+          ...(value.checkoutMode === "GUEST"
+            ? ["checkoutEmailNormalized"]
+            : []),
+        ]
+          .sort()
+          .join("\n") ||
       typeof value.checkoutCreatedAt !== "string" ||
       typeof value.checkoutToken !== "string" ||
       typeof value.currency !== "string" ||
@@ -543,14 +590,24 @@ const parseCheckoutBody = (
     ) {
       return null;
     }
-    return {
+    const common = {
       checkoutCreatedAt: value.checkoutCreatedAt,
+      checkoutMode: value.checkoutMode,
       checkoutToken: value.checkoutToken,
       currency: value.currency,
       expectedTotalMinor: value.expectedTotalMinor,
       outcome: value.outcome,
       productReference: value.productReference,
       quantity: value.quantity,
+    };
+    if (value.checkoutMode === "ACCOUNT") {
+      return { ...common, checkoutMode: "ACCOUNT" };
+    }
+    if (typeof value.checkoutEmailNormalized !== "string") return null;
+    return {
+      ...common,
+      checkoutEmailNormalized: value.checkoutEmailNormalized,
+      checkoutMode: "GUEST",
     };
   } catch {
     return null;

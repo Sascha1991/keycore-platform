@@ -7,6 +7,7 @@ import {
 
 import {
   CustomerOrderIdentityService,
+  GuestOrderClaimService,
   OperationsControlService,
   OrderOrchestrationService,
   PriceLockService,
@@ -18,6 +19,7 @@ import {
   type CorrelationId,
   type CustomerId,
   type CustomerOrderIdentityRepository,
+  type GuestOrderClaimIssueResult,
   type KeyCoreOrder,
   type OrderId,
   type OrderOwnershipBindingAuthorityPort,
@@ -38,12 +40,14 @@ import {
   type VerifiedStripeEvent,
 } from "../../packages/platform/src/payments/stripe-payments.js";
 import { PostgresCustomerOrderIdentityRepository } from "../postgres/customer-order-identity-repositories.js";
+import { PostgresGuestOrderClaimRepository } from "../postgres/guest-order-claim-repositories.js";
 import type { TransactionalQueryable } from "../postgres/client.js";
 import { PostgresOperationsControlRepository } from "../postgres/operations-control-repositories.js";
 import { PostgresOrderRepository } from "../postgres/order-repositories.js";
 import { PostgresPaymentRepository } from "../postgres/payment-repositories.js";
 import { PostgresPriceLockRepository } from "../postgres/price-lock-repositories.js";
 import { PostgresAuditEventRepository } from "../postgres/repositories.js";
+import { PersistedGuestOrderClaimIssuanceAuthority } from "../../packages/platform/src/contracts.js";
 import { stagingCheckoutCustomers } from "../postgres/staging-checkout-seed.js";
 import {
   publishableStagingCatalog,
@@ -52,10 +56,9 @@ import {
 
 export type StagingPaymentOutcome = "SUCCESS" | "FAILURE" | "CANCEL";
 
-export interface StagingCheckoutCommand {
+interface StagingCheckoutCommandCommon {
   readonly checkoutCreatedAt: string;
   readonly checkoutToken: string;
-  readonly customerId: CustomerId;
   readonly expectedTotalMinor: string;
   readonly currency: string;
   readonly outcome: StagingPaymentOutcome;
@@ -63,11 +66,21 @@ export interface StagingCheckoutCommand {
   readonly quantity: number;
 }
 
+export type StagingCheckoutCommand = StagingCheckoutCommandCommon &
+  (
+    | { readonly checkoutMode: "ACCOUNT"; readonly customerId: CustomerId }
+    | {
+        readonly checkoutMode: "GUEST";
+        readonly checkoutEmailNormalized: string;
+      }
+  );
+
 export type StagingCheckoutResult =
   | {
       readonly status: "CAPTURED" | "FAILED" | "CANCELLED" | "IDEMPOTENT";
       readonly orderId: string;
       readonly reasonCode: string;
+      readonly claimDeliveryStatus?: "ACCEPTED" | "UNAVAILABLE";
     }
   | {
       readonly status: "DENIED" | "RECONCILIATION_REQUIRED";
@@ -80,33 +93,33 @@ export interface StagingCheckoutPort {
 
 export const createPostgresStagingCheckout = (
   database: TransactionalQueryable,
-  options: { readonly now?: () => Date } = {},
+  options: {
+    readonly guestClaimDelivery?: ConstructorParameters<
+      typeof GuestOrderClaimService
+    >[0]["delivery"];
+    readonly guestCheckoutEmailNormalized?: string;
+    readonly now?: () => Date;
+  } = {},
 ): StagingCheckoutPort => {
   const now = options.now ?? (() => new Date());
   const audit = new PostgresAuditEventRepository(database);
-  const pricing = new StagingCatalogPricingService(now);
   const priceLockRepository = new PostgresPriceLockRepository(database);
-  const priceLocks = new PriceLockService({
-    audit,
-    environment: "STAGING",
-    now,
-    pricing: pricing as unknown as PricingService,
-    repository: priceLockRepository,
-  });
-  const orders = new OrderOrchestrationService({
-    audit,
-    environment: "STAGING",
-    now,
-    operationsControlGate: new OperationsControlService(
-      new PostgresOperationsControlRepository(database),
-      { environment: "STAGING", now },
-    ),
-    priceLocks,
-    repository: new PostgresOrderRepository(database),
-  });
+  const { orders, priceLocks } = createStagingOrderOrchestration(database, now);
   const identityRepository = new PostgresCustomerOrderIdentityRepository(
     database,
   );
+  const guestClaims = options.guestClaimDelivery
+    ? new GuestOrderClaimService({
+        audit,
+        delivery: options.guestClaimDelivery,
+        environment: "STAGING",
+        issuanceAuthority: new PersistedGuestOrderClaimIssuanceAuthority(
+          identityRepository,
+        ),
+        now,
+        repository: new PostgresGuestOrderClaimRepository(database),
+      })
+    : undefined;
   const identity = new CustomerOrderIdentityService({
     audit,
     environment: "STAGING",
@@ -137,6 +150,10 @@ export const createPostgresStagingCheckout = (
 
   return new PostgresStagingCheckout({
     identity,
+    ...(options.guestCheckoutEmailNormalized
+      ? { guestCheckoutEmailNormalized: options.guestCheckoutEmailNormalized }
+      : {}),
+    ...(guestClaims ? { guestClaims } : {}),
     now,
     orders,
     payments,
@@ -150,6 +167,8 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
   public constructor(
     private readonly dependencies: {
       readonly identity: CustomerOrderIdentityService;
+      readonly guestCheckoutEmailNormalized?: string;
+      readonly guestClaims?: GuestOrderClaimService;
       readonly now: () => Date;
       readonly orders: OrderOrchestrationService;
       readonly payments: StripePaymentService;
@@ -166,10 +185,23 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
     if (!product) {
       return { reasonCode: "CHECKOUT_REQUEST_INVALID", status: "DENIED" };
     }
-    const customer = stagingCheckoutCustomers.find(
-      (candidate) => candidate.customerId === command.customerId,
-    );
-    if (!customer) {
+    const customer =
+      command.checkoutMode === "ACCOUNT"
+        ? stagingCheckoutCustomers.find(
+            (candidate) => candidate.customerId === command.customerId,
+          )
+        : undefined;
+    const checkoutEmailNormalized =
+      command.checkoutMode === "ACCOUNT"
+        ? customer?.emailNormalized
+        : command.checkoutEmailNormalized;
+    if (
+      !checkoutEmailNormalized ||
+      (command.checkoutMode === "ACCOUNT" && !customer) ||
+      (command.checkoutMode === "GUEST" &&
+        checkoutEmailNormalized !==
+          this.dependencies.guestCheckoutEmailNormalized)
+    ) {
       return { reasonCode: "CHECKOUT_CUSTOMER_INVALID", status: "DENIED" };
     }
 
@@ -210,7 +242,7 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
     }
 
     const creation = await this.dependencies.orders.createOrder({
-      checkoutEmailNormalized: customer.emailNormalized,
+      checkoutEmailNormalized,
       correlationId: requestCorrelationId,
       expectedCurrency: currency("EUR"),
       expectedCustomerAmount: money(
@@ -230,35 +262,57 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
       };
     }
     if (
-      creation.order.checkoutEmailNormalized !== customer.emailNormalized ||
-      (creation.order.customerId &&
-        creation.order.customerId !== command.customerId)
+      creation.order.checkoutEmailNormalized !== checkoutEmailNormalized ||
+      (command.checkoutMode === "ACCOUNT" &&
+        creation.order.customerId &&
+        creation.order.customerId !== command.customerId) ||
+      (command.checkoutMode === "GUEST" && creation.order.customerId !== null)
     ) {
       return { reasonCode: "CHECKOUT_OWNERSHIP_CONFLICT", status: "DENIED" };
     }
 
-    const ownership = await this.dependencies.identity.bindOrderOwnership({
-      correlationId: requestCorrelationId,
-      customerId: command.customerId,
-      expectedOrderVersion: creation.order.recordVersion,
-      orderId: creation.order.id,
-    });
-    if (ownership.status !== "BOUND" && ownership.status !== "ALREADY_BOUND") {
-      return {
-        reasonCode: "CHECKOUT_OWNERSHIP_UNAVAILABLE",
-        status: "RECONCILIATION_REQUIRED",
-      };
+    if (command.checkoutMode === "ACCOUNT") {
+      const ownership = await this.dependencies.identity.bindOrderOwnership({
+        correlationId: requestCorrelationId,
+        customerId: command.customerId,
+        expectedOrderVersion: creation.order.recordVersion,
+        orderId: creation.order.id,
+      });
+      if (
+        ownership.status !== "BOUND" &&
+        ownership.status !== "ALREADY_BOUND"
+      ) {
+        return {
+          reasonCode: "CHECKOUT_OWNERSHIP_UNAVAILABLE",
+          status: "RECONCILIATION_REQUIRED",
+        };
+      }
     }
 
     const current = await this.dependencies.orders.getOrder(creation.order.id);
-    if (!current || current.customerId !== command.customerId) {
+    if (
+      !current ||
+      (command.checkoutMode === "ACCOUNT" &&
+        current.customerId !== command.customerId) ||
+      (command.checkoutMode === "GUEST" && current.customerId !== null)
+    ) {
       return {
         reasonCode: "CHECKOUT_ORDER_UNAVAILABLE",
         status: "RECONCILIATION_REQUIRED",
       };
     }
     const terminal = terminalResult(current, command.outcome);
-    if (terminal) return terminal;
+    if (terminal) {
+      return command.checkoutMode === "GUEST" &&
+        terminal.status === "IDEMPOTENT"
+        ? this.withGuestClaim(
+            terminal,
+            current.id,
+            checkoutEmailNormalized,
+            requestCorrelationId,
+          )
+        : terminal;
+    }
 
     const initialized = await this.dependencies.payments.initializePayment({
       correlationId: requestCorrelationId,
@@ -303,7 +357,72 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
         status: "RECONCILIATION_REQUIRED",
       };
     }
-    return resultFor(latest, creation.status === "IDEMPOTENT");
+    const riskApproved = await this.ensureSyntheticRiskApproval(
+      latest,
+      requestCorrelationId,
+    );
+    if (!riskApproved) {
+      return {
+        reasonCode: "CHECKOUT_RISK_STATE_UNAVAILABLE",
+        status: "RECONCILIATION_REQUIRED",
+      };
+    }
+    const result = resultFor(riskApproved, creation.status === "IDEMPOTENT");
+    if (
+      command.checkoutMode === "GUEST" &&
+      (result.status === "CAPTURED" || result.status === "IDEMPOTENT")
+    ) {
+      return this.withGuestClaim(
+        result,
+        latest.id,
+        checkoutEmailNormalized,
+        requestCorrelationId,
+      );
+    }
+    return result;
+  }
+
+  private async ensureSyntheticRiskApproval(
+    current: KeyCoreOrder,
+    requestCorrelationId: CorrelationId,
+  ): Promise<KeyCoreOrder | null> {
+    if (current.paymentStatus !== "CAPTURED") return current;
+    if (current.riskStatus === "APPROVED") return current;
+    if (current.riskStatus !== "NOT_EVALUATED") return null;
+    await this.dependencies.orders.markRisk({
+      correlationId: requestCorrelationId,
+      expectedVersion: current.recordVersion,
+      orderId: current.id,
+      riskStatus: "APPROVED",
+    });
+    const latest = await this.dependencies.orders.getOrder(current.id);
+    return latest?.riskStatus === "APPROVED" ? latest : null;
+  }
+
+  private async withGuestClaim(
+    result: Extract<StagingCheckoutResult, { orderId: string }>,
+    requestedOrderId: OrderId,
+    checkoutEmail: string,
+    requestCorrelationId: CorrelationId,
+  ): Promise<StagingCheckoutResult> {
+    const service = this.dependencies.guestClaims;
+    if (!service) return { ...result, claimDeliveryStatus: "UNAVAILABLE" };
+    const inspection = await service.inspectOrderClaim({
+      orderId: requestedOrderId,
+    });
+    let issued: GuestOrderClaimIssueResult = { status: "ISSUED" };
+    if (!inspection || inspection.activeClaimCount === 0) {
+      issued = await service.issueGuestOrderClaim({
+        checkoutEmail,
+        correlationId: requestCorrelationId,
+        orderId: requestedOrderId,
+      });
+    }
+    return {
+      ...result,
+      claimDeliveryStatus:
+        issued.status === "ISSUED" ? "ACCEPTED" : "UNAVAILABLE",
+    };
   }
 
   private validate(
@@ -392,6 +511,37 @@ class StagingCatalogPricingService {
     };
   }
 }
+
+export const createStagingOrderOrchestration = (
+  database: TransactionalQueryable,
+  now: () => Date = () => new Date(),
+): {
+  readonly orders: OrderOrchestrationService;
+  readonly priceLocks: PriceLockService;
+} => {
+  const audit = new PostgresAuditEventRepository(database);
+  const priceLocks = new PriceLockService({
+    audit,
+    environment: "STAGING",
+    now,
+    pricing: new StagingCatalogPricingService(now) as unknown as PricingService,
+    repository: new PostgresPriceLockRepository(database),
+  });
+  return {
+    orders: new OrderOrchestrationService({
+      audit,
+      environment: "STAGING",
+      now,
+      operationsControlGate: new OperationsControlService(
+        new PostgresOperationsControlRepository(database),
+        { environment: "STAGING", now },
+      ),
+      priceLocks,
+      repository: new PostgresOrderRepository(database),
+    }),
+    priceLocks,
+  };
+};
 
 class SyntheticStripeProvider implements StripePaymentProviderPort {
   private readonly intents = new Map<string, NormalizedStripePaymentIntent>();

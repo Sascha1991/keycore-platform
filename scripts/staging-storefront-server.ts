@@ -7,6 +7,7 @@ import {
 import { PostgresCustomerAccountReadRepository } from "../infra/postgres/customer-account-repositories.js";
 import { createPostgresStagingCheckout } from "../infra/storefront/staging-checkout.js";
 import { createPostgresStagingGuestOrderClaim } from "../infra/storefront/staging-guest-claim.js";
+import { MailpitStagingTransport } from "../infra/storefront/staging-mailpit.js";
 import {
   createStagingStorefrontRuntime,
   handleStagingHttpRequest,
@@ -67,9 +68,17 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 
 async function dependencies() {
   const database = new PostgresTransactionBoundary(databasePool);
+  const mailpit = new MailpitStagingTransport(
+    required("KEYCORE_STAGING_MAILPIT_URL"),
+  );
   return {
     accountRepository: new PostgresCustomerAccountReadRepository(database),
-    checkout: createPostgresStagingCheckout(database),
+    checkout: createPostgresStagingCheckout(database, {
+      guestCheckoutEmailNormalized: required(
+        "KEYRANO_STAGING_GUEST_CHECKOUT_EMAIL",
+      ),
+      guestClaimDelivery: mailpit,
+    }),
     guestOrderClaim: createPostgresStagingGuestOrderClaim(database),
   };
 }

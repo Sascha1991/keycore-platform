@@ -15,6 +15,7 @@ import {
   type AuditEventPort,
 } from "../../packages/platform/src/contracts.js";
 import { AdminHttpController, type AdminHttpRequest } from "./admin-http.js";
+import type { StagingDelayedFulfillmentPort } from "../storefront/staging-delayed-fulfillment.js";
 
 const hmacMaterial = [
   "http-admin-test",
@@ -245,6 +246,84 @@ describe("AdminHttpController", () => {
     expect(response.body).not.toMatch(/TEST-[A-Z0-9-]+/u);
   });
 
+  it("protects the staging fulfillment action with capability, exact origin, CSRF and confirmation", async () => {
+    const delayed = new CapturingDelayedFulfillment();
+    const controller = fixture({ delayed, delayedEligible: true });
+    const path = `/admin/orders/${targetOrderId}/staging-fulfillment`;
+    const detail = await controller.handle(
+      authenticated("GET", `/admin/orders/${targetOrderId}`),
+    );
+    const csrf = new RegExp(
+      `action="${path.replaceAll("/", "\\/")}"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"`,
+      "u",
+    ).exec(detail.body)?.[1];
+    expect(detail.body).toContain("Synthetische Auslieferung bestätigen");
+    expect(csrf).toBeTruthy();
+
+    await expect(
+      controller.handle(authenticated("GET", path)),
+    ).resolves.toMatchObject({ statusCode: 405 });
+    for (const candidate of [
+      authenticated(
+        "POST",
+        path,
+        { origin: "https://attacker.invalid" },
+        {
+          confirm: "SYNTHETIC_DELAYED_FULFILLMENT",
+          csrf: required(csrf),
+        },
+      ),
+      authenticated(
+        "POST",
+        path,
+        { origin },
+        { confirm: "WRONG", csrf: required(csrf) },
+      ),
+      authenticated(
+        "POST",
+        path,
+        { origin },
+        {
+          confirm: "SYNTHETIC_DELAYED_FULFILLMENT",
+          csrf: "0".repeat(64),
+        },
+      ),
+    ]) {
+      await expect(controller.handle(candidate)).resolves.toMatchObject({
+        statusCode: 403,
+      });
+    }
+    expect(delayed.calls).toHaveLength(0);
+
+    const completed = await controller.handle(
+      authenticated(
+        "POST",
+        path,
+        { origin },
+        {
+          confirm: "SYNTHETIC_DELAYED_FULFILLMENT",
+          csrf: required(csrf),
+        },
+      ),
+    );
+    expect(completed.statusCode).toBe(200);
+    expect(completed.body).toContain("Auslieferung abgeschlossen");
+    expect(delayed.calls).toHaveLength(1);
+    expect(completed.body).not.toMatch(/SYNTHETIC_[A-Z0-9_-]{10,}/u);
+
+    const support = fixture({
+      delayed: new CapturingDelayedFulfillment(),
+      delayedEligible: true,
+      role: "SUPPORT",
+    });
+    const supportDetail = await support.handle(
+      authenticated("GET", `/admin/orders/${targetOrderId}`),
+    );
+    expect(supportDetail.body).not.toContain(
+      "Synthetische Auslieferung bestätigen",
+    );
+  });
+
   it("rejects duplicate query fields and returns generic backend failures", async () => {
     const malformed = authenticated("GET", "/admin/orders");
     malformed.query.append("search", targetOrderId);
@@ -373,6 +452,8 @@ const fixture = (
       readonly role: "FINANCE" | "SUPPORT";
     };
     readonly backendUnavailable?: boolean;
+    readonly delayed?: StagingDelayedFulfillmentPort;
+    readonly delayedEligible?: boolean;
     readonly role?: "PROJECT_OWNER" | "SUPPORT";
   } = {},
 ): AdminHttpController => {
@@ -421,7 +502,7 @@ const fixture = (
       };
     },
     findDetail: async () => ({
-      ...summary(),
+      ...(options.delayedEligible ? eligibleSummary() : summary()),
       correlationId: "corr-admin",
       customerId: null,
       deliveryState: "PENDING",
@@ -517,8 +598,21 @@ const fixture = (
     new AdminOrderService(orders, audit, hmacMaterial, "STAGING"),
     new AdminStaffService(staff, audit, hmacMaterial, "STAGING"),
     { allowedOrigin: origin, csrfSecret: hmacMaterial, secureCookies: true },
+    options.delayed,
   );
 };
+
+class CapturingDelayedFulfillment implements StagingDelayedFulfillmentPort {
+  public readonly calls: Parameters<
+    StagingDelayedFulfillmentPort["complete"]
+  >[0][] = [];
+  public async complete(
+    input: Parameters<StagingDelayedFulfillmentPort["complete"]>[0],
+  ) {
+    this.calls.push(input);
+    return { status: "COMPLETED" as const };
+  }
+}
 
 class MemoryAudit implements AuditEventPort {
   public readonly events: AuditEvent[] = [];
@@ -540,6 +634,12 @@ const summary = () => ({
   riskStatus: "APPROVED",
   status: "FULFILLMENT_PENDING",
   updatedAt: new Date("2026-09-02T09:01:00.000Z"),
+});
+const eligibleSummary = () => ({
+  ...summary(),
+  fulfillmentStatus: "NOT_STARTED",
+  procurementStatus: "NOT_STARTED",
+  status: "PAYMENT_CAPTURED",
 });
 const request = (
   method: string,

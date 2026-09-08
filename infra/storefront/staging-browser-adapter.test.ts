@@ -307,6 +307,7 @@ describe("staging storefront browser adapter", () => {
     const runtime = await harness(checkout);
     const body = JSON.stringify({
       checkoutCreatedAt: now.toISOString(),
+      checkoutMode: "ACCOUNT",
       checkoutToken: "a".repeat(64),
       currency: "EUR",
       expectedTotalMinor: "1299",
@@ -364,6 +365,70 @@ describe("staging storefront browser adapter", () => {
         (await runtime.bridge.handle(invalid)).statusCode,
       ).toBeGreaterThanOrEqual(400);
     }
+  });
+
+  it("allows anonymous access only for an exact CSRF-protected guest checkout command", async () => {
+    const checkout = new CapturingCheckout();
+    const runtime = await harness(checkout);
+    const guestBody = JSON.stringify({
+      checkoutCreatedAt: now.toISOString(),
+      checkoutEmailNormalized: "guest-checkout@example.test",
+      checkoutMode: "GUEST",
+      checkoutToken: "b".repeat(64),
+      currency: "EUR",
+      expectedTotalMinor: "1299",
+      outcome: "SUCCESS",
+      productReference: "synthetic-de-adventure",
+      quantity: 1,
+    });
+    const response = await runtime.bridge.handle(
+      signed({
+        body: guestBody,
+        csrfVerified: true,
+        method: "POST",
+        path: "/v1/checkout",
+      }),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(checkout.commands).toEqual([
+      expect.objectContaining({
+        checkoutEmailNormalized: "guest-checkout@example.test",
+        checkoutMode: "GUEST",
+      }),
+    ]);
+    expect(JSON.stringify(checkout.commands)).not.toContain("customerId");
+
+    for (const invalid of [
+      signed({ body: guestBody, method: "POST", path: "/v1/checkout" }),
+      signed({
+        body: JSON.stringify({
+          ...JSON.parse(guestBody),
+          customerId: stagingCustomerAId,
+        }),
+        csrfVerified: true,
+        method: "POST",
+        path: "/v1/checkout",
+      }),
+      signed({
+        body: guestBody,
+        csrfVerified: true,
+        customerId: stagingCustomerAId,
+        method: "POST",
+        path: "/v1/checkout",
+        wpUserId: "20",
+      }),
+    ]) {
+      expect(
+        (await runtime.bridge.handle(invalid)).statusCode,
+      ).toBeGreaterThanOrEqual(400);
+    }
+    expect(
+      (
+        await runtime.bridge.handle(
+          signed({ method: "GET", path: "/v1/account/orders" }),
+        )
+      ).statusCode,
+    ).toBe(401);
   });
 
   it("claims through the existing application boundary without returning the claim secret", async () => {

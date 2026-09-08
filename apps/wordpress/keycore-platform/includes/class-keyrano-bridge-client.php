@@ -24,7 +24,7 @@ final class Bridge_Client implements Bridge
     }
 
     /** @param array<string, int|string> $command @return array<string, mixed>|null */
-    public function checkout(int $wp_user_id, string $customer_id, array $command): ?array
+    public function checkout(?int $wp_user_id, ?string $customer_id, array $command): ?array
     {
         return $this->request('POST', '/v1/checkout', $wp_user_id, $customer_id, true, $command);
     }

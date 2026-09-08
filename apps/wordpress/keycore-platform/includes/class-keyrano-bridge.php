@@ -10,7 +10,7 @@ interface Bridge
     public function catalog(): ?array;
 
     /** @param array<string, int|string> $command @return array<string, mixed>|null */
-    public function checkout(int $wp_user_id, string $customer_id, array $command): ?array;
+    public function checkout(?int $wp_user_id, ?string $customer_id, array $command): ?array;
 
     /** @return array<string, mixed>|null */
     public function orders(int $wp_user_id, string $customer_id): ?array;

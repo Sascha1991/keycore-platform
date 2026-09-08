@@ -19,7 +19,9 @@ import {
   hasAdminCapability,
   newAdminCorrelationId,
   verifyAdminCsrf,
+  orderId,
 } from "../../packages/platform/src/contracts.js";
+import type { StagingDelayedFulfillmentPort } from "../storefront/staging-delayed-fulfillment.js";
 import {
   adminAuditCodeLabel,
   adminAuditEventTypeLabel,
@@ -61,6 +63,7 @@ export class AdminHttpController {
     private readonly orders: AdminOrderService,
     private readonly staff: AdminStaffService,
     private readonly config: AdminHttpConfig,
+    private readonly delayedFulfillment?: StagingDelayedFulfillmentPort,
   ) {}
 
   public async handle(request: AdminHttpRequest): Promise<AdminHttpResponse> {
@@ -125,6 +128,24 @@ export class AdminHttpController {
       );
       if (request.method === "GET" && detailMatch?.[1])
         return await this.orderDetail(principal, detailMatch[1]);
+      const delayedMatch =
+        /^\/admin\/orders\/([0-9a-f-]{36})\/staging-fulfillment$/iu.exec(
+          request.path,
+        );
+      if (delayedMatch?.[1]) {
+        if (request.method !== "POST")
+          return this.render(
+            405,
+            errorContent("Anfrage nicht verfügbar."),
+            principal,
+            { Allow: "POST" },
+          );
+        return await this.completeStagingFulfillment(
+          principal,
+          delayedMatch[1],
+          request,
+        );
+      }
       const revealMatch =
         /^\/admin\/orders\/([0-9a-f-]{36})\/product-key\/reveal$/iu.exec(
           request.path,
@@ -292,9 +313,61 @@ export class AdminHttpController {
       revealPath,
       this.config.csrfSecret,
     );
+    const delayedPath = `/admin/orders/${detail.orderId}/staging-fulfillment`;
+    const delayedCsrf = createAdminCsrf(
+      principal,
+      "POST",
+      delayedPath,
+      this.config.csrfSecret,
+    );
     return this.render(
       200,
-      orderDetailContent(detail, revealPath, csrf),
+      orderDetailContent(
+        detail,
+        revealPath,
+        csrf,
+        delayedPath,
+        delayedCsrf,
+        Boolean(this.delayedFulfillment) &&
+          hasAdminCapability(principal, "SENSITIVE_OPERATION") &&
+          detail.status === "PAYMENT_CAPTURED" &&
+          detail.paymentStatus === "CAPTURED" &&
+          detail.riskStatus === "APPROVED" &&
+          detail.procurementStatus === "NOT_STARTED" &&
+          detail.fulfillmentStatus === "NOT_STARTED",
+      ),
+      principal,
+    );
+  }
+
+  private async completeStagingFulfillment(
+    principal: AdminPrincipal,
+    targetOrderId: string,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const path = `/admin/orders/${targetOrderId}/staging-fulfillment`;
+    if (
+      !this.delayedFulfillment ||
+      !hasAdminCapability(principal, "SENSITIVE_OPERATION") ||
+      !this.validSensitivePost(request, principal, path, ["confirm", "csrf"]) ||
+      request.form.get("confirm") !== "SYNTHETIC_DELAYED_FULFILLMENT"
+    ) {
+      return this.render(
+        403,
+        errorContent("Anfrage nicht verfügbar."),
+        principal,
+      );
+    }
+    const result = await this.delayedFulfillment.complete({
+      correlationId: newAdminCorrelationId(),
+      orderId: orderId(targetOrderId),
+      principal,
+    });
+    const completed =
+      result.status === "COMPLETED" || result.status === "ALREADY_COMPLETED";
+    return this.render(
+      completed ? 200 : 409,
+      `<header class="page-heading"><p>Synthetischer Staging-Vorgang</p><h1>Verzögerte Auslieferung</h1></header><div class="notice ${completed ? "notice-success" : "notice-warning"}"><strong>${completed ? "Auslieferung abgeschlossen" : "Vorgang nicht verfügbar"}</strong><p>${completed ? "Die synthetische Bestellung wurde über die bestehenden Statusgrenzen in den bereiten Zustand überführt." : "Die Bestellung erfüllt die sicheren Voraussetzungen für diesen Vorgang nicht."}</p></div><p><a class="text-link" href="/admin/orders/${encodeURIComponent(targetOrderId)}">Zurück zur Bestellung</a></p>`,
       principal,
     );
   }
@@ -673,8 +746,11 @@ const orderDetailContent = (
   order: AdminOrderDetail,
   revealPath: string,
   csrf: string,
+  delayedPath: string,
+  delayedCsrf: string,
+  delayedEligible: boolean,
 ): string =>
-  `<header class="page-heading"><p>Bestelldetails</p><h1>${escapeHtml(order.orderId)}</h1></header><section class="detail-grid"><article><h2>Bestellung</h2>${detailRow("Produkt", order.productTitle)}${detailRow("Menge", String(order.quantity))}${detailRow("Kunde", order.customerEmail ?? "Nicht verfügbar")}${detailRow("Betrag", formatMinor(order.amountMinor, order.currency))}${detailRow("Status", adminStatusLabel(order.status))}${detailRow("Zahlung", adminStatusLabel(order.paymentStatus))}${detailRow("Beschaffung", adminStatusLabel(order.procurementStatus))}${detailRow("Auslieferung", adminStatusLabel(order.fulfillmentStatus))}${detailRow("Risiko", adminStatusLabel(order.riskStatus))}</article><article><h2>Operativer Kontext</h2>${detailRow("Gastbestellungs-Zuordnung", adminStatusLabel(order.guestClaimStatus))}${detailRow("Rechnung", adminStatusLabel(order.invoiceStatus))}${detailRow("Lieferant", order.supplierId ?? "Nicht verfügbar")}${detailRow("Lieferantenbestellung", order.externalSupplierOrderId ?? "Nicht verfügbar")}${detailRow("Abrufstatus", order.retrievalState ? adminStatusLabel(order.retrievalState) : "Nicht verfügbar")}${detailRow("Zustellstatus", order.deliveryState ? adminStatusLabel(order.deliveryState) : "Nicht verfügbar")}</article></section><section class="content-section sensitive"><div class="section-heading"><div><p>Sensibler Vorgang</p><h2>Produktschlüssel</h2></div></div><p>${order.encryptedSecretAvailable ? "Verschlüsseltes Material ist vorhanden. Eine Offenlegung ist nur über den kontrollierten separaten Vorgang möglich." : "Für diese Bestellung ist kein verschlüsseltes Material verfügbar."}</p><form method="post" action="${escapeHtml(revealPath)}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit"${order.encryptedSecretAvailable ? "" : " disabled"}>Kontrollierten Zugriff anfordern</button></form></section><section class="content-section"><div class="section-heading"><h2>Statushistorie</h2></div>${order.history.length === 0 ? '<div class="empty-state"><strong>Keine Statushistorie verfügbar</strong></div>' : `<ol class="timeline">${order.history.map((entry) => `<li><strong>${escapeHtml(adminStatusLabel(entry.toStatus))}</strong><span>${escapeHtml(adminAuditCodeLabel(entry.reasonCode))} · ${escapeHtml(formatDate(entry.occurredAt))}</span></li>`).join("")}</ol>`}</section>`;
+  `<header class="page-heading"><p>Bestelldetails</p><h1>${escapeHtml(order.orderId)}</h1></header><section class="detail-grid"><article><h2>Bestellung</h2>${detailRow("Produkt", order.productTitle)}${detailRow("Menge", String(order.quantity))}${detailRow("Kunde", order.customerEmail ?? "Nicht verfügbar")}${detailRow("Betrag", formatMinor(order.amountMinor, order.currency))}${detailRow("Status", adminStatusLabel(order.status))}${detailRow("Zahlung", adminStatusLabel(order.paymentStatus))}${detailRow("Beschaffung", adminStatusLabel(order.procurementStatus))}${detailRow("Auslieferung", adminStatusLabel(order.fulfillmentStatus))}${detailRow("Risiko", adminStatusLabel(order.riskStatus))}</article><article><h2>Operativer Kontext</h2>${detailRow("Gastbestellungs-Zuordnung", adminStatusLabel(order.guestClaimStatus))}${detailRow("Rechnung", adminStatusLabel(order.invoiceStatus))}${detailRow("Lieferant", order.supplierId ?? "Nicht verfügbar")}${detailRow("Lieferantenbestellung", order.externalSupplierOrderId ?? "Nicht verfügbar")}${detailRow("Abrufstatus", order.retrievalState ? adminStatusLabel(order.retrievalState) : "Nicht verfügbar")}${detailRow("Zustellstatus", order.deliveryState ? adminStatusLabel(order.deliveryState) : "Nicht verfügbar")}</article></section>${delayedEligible ? `<section class="content-section sensitive"><div class="section-heading"><div><p>Synthetischer Staging-Vorgang</p><h2>Verzögerte Auslieferung abschließen</h2></div></div><p>Dieser Vorgang nutzt keine Lieferantenverbindung und erzeugt ausschließlich verschlüsseltes synthetisches Testmaterial.</p><form method="post" action="${escapeHtml(delayedPath)}"><input type="hidden" name="csrf" value="${escapeHtml(delayedCsrf)}"><input type="hidden" name="confirm" value="SYNTHETIC_DELAYED_FULFILLMENT"><button type="submit">Synthetische Auslieferung bestätigen</button></form></section>` : ""}<section class="content-section sensitive"><div class="section-heading"><div><p>Sensibler Vorgang</p><h2>Produktschlüssel</h2></div></div><p>${order.encryptedSecretAvailable ? "Verschlüsseltes Material ist vorhanden. Eine Offenlegung ist nur über den kontrollierten separaten Vorgang möglich." : "Für diese Bestellung ist kein verschlüsseltes Material verfügbar."}</p><form method="post" action="${escapeHtml(revealPath)}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit"${order.encryptedSecretAvailable ? "" : " disabled"}>Kontrollierten Zugriff anfordern</button></form></section><section class="content-section"><div class="section-heading"><h2>Statushistorie</h2></div>${order.history.length === 0 ? '<div class="empty-state"><strong>Keine Statushistorie verfügbar</strong></div>' : `<ol class="timeline">${order.history.map((entry) => `<li><strong>${escapeHtml(adminStatusLabel(entry.toStatus))}</strong><span>${escapeHtml(adminAuditCodeLabel(entry.reasonCode))} · ${escapeHtml(formatDate(entry.occurredAt))}</span></li>`).join("")}</ol>`}</section>`;
 const detailRow = (label: string, value: string): string =>
   `<dl><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></dl>`;
 const staffListContent = (

@@ -483,7 +483,7 @@ green CI or PR merge does not alter the current 8/18 UAT count.
 - KS-10-01/KS-10-02 operations controls and fail-closed checkout gate.
 - KS-ADMIN-01/KS-ADMIN-02 Admin authentication, capabilities and audit.
 - KS-11-02 acceptance tests and KS-11-07 readiness/evidence conventions.
-- PostgreSQL 16, Redis 7.4, WordPress/WooCommerce, and Mailpit 1.21.8 from the
+- PostgreSQL 16, Redis 7.4, WordPress/WooCommerce, and Mailpit 1.30.6 from the
   existing staging stack.
 
 No live-provider, production-identity or production-approval dependency may be

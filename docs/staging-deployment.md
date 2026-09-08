@@ -58,7 +58,7 @@ credentials, paths, queries or fragments are invalid.
 - MariaDB 11.8.8 for WordPress only;
 - PostgreSQL 16.10 for KeyCore durable state;
 - Redis 7.4 with authentication and append-only coordination persistence; and
-- Mailpit 1.21.8 as a local mail capture sink.
+- Mailpit 1.30.6 as a local mail capture sink.
 
 Volumes, host ports, database names, Redis namespace and Compose project name
 are staging-specific. The WordPress plugin remains an integration skeleton; no
