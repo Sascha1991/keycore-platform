@@ -4,8 +4,8 @@
     {
       "id": "UAT-RISK-001",
       "classification": "BLOCKING_UAT",
-      "scenarios": ["UAT-003", "UAT-007", "UAT-009"],
-      "missingBoundary": "Human execution of the newly composed synthetic guest, failure-state and delayed-fulfillment browser journeys",
+      "scenarios": ["UAT-003", "UAT-007"],
+      "missingBoundary": "Human execution of the newly composed synthetic guest and delayed-fulfillment browser journeys",
       "target": "KS-11-07_HUMAN_UAT",
       "releaseImpact": "The affected journeys remain unaccepted until the product owner executes and records safe evidence."
     },
