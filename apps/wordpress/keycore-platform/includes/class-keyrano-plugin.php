@@ -6,6 +6,9 @@ namespace KeyRaNo\Storefront;
 
 final class Plugin
 {
+    /** @var array<int, true> */
+    private static array $rendered_terminal_results = [];
+
     public static function register(): void
     {
         $bridge = new Bridge_Client();
@@ -27,6 +30,8 @@ final class Plugin
         add_action('admin_post_keyrano_invoice', [$account, 'handle_invoice']);
         add_action('admin_post_nopriv_keyrano_invoice', [$account, 'handle_invoice']);
         add_filter('woocommerce_payment_gateways', [Checkout_Registration_Loader::class, 'gateways']);
+        add_filter('woocommerce_thankyou_order_received_title', [self::class, 'terminal_order_received_title'], 10, 2);
+        add_filter('woocommerce_thankyou_order_received_text', [self::class, 'terminal_order_received_text'], 10, 2);
         add_action('woocommerce_blocks_loaded', [Checkout_Registration_Loader::class, 'blocks_loaded']);
         add_action('wp_enqueue_scripts', [self::class, 'assets']);
         add_action('woocommerce_single_product_summary', [self::class, 'product_facts'], 25);
@@ -144,6 +149,60 @@ final class Plugin
                 'notice'
             );
         }
+    }
+
+    public static function terminal_order_received_title(string $title, mixed $order): string
+    {
+        $terminal = self::terminal_checkout($order);
+        if (null === $terminal) {
+            return $title;
+        }
+        self::$rendered_terminal_results[$terminal['order']->get_id()] = true;
+        return 'FAILED' === $terminal['status']
+            ? __('Zahlung fehlgeschlagen', 'keycore-platform')
+            : __('Zahlung abgebrochen', 'keycore-platform');
+    }
+
+    public static function terminal_order_received_text(string $text, mixed $order): string
+    {
+        $terminal = self::terminal_checkout($order);
+        if (null === $terminal) {
+            return $text;
+        }
+        self::$rendered_terminal_results[$terminal['order']->get_id()] = true;
+        return '<span class="keyrano-checkout-terminal-message">' .
+            esc_html__('Es wurde keine Bestellung erfüllt und kein Produktschlüssel bereitgestellt.', 'keycore-platform') .
+            '</span> <a class="keyrano-checkout-terminal-return" href="' . esc_url(wc_get_cart_url()) . '">' .
+            esc_html__('Zurück zum Warenkorb', 'keycore-platform') . '</a>';
+    }
+
+    public static function terminal_result_was_rendered(\WC_Order $order): bool
+    {
+        return true === (self::$rendered_terminal_results[$order->get_id()] ?? false);
+    }
+
+    /** @return array{order:\WC_Order,status:'FAILED'|'CANCELLED'}|null */
+    private static function terminal_checkout(mixed $candidate): ?array
+    {
+        $order = $candidate instanceof \WC_Order
+            ? $candidate
+            : wc_get_order((int) get_query_var('order-received'));
+        if (! $order instanceof \WC_Order) {
+            return null;
+        }
+        $status = (string) $order->get_meta('_keyrano_checkout_status', true);
+        $expected = [
+            'FAILED' => ['gateway' => 'keyrano_synthetic_failure', 'orderStatus' => 'failed'],
+            'CANCELLED' => ['gateway' => 'keyrano_synthetic_cancel', 'orderStatus' => 'cancelled'],
+        ][$status] ?? null;
+        if (
+            null === $expected ||
+            $expected['gateway'] !== $order->get_payment_method() ||
+            $expected['orderStatus'] !== $order->get_status()
+        ) {
+            return null;
+        }
+        return ['order' => $order, 'status' => $status];
     }
 }
 

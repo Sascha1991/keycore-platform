@@ -101,6 +101,9 @@ abstract class Checkout_Gateway extends \WC_Payment_Gateway
         $keycore_order_id = (string) $order->get_meta('_keyrano_keycore_order_id', true);
         $checkout_status = (string) $order->get_meta('_keyrano_checkout_status', true);
         if (in_array($checkout_status, ['FAILED', 'CANCELLED'], true)) {
+            if (Plugin::terminal_result_was_rendered($order)) {
+                return;
+            }
             echo '<div class="keyrano-checkout-result keyrano-checkout-result-error">';
             echo '<h2>' . esc_html('FAILED' === $checkout_status ? __('Zahlung fehlgeschlagen', 'keycore-platform') : __('Zahlung abgebrochen', 'keycore-platform')) . '</h2>';
             echo '<p>' . esc_html__('Es wurde keine Bestellung erfüllt und kein Produktschlüssel bereitgestellt.', 'keycore-platform') . '</p>';

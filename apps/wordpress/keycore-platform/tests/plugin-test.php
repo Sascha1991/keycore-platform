@@ -9,6 +9,7 @@ define('EP_PAGES', 2);
 
 $GLOBALS['keyrano_test_actions'] = [];
 $GLOBALS['keyrano_test_filters'] = [];
+$GLOBALS['keyrano_test_filter_callbacks'] = [];
 $GLOBALS['keyrano_products'] = [];
 $GLOBALS['keyrano_order'] = null;
 $GLOBALS['keyrano_notices'] = [];
@@ -17,7 +18,10 @@ $GLOBALS['keyrano_logged_in'] = true;
 $GLOBALS['keyrano_current_user_id'] = 20;
 
 function add_action(string $name, mixed $callback, int $priority = 10): void { $GLOBALS['keyrano_test_actions'][] = $name; }
-function add_filter(string $name, mixed $callback): void { $GLOBALS['keyrano_test_filters'][] = $name; }
+function add_filter(string $name, mixed $callback, int $priority = 10, int $accepted_args = 1): void {
+    $GLOBALS['keyrano_test_filters'][] = $name;
+    $GLOBALS['keyrano_test_filter_callbacks'][$name] = compact('callback', 'priority', 'accepted_args');
+}
 function register_activation_hook(string $file, mixed $callback): void { $GLOBALS['keyrano_test_actions'][] = 'activation'; }
 function sanitize_key(string $value): string { return trim(strtolower(preg_replace('/[^a-z0-9_-]/', '', $value) ?? '')); }
 function sanitize_text_field(string $value): string { return trim(strip_tags($value)); }
@@ -52,6 +56,7 @@ function is_user_logged_in(): bool { return $GLOBALS['keyrano_logged_in']; }
 function get_current_user_id(): int { return $GLOBALS['keyrano_current_user_id']; }
 function get_user_meta(int $user_id, string $key, bool $single = true): string { return '10000000-0000-4000-8000-000000000001'; }
 function wc_get_order(int $order_id): mixed { return $GLOBALS['keyrano_order']; }
+function get_query_var(string $name): int { return 'order-received' === $name ? (int) ($GLOBALS['keyrano_order']?->get_id() ?? 0) : 0; }
 function wc_add_notice(string $message, string $type): void { $GLOBALS['keyrano_notices'][] = [$message, $type]; }
 
 class WC_Payment_Gateway
@@ -71,9 +76,18 @@ class WC_Payment_Gateway
 class WC_Order
 {
     private array $meta = [];
-    public function __construct(private int $customer_id, private string $billing_email = '') {}
+    public function __construct(
+        private int $customer_id,
+        private string $billing_email = '',
+        private int $id = 0,
+        private string $status = 'pending',
+        private string $payment_method = ''
+    ) {}
+    public function get_id(): int { return $this->id; }
     public function get_customer_id(): int { return $this->customer_id; }
     public function get_billing_email(): string { return $this->billing_email; }
+    public function get_status(): string { return $this->status; }
+    public function get_payment_method(): string { return $this->payment_method; }
     public function get_meta(string $key, bool $single = true): string { return (string) ($this->meta[$key] ?? ''); }
     public function update_meta_data(string $key, string $value): void { $this->meta[$key] = $value; }
 }
@@ -180,6 +194,8 @@ foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_acco
 }
 assert_true(in_array('woocommerce_account_menu_items', $GLOBALS['keyrano_test_filters'], true), 'Missing account menu filter');
 assert_true(in_array('woocommerce_payment_gateways', $GLOBALS['keyrano_test_filters'], true), 'Synthetic staging gateways are not registered');
+assert_true(in_array('woocommerce_thankyou_order_received_title', $GLOBALS['keyrano_test_filters'], true), 'Order Confirmation Block title filter is not registered');
+assert_true(in_array('woocommerce_thankyou_order_received_text', $GLOBALS['keyrano_test_filters'], true), 'Order Confirmation Block text filter is not registered');
 $account = new \KeyRaNo\Storefront\Account(new FakeBridge());
 ob_start();
 $account->render_claim_shell();
@@ -324,25 +340,53 @@ assert_true(false !== strpos($guest_confirmation, 'KeyRaNo-Konto'), 'Guest confi
 assert_true(false !== strpos($guest_confirmation, 'derselben E-Mail-Adresse'), 'Guest confirmation omitted exact-email guidance');
 assert_true(false === stripos($guest_confirmation, 'SYNTHETIC_'), 'Guest confirmation leaked claim or key material');
 
-$failed_order = new WC_Order(0, 'guest-checkout@example.test');
+$failed_order = new WC_Order(20, 'customer-a@example.test', 102, 'failed', 'keyrano_synthetic_failure');
 $failed_order->update_meta_data('_keyrano_checkout_status', 'FAILED');
 $GLOBALS['keyrano_order'] = $failed_order;
+$title_filter = $GLOBALS['keyrano_test_filter_callbacks']['woocommerce_thankyou_order_received_title']['callback'];
+$text_filter = $GLOBALS['keyrano_test_filter_callbacks']['woocommerce_thankyou_order_received_text']['callback'];
+$failed_title = $title_filter('Bestellung fehlgeschlagen', $failed_order);
+$failed_text = $text_filter('Generischer WooCommerce-Fehler', null);
+assert_true('Zahlung fehlgeschlagen' === $failed_title, 'Order Confirmation Block retained the generic failed title');
+assert_true(false !== strpos($failed_text, 'Es wurde keine Bestellung erfüllt und kein Produktschlüssel bereitgestellt.'), 'Block failure text is not deterministic');
+assert_true(false !== strpos($failed_text, 'Zurück zum Warenkorb'), 'Block failure return path is missing');
+assert_true(false !== strpos($failed_text, 'href="/cart/"'), 'Block failure return path does not target the cart');
+assert_true(false === strpos($failed_text, 'Generischer WooCommerce-Fehler'), 'Generic WooCommerce failure text remained visible');
+assert_true($failed_title === $title_filter('Bestellung fehlgeschlagen', $failed_order), 'Refreshed failure title changed');
+assert_true($failed_text === $text_filter('Generischer WooCommerce-Fehler', null), 'Refreshed failure text changed');
 ob_start();
 $success_gateway->thankyou_page(102);
 $failed_confirmation = (string) ob_get_clean();
-assert_true(false !== strpos($failed_confirmation, 'Zahlung fehlgeschlagen'), 'Stable failed-payment result is missing');
-assert_true(false !== strpos($failed_confirmation, 'Zurück zum Warenkorb'), 'Failed-payment retry path is missing');
-assert_true(false !== strpos($failed_confirmation, 'kein Produktschlüssel'), 'Failed-payment no-key statement is missing');
+assert_true('' === $failed_confirmation, 'Block failure result was duplicated by the Additional Information hook');
 
-$cancelled_order = new WC_Order(0, 'guest-checkout@example.test');
+$cancelled_order = new WC_Order(20, 'customer-a@example.test', 103, 'cancelled', 'keyrano_synthetic_cancel');
 $cancelled_order->update_meta_data('_keyrano_checkout_status', 'CANCELLED');
 $GLOBALS['keyrano_order'] = $cancelled_order;
+$cancelled_title = $title_filter('Bestellung abgebrochen', $cancelled_order);
+$cancelled_text = $text_filter('Die Bestellung wurde storniert.', $cancelled_order);
+assert_true('Zahlung abgebrochen' === $cancelled_title, 'Order Confirmation Block retained the generic cancelled title');
+assert_true(false !== strpos($cancelled_text, 'Es wurde keine Bestellung erfüllt und kein Produktschlüssel bereitgestellt.'), 'Block cancellation text is not deterministic');
+assert_true(false !== strpos($cancelled_text, 'Zurück zum Warenkorb'), 'Block cancellation return path is missing');
+assert_true(false !== strpos($cancelled_text, 'href="/cart/"'), 'Block cancellation return path does not target the cart');
+assert_true(false === strpos($cancelled_text, 'Die Bestellung wurde storniert.'), 'Generic WooCommerce cancellation text remained visible');
+assert_true($cancelled_title === $title_filter('Bestellung abgebrochen', $cancelled_order), 'Refreshed cancellation title changed');
+assert_true($cancelled_text === $text_filter('Die Bestellung wurde storniert.', $cancelled_order), 'Refreshed cancellation text changed');
 ob_start();
 $success_gateway->thankyou_page(103);
 $cancelled_confirmation = (string) ob_get_clean();
-assert_true(false !== strpos($cancelled_confirmation, 'Zahlung abgebrochen'), 'Stable cancelled-payment result is missing');
-assert_true(false === strpos($cancelled_confirmation, 'Zahlung fehlgeschlagen'), 'Cancellation was rendered as payment failure');
-assert_true(false !== strpos($cancelled_confirmation, 'Zurück zum Warenkorb'), 'Cancelled-payment return path is missing');
+assert_true('' === $cancelled_confirmation, 'Block cancellation result was duplicated by the Additional Information hook');
+
+$unrelated_order = new WC_Order(20, 'customer-a@example.test', 104, 'failed', 'bacs');
+$unrelated_order->update_meta_data('_keyrano_checkout_status', 'FAILED');
+$GLOBALS['keyrano_order'] = $unrelated_order;
+assert_true('Bestellung fehlgeschlagen' === $title_filter('Bestellung fehlgeschlagen', $unrelated_order), 'Unrelated failed order title was changed');
+assert_true('Generischer WooCommerce-Fehler' === $text_filter('Generischer WooCommerce-Fehler', $unrelated_order), 'Unrelated failed order text was changed');
+
+$inconsistent_order = new WC_Order(20, 'customer-a@example.test', 105, 'pending', 'keyrano_synthetic_failure');
+$inconsistent_order->update_meta_data('_keyrano_checkout_status', 'FAILED');
+$GLOBALS['keyrano_order'] = $inconsistent_order;
+assert_true('Bestellung ausstehend' === $title_filter('Bestellung ausstehend', $inconsistent_order), 'Inconsistent synthetic order title was changed');
+assert_true('Ausstehende Bestellung' === $text_filter('Ausstehende Bestellung', $inconsistent_order), 'Inconsistent synthetic order text was changed');
 $GLOBALS['keyrano_logged_in'] = true;
 
 $bridge = new FakeBridge();
