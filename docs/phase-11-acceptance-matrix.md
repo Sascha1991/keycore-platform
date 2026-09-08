@@ -13,13 +13,13 @@ detailed acceptance tasks below and does not make any detailed task disappear.
 | KS-11-04 | Order concurrency test      | Complete and merged      | Concurrent replay and duplicate-mutation prevention                 |
 | KS-11-05 | Security assessment         | Complete and merged      | Static, dependency, authorization and key-exposure assessment       |
 | KS-11-06 | Recovery exercise           | Complete and merged      | Supplier outage, Redis loss, database restore and runbook evidence  |
-| KS-11-07 | User acceptance review      | Human review in progress | 8/18 passed; ten required scenarios remain incomplete               |
+| KS-11-07 | User acceptance review      | Human review in progress | 9/18 passed; nine required scenarios remain incomplete              |
 
 Phase 11 is not complete and `SECURITY-READINESS` is not approved. The repository
 now has browser surfaces for catalog, synthetic checkout, account reads, Guest
 Claim, synthetic secure reveal and owner-only synthetic invoice download.
-UAT-001, UAT-002, UAT-004, UAT-005, UAT-006, UAT-012, UAT-015 and UAT-018 have
-product-owner results, but the remaining ten scenarios keep KS-11-07
+UAT-001, UAT-002, UAT-004, UAT-005, UAT-006, UAT-009, UAT-012, UAT-015 and
+UAT-018 have product-owner results, but the remaining nine scenarios keep KS-11-07
 incomplete. KS-11-07 human acceptance cannot be completed by an agent or CI.
 
 ## Remaining Phases Rule

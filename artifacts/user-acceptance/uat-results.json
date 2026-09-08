@@ -74,11 +74,11 @@
     },
     {
       "scenario": "UAT-009",
-      "status": "PENDING",
-      "reviewer": null,
-      "reviewedAt": null,
-      "evidence": [],
-      "notes": "Synthetic payment failure and cancellation now have stable browser result and retry paths after reviewed staging deployment; Human-UAT has not been performed."
+      "status": "PASS",
+      "reviewer": "KeyRaNo product owner",
+      "reviewedAt": "2026-09-08T00:00:00Z",
+      "evidence": ["docs/uat/human-uat-2026-09-08-payment-terminal-states.md"],
+      "notes": "Accepted on hosted staging after the synthetic failure and cancellation journeys displayed distinct stable German terminal results, the explicit no-fulfillment/no-key statement and only the fresh-cart return action. Refresh remained stable, and PostgreSQL verification confirmed terminal payment/order states with procurement and fulfillment NOT_STARTED and zero fulfillment operations or claim challenges."
     },
     {
       "scenario": "UAT-010",
