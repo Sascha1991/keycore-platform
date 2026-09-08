@@ -24,11 +24,11 @@
     },
     {
       "scenario": "UAT-003",
-      "status": "PENDING",
-      "reviewer": null,
-      "reviewedAt": null,
-      "evidence": [],
-      "notes": "The synthetic guest checkout browser path is technically executable after reviewed staging deployment; Human-UAT has not been performed."
+      "status": "PASS",
+      "reviewer": "KeyRaNo product owner",
+      "reviewedAt": "2026-09-08T00:00:00Z",
+      "evidence": ["docs/uat/human-uat-2026-09-08-guest-checkout.md"],
+      "notes": "Accepted on hosted staging after a logged-out synthetic guest checkout for Neonpfad: Berlin confirmed payment without displaying a Product Key, required a same-email KeyRaNo account and delivered one private Mailpit claim message. PostgreSQL verification confirmed an unowned captured order, one active unconsumed claim, no procurement, no fulfillment operation and no fulfillment secret. The initially empty mailbox was a local port collision, not an application or delivery defect; no claim value or hash is recorded."
     },
     {
       "scenario": "UAT-004",

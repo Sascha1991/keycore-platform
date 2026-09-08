@@ -18,7 +18,11 @@ result in `docs/uat/human-uat-2026-09-01-invoice.md` and the UAT-015 result in
 owner completed UAT-012, then UAT-005 and UAT-004 in that safety-preserving
 order. Their safe textual record is
 `docs/uat/human-uat-2026-09-08-claims-invoice.md`; the one-time claim value is
-not recorded.
+not recorded. The product owner also completed UAT-009 and UAT-003 on hosted
+staging. Their safe records are
+`docs/uat/human-uat-2026-09-08-payment-terminal-states.md` and
+`docs/uat/human-uat-2026-09-08-guest-checkout.md`; no claim value or hash is
+recorded.
 
 | ID      | Where to go                                   | What to do                                                           | What should happen                                                   | Failure                                                         | Safe evidence                          |
 | ------- | --------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------- |
