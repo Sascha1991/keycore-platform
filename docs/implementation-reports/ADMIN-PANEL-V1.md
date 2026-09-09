@@ -80,8 +80,7 @@ The local Docker engine did not become available during final verification.
 GitHub Actions therefore supplied the authoritative clean-service result:
 PostgreSQL/Redis persistence, migration 030 rollback, PHP/Composer, both
 Compose definitions, 38 concurrency tests, the catalog scale gate and the
-REC-001 through REC-018 native restore exercise all passed in Quality Gates run
-34340644493.
+REC-001 through REC-018 native restore exercise all passed in Quality Gates run 34340644493.
 
 ## Approval state
 
