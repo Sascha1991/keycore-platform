@@ -241,6 +241,7 @@ export interface AdminOrderSummary {
   readonly orderId: OrderId;
   readonly customerEmail: string | null;
   readonly productTitle: string;
+  readonly productPlatform: string;
   readonly quantity: number;
   readonly amountMinor: string;
   readonly currency: string;
@@ -297,6 +298,10 @@ export interface AdminOrderFilters {
   readonly exactOrderId?: OrderId;
   readonly exactCustomerEmail?: string;
   readonly status?: string;
+  readonly paymentStatus?: string;
+  readonly riskStatus?: string;
+  readonly procurementStatus?: string;
+  readonly fulfillmentStatus?: string;
   readonly operationalView?: "ATTENTION" | "PROCESSING" | "FAILED";
   readonly fromDate?: string;
   readonly toDate?: string;
@@ -309,7 +314,17 @@ export interface AdminOrderCursor {
 
 export interface AdminOrderPage {
   readonly orders: readonly AdminOrderSummary[];
+  readonly totalCount: number;
+  readonly metrics: AdminOrderMetrics;
   readonly nextCursor?: AdminOrderCursor;
+  readonly previousCursor?: AdminOrderCursor;
+}
+
+export interface AdminOrderMetrics {
+  readonly totalOrders: number;
+  readonly attentionOrders: number;
+  readonly processingOrders: number;
+  readonly failedOrders: number;
 }
 
 export interface AdminOrderReadRepository {
@@ -317,7 +332,9 @@ export interface AdminOrderReadRepository {
   list(input: {
     readonly filters: AdminOrderFilters;
     readonly limit: number;
-    readonly after?: AdminOrderCursor;
+    readonly cursor?: AdminOrderCursor;
+    readonly cursorDirection: "NEXT" | "PREVIOUS";
+    readonly sort: "NEWEST" | "OLDEST";
   }): Promise<AdminOrderPage>;
   findDetail(targetOrderId: OrderId): Promise<AdminOrderDetail | null>;
 }
@@ -325,16 +342,25 @@ export interface AdminOrderReadRepository {
 export interface AdminOrderQuery {
   readonly search?: string;
   readonly status?: string;
+  readonly paymentStatus?: string;
+  readonly riskStatus?: string;
+  readonly procurementStatus?: string;
+  readonly fulfillmentStatus?: string;
   readonly operationalView?: string;
   readonly fromDate?: string;
   readonly toDate?: string;
   readonly limit?: number;
   readonly cursor?: string;
+  readonly cursorDirection?: string;
+  readonly sort?: string;
 }
 
 export interface AdminOrderListResult extends AdminOrderPage {
   readonly nextCursorValue?: string;
+  readonly previousCursorValue?: string;
   readonly filters: AdminOrderFilters;
+  readonly limit: number;
+  readonly sort: "NEWEST" | "OLDEST";
 }
 
 const allowedOrderStatuses = new Set([
@@ -350,6 +376,38 @@ const allowedOrderStatuses = new Set([
   "FAILED",
   "REFUND_PENDING",
   "REFUNDED",
+  "MANUAL_REVIEW",
+]);
+const allowedPaymentStatuses = new Set([
+  "NOT_STARTED",
+  "PENDING",
+  "AUTHORIZED",
+  "CAPTURED",
+  "FAILED",
+  "CANCELLED",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
+]);
+const allowedRiskStatuses = new Set([
+  "NOT_EVALUATED",
+  "APPROVED",
+  "REVIEW_REQUIRED",
+  "REJECTED",
+]);
+const allowedProcurementStatuses = new Set([
+  "NOT_STARTED",
+  "PENDING",
+  "IN_PROGRESS",
+  "SUCCEEDED",
+  "FAILED_RETRYABLE",
+  "FAILED_TERMINAL",
+  "AMBIGUOUS",
+]);
+const allowedFulfillmentStatuses = new Set([
+  "NOT_STARTED",
+  "PENDING",
+  "SUCCEEDED",
+  "FAILED",
   "MANUAL_REVIEW",
 ]);
 
@@ -389,12 +447,21 @@ export class AdminOrderService {
     await this.requireCapability(principal, "ORDER_VIEW", requestCorrelationId);
     const filters = parseAdminOrderFilters(query);
     const limit = parsePageLimit(query.limit);
-    const fingerprint = filterFingerprint(filters);
-    const after = query.cursor
+    const sort = parseOrderSort(query.sort);
+    const cursorDirection = parseCursorDirection(query.cursorDirection);
+    if (query.cursorDirection && !query.cursor)
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    const fingerprint = filterFingerprint(filters, sort, limit);
+    const cursor = query.cursor
       ? decodeAdminCursor(query.cursor, fingerprint, this.cursorSecret)
       : undefined;
-    const request = after ? { after, filters, limit } : { filters, limit };
-    const page = await this.repository.list(request);
+    const page = await this.repository.list({
+      ...(cursor ? { cursor } : {}),
+      cursorDirection,
+      filters,
+      limit,
+      sort,
+    });
     await this.auditRead(
       principal,
       requestCorrelationId,
@@ -407,10 +474,21 @@ export class AdminOrderService {
     return {
       ...page,
       filters,
+      limit,
+      sort,
       ...(page.nextCursor
         ? {
             nextCursorValue: encodeAdminCursor(
               page.nextCursor,
+              fingerprint,
+              this.cursorSecret,
+            ),
+          }
+        : {}),
+      ...(page.previousCursor
+        ? {
+            previousCursorValue: encodeAdminCursor(
+              page.previousCursor,
               fingerprint,
               this.cursorSecret,
             ),
@@ -571,6 +649,10 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
     exactOrderId?: OrderId;
     exactCustomerEmail?: string;
     status?: string;
+    paymentStatus?: string;
+    riskStatus?: string;
+    procurementStatus?: string;
+    fulfillmentStatus?: string;
     operationalView?: "ATTENTION" | "PROCESSING" | "FAILED";
     fromDate?: string;
     toDate?: string;
@@ -594,6 +676,26 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
     }
     filters.status = query.status;
   }
+  if (query.paymentStatus !== undefined && query.paymentStatus !== "") {
+    if (!allowedPaymentStatuses.has(query.paymentStatus))
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    filters.paymentStatus = query.paymentStatus;
+  }
+  if (query.riskStatus !== undefined && query.riskStatus !== "") {
+    if (!allowedRiskStatuses.has(query.riskStatus))
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    filters.riskStatus = query.riskStatus;
+  }
+  if (query.procurementStatus !== undefined && query.procurementStatus !== "") {
+    if (!allowedProcurementStatuses.has(query.procurementStatus))
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    filters.procurementStatus = query.procurementStatus;
+  }
+  if (query.fulfillmentStatus !== undefined && query.fulfillmentStatus !== "") {
+    if (!allowedFulfillmentStatuses.has(query.fulfillmentStatus))
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    filters.fulfillmentStatus = query.fulfillmentStatus;
+  }
   if (query.operationalView !== undefined && query.operationalView !== "") {
     if (!["ATTENTION", "PROCESSING", "FAILED"].includes(query.operationalView))
       throw new AdminAccessError("ADMIN_INPUT_INVALID");
@@ -614,9 +716,25 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
 
 const parsePageLimit = (value: number | undefined): number => {
   if (value === undefined) return 25;
-  if (!Number.isInteger(value) || value < 1 || value > 100) {
+  if (![10, 25, 50].includes(value)) {
     throw new AdminAccessError("ADMIN_INPUT_INVALID");
   }
+  return value;
+};
+
+const parseOrderSort = (value: string | undefined): "NEWEST" | "OLDEST" => {
+  if (value === undefined || value === "") return "NEWEST";
+  if (value !== "NEWEST" && value !== "OLDEST")
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value;
+};
+
+const parseCursorDirection = (
+  value: string | undefined,
+): "NEXT" | "PREVIOUS" => {
+  if (value === undefined || value === "") return "NEXT";
+  if (value !== "NEXT" && value !== "PREVIOUS")
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
   return value;
 };
 
@@ -653,8 +771,14 @@ const requireStrongSecret = (value: string, label: string): void => {
     throw new Error(`${label} must be at least 32 bytes`);
 };
 
-const filterFingerprint = (filters: AdminOrderFilters): string =>
-  createHash("sha256").update(JSON.stringify(filters), "utf8").digest("hex");
+const filterFingerprint = (
+  filters: AdminOrderFilters,
+  sort: "NEWEST" | "OLDEST",
+  limit: number,
+): string =>
+  createHash("sha256")
+    .update(JSON.stringify({ filters, limit, sort }), "utf8")
+    .digest("hex");
 
 const encodeAdminCursor = (
   cursor: AdminOrderCursor,

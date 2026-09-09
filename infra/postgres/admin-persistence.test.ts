@@ -69,24 +69,54 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       const repository = new PostgresAdminOrderReadRepository(database);
 
       const page = await repository.list({
+        cursorDirection: "NEXT",
         filters: { exactCustomerEmail: "admin-customer@example.test" },
         limit: 25,
+        sort: "NEWEST",
       });
       expect(page.orders).toHaveLength(1);
       expect(page.orders[0]).toMatchObject({
         orderId: orderId(createdOrderId),
+        productPlatform: "WINDOWS",
         productTitle: "Admin Persistence Product",
       });
+      expect(page).toMatchObject({
+        metrics: {
+          attentionOrders: 0,
+          failedOrders: 0,
+          processingOrders: 1,
+          totalOrders: 1,
+        },
+        totalCount: 1,
+      });
+      const dimensional = await repository.list({
+        cursorDirection: "NEXT",
+        filters: {
+          fulfillmentStatus: "PENDING",
+          paymentStatus: "CAPTURED",
+          procurementStatus: "SUCCEEDED",
+          riskStatus: "APPROVED",
+        },
+        limit: 10,
+        sort: "OLDEST",
+      });
+      expect(dimensional.orders.map((item) => item.orderId)).toContain(
+        orderId(createdOrderId),
+      );
       const processing = await repository.list({
+        cursorDirection: "NEXT",
         filters: { operationalView: "PROCESSING" },
         limit: 25,
+        sort: "NEWEST",
       });
       expect(processing.orders.map((item) => item.orderId)).toContain(
         orderId(createdOrderId),
       );
       const failed = await repository.list({
+        cursorDirection: "NEXT",
         filters: { operationalView: "FAILED" },
         limit: 25,
+        sort: "NEWEST",
       });
       expect(failed.orders).toHaveLength(0);
       const detail = await repository.findDetail(orderId(createdOrderId));

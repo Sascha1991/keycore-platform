@@ -28,6 +28,7 @@ interface OrderSummaryRow {
   readonly id: string;
   readonly customer_email: string | null;
   readonly product_title: string;
+  readonly product_platform: string;
   readonly quantity: number;
   readonly customer_amount_minor: string;
   readonly currency: string;
@@ -654,62 +655,98 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
   public async list(input: {
     readonly filters: AdminOrderFilters;
     readonly limit: number;
-    readonly after?: { readonly createdAt: Date; readonly orderId: OrderId };
+    readonly cursor?: { readonly createdAt: Date; readonly orderId: OrderId };
+    readonly cursorDirection: "NEXT" | "PREVIOUS";
+    readonly sort: "NEWEST" | "OLDEST";
   }): Promise<AdminOrderPage> {
-    const values: unknown[] = [];
-    const predicates: string[] = [];
+    const base = orderFilterSql(input.filters, false);
+    const filtered = orderFilterSql(input.filters, true);
+    const listValues = [...filtered.values];
+    const predicates = [...filtered.predicates];
     const parameter = (value: unknown): string => {
-      values.push(value);
-      return `$${values.length}`;
+      listValues.push(value);
+      return `$${listValues.length}`;
     };
-    if (input.filters.exactOrderId)
+    const baseAscending = input.sort === "OLDEST";
+    const queryAscending =
+      input.cursorDirection === "PREVIOUS" ? !baseAscending : baseAscending;
+    if (input.cursor) {
+      const nextComparator = baseAscending ? ">" : "<";
+      const comparator =
+        input.cursorDirection === "PREVIOUS"
+          ? nextComparator === ">"
+            ? "<"
+            : ">"
+          : nextComparator;
       predicates.push(
-        `orders.id = ${parameter(input.filters.exactOrderId)}::uuid`,
+        `(orders.created_at, orders.id) ${comparator} (${parameter(input.cursor.createdAt)}, ${parameter(input.cursor.orderId)}::uuid)`,
       );
-    if (input.filters.exactCustomerEmail)
-      predicates.push(
-        `COALESCE(customer.email_normalized, orders.checkout_email_normalized) = ${parameter(input.filters.exactCustomerEmail)}`,
-      );
-    if (input.filters.status)
-      predicates.push(`orders.status = ${parameter(input.filters.status)}`);
-    if (input.filters.operationalView === "ATTENTION")
-      predicates.push(
-        `(orders.status = 'MANUAL_REVIEW' OR orders.risk_status = 'REVIEW_REQUIRED')`,
-      );
-    if (input.filters.operationalView === "PROCESSING")
-      predicates.push(
-        `orders.status IN ('PAYMENT_CAPTURED', 'PROCUREMENT_PENDING', 'PROCUREMENT_IN_PROGRESS', 'FULFILLMENT_PENDING')`,
-      );
-    if (input.filters.operationalView === "FAILED")
-      predicates.push(`orders.status = 'FAILED'`);
-    if (input.filters.fromDate)
-      predicates.push(
-        `orders.created_at >= ${parameter(`${input.filters.fromDate}T00:00:00.000Z`)}::timestamptz`,
-      );
-    if (input.filters.toDate)
-      predicates.push(
-        `orders.created_at < (${parameter(`${input.filters.toDate}T00:00:00.000Z`)}::timestamptz + interval '1 day')`,
-      );
-    if (input.after)
-      predicates.push(
-        `(orders.created_at, orders.id) < (${parameter(input.after.createdAt)}, ${parameter(input.after.orderId)}::uuid)`,
-      );
+    }
     const where =
       predicates.length > 0 ? `WHERE ${predicates.join(" AND ")}` : "";
-    const result = await this.database.query<OrderSummaryRow>(
-      `${summarySelect} ${where} ORDER BY orders.created_at DESC, orders.id DESC LIMIT ${parameter(input.limit + 1)}`,
-      values,
-    );
+    const orderDirection = queryAscending ? "ASC" : "DESC";
+    const [result, total, metrics] = await Promise.all([
+      this.database.query<OrderSummaryRow>(
+        `${summarySelect} ${where} ORDER BY orders.created_at ${orderDirection}, orders.id ${orderDirection} LIMIT ${parameter(input.limit + 1)}`,
+        listValues,
+      ),
+      this.database.query<{ readonly total_count: string }>(
+        `SELECT count(*)::text AS total_count FROM keycore_orders orders LEFT JOIN keycore_customers customer ON customer.id = orders.customer_id JOIN products product ON product.id = orders.product_id ${filtered.where}`,
+        filtered.values,
+      ),
+      this.database.query<{
+        readonly total_orders: string;
+        readonly attention_orders: string;
+        readonly processing_orders: string;
+        readonly failed_orders: string;
+      }>(
+        `
+          SELECT
+            count(*)::text AS total_orders,
+            count(*) FILTER (WHERE orders.status = 'MANUAL_REVIEW' OR orders.risk_status = 'REVIEW_REQUIRED')::text AS attention_orders,
+            count(*) FILTER (WHERE orders.status IN ('PAYMENT_CAPTURED', 'PROCUREMENT_PENDING', 'PROCUREMENT_IN_PROGRESS', 'FULFILLMENT_PENDING'))::text AS processing_orders,
+            count(*) FILTER (WHERE orders.status = 'FAILED')::text AS failed_orders
+          FROM keycore_orders orders
+          LEFT JOIN keycore_customers customer ON customer.id = orders.customer_id
+          JOIN products product ON product.id = orders.product_id
+          ${base.where}
+        `,
+        base.values,
+      ),
+    ]);
     const hasNext = result.rows.length > input.limit;
-    const rows = result.rows.slice(0, input.limit);
+    const selected = result.rows.slice(0, input.limit);
+    const rows =
+      input.cursorDirection === "PREVIOUS" ? selected.reverse() : selected;
+    const first = rows[0];
     const last = rows.at(-1);
+    const hasPreviousPage =
+      input.cursorDirection === "NEXT" ? Boolean(input.cursor) : hasNext;
+    const hasNextPage =
+      input.cursorDirection === "PREVIOUS" ? Boolean(input.cursor) : hasNext;
+    const metricRow = required(metrics.rows[0]);
     return {
+      metrics: {
+        attentionOrders: Number(metricRow.attention_orders),
+        failedOrders: Number(metricRow.failed_orders),
+        processingOrders: Number(metricRow.processing_orders),
+        totalOrders: Number(metricRow.total_orders),
+      },
       orders: rows.map(mapOrderSummary),
-      ...(hasNext && last
+      totalCount: Number(required(total.rows[0]).total_count),
+      ...(hasNextPage && last
         ? {
             nextCursor: {
               createdAt: last.created_at,
               orderId: orderId(last.id),
+            },
+          }
+        : {}),
+      ...(hasPreviousPage && first
+        ? {
+            previousCursor: {
+              createdAt: first.created_at,
+              orderId: orderId(first.id),
             },
           }
         : {}),
@@ -737,6 +774,7 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
           orders.id::text,
           COALESCE(customer.email_normalized, orders.checkout_email_normalized) AS customer_email,
           product.title AS product_title,
+          product.platform AS product_platform,
           orders.quantity,
           orders.customer_amount_minor::text,
           orders.currency,
@@ -815,6 +853,7 @@ const summarySelect = `
     orders.id::text,
     COALESCE(customer.email_normalized, orders.checkout_email_normalized) AS customer_email,
     product.title AS product_title,
+    product.platform AS product_platform,
     orders.quantity,
     orders.customer_amount_minor::text,
     orders.currency,
@@ -860,6 +899,67 @@ const detailJoins = `
   ) claim ON true
 `;
 
+const orderFilterSql = (
+  filters: AdminOrderFilters,
+  includeOperationalView: boolean,
+): {
+  readonly predicates: readonly string[];
+  readonly values: readonly unknown[];
+  readonly where: string;
+} => {
+  const values: unknown[] = [];
+  const predicates: string[] = [];
+  const parameter = (value: unknown): string => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+  if (filters.exactOrderId)
+    predicates.push(`orders.id = ${parameter(filters.exactOrderId)}::uuid`);
+  if (filters.exactCustomerEmail)
+    predicates.push(
+      `COALESCE(customer.email_normalized, orders.checkout_email_normalized) = ${parameter(filters.exactCustomerEmail)}`,
+    );
+  if (filters.status)
+    predicates.push(`orders.status = ${parameter(filters.status)}`);
+  if (filters.paymentStatus)
+    predicates.push(
+      `orders.payment_status = ${parameter(filters.paymentStatus)}`,
+    );
+  if (filters.riskStatus)
+    predicates.push(`orders.risk_status = ${parameter(filters.riskStatus)}`);
+  if (filters.procurementStatus)
+    predicates.push(
+      `orders.procurement_status = ${parameter(filters.procurementStatus)}`,
+    );
+  if (filters.fulfillmentStatus)
+    predicates.push(
+      `orders.fulfillment_status = ${parameter(filters.fulfillmentStatus)}`,
+    );
+  if (filters.fromDate)
+    predicates.push(
+      `orders.created_at >= ${parameter(`${filters.fromDate}T00:00:00.000Z`)}::timestamptz`,
+    );
+  if (filters.toDate)
+    predicates.push(
+      `orders.created_at < (${parameter(`${filters.toDate}T00:00:00.000Z`)}::timestamptz + interval '1 day')`,
+    );
+  if (includeOperationalView && filters.operationalView === "ATTENTION")
+    predicates.push(
+      "(orders.status = 'MANUAL_REVIEW' OR orders.risk_status = 'REVIEW_REQUIRED')",
+    );
+  if (includeOperationalView && filters.operationalView === "PROCESSING")
+    predicates.push(
+      "orders.status IN ('PAYMENT_CAPTURED', 'PROCUREMENT_PENDING', 'PROCUREMENT_IN_PROGRESS', 'FULFILLMENT_PENDING')",
+    );
+  if (includeOperationalView && filters.operationalView === "FAILED")
+    predicates.push("orders.status = 'FAILED'");
+  return {
+    predicates,
+    values,
+    where: predicates.length > 0 ? `WHERE ${predicates.join(" AND ")}` : "",
+  };
+};
+
 const mapOrderSummary = (row: OrderSummaryRow) => ({
   amountMinor: row.customer_amount_minor,
   createdAt: row.created_at,
@@ -870,6 +970,7 @@ const mapOrderSummary = (row: OrderSummaryRow) => ({
   paymentStatus: row.payment_status,
   procurementStatus: row.procurement_status,
   productTitle: row.product_title,
+  productPlatform: row.product_platform,
   quantity: row.quantity,
   riskStatus: row.risk_status,
   status: row.status,

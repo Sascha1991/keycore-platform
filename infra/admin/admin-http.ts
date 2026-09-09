@@ -210,7 +210,7 @@ export class AdminHttpController {
         request.path,
       );
       if (request.method === "GET" && detailMatch?.[1])
-        return await this.orderDetail(principal, detailMatch[1]);
+        return await this.orderDetail(principal, detailMatch[1], request.query);
       const delayedMatch =
         /^\/admin\/orders\/([0-9a-f-]{36})\/staging-fulfillment$/iu.exec(
           request.path,
@@ -382,9 +382,16 @@ export class AdminHttpController {
     rejectDuplicateParameters(request.query, [
       "search",
       "status",
+      "payment",
+      "risk",
+      "procurement",
+      "fulfillment",
       "from",
       "to",
       "cursor",
+      "direction",
+      "limit",
+      "sort",
       "view",
     ]);
     const result = await this.orders.list(
@@ -395,9 +402,12 @@ export class AdminHttpController {
     return this.render(
       200,
       `
-      ${pageActionBar("Bestellungen", "Alle Bestellungen und ihre getrennten Zahlungs-, Risiko-, Beschaffungs- und Auslieferungszustände.", searchForm(request.query, true))}
-      ${orderViewNotice(request.query.get("view"))}${searchForm(request.query, false)}
-      <section class="content-section orders-section"><div class="section-heading"><h2>Ergebnisse</h2><span>${result.orders.length} Einträge</span></div>${ordersTable(result.orders)}${pagination(result, request.query)}</section>
+      ${pageActionBar("Bestellungen", "Alle Bestellungen und ihre getrennten Zahlungs-, Risiko-, Beschaffungs- und Auslieferungszustände.", orderActionBar(request.query))}
+      ${orderMetrics(result, request.query)}
+      ${orderViewNotice(request.query.get("view"))}
+      ${activeOrderFilters(request.query)}
+      ${orderFilterPanel(request.query)}
+      <section class="content-section orders-section flush"><div class="section-heading"><div><h2>Bestellungen</h2><span>${result.totalCount} Ergebnis${result.totalCount === 1 ? "" : "se"}</span></div>${orderResultControls(request.query, result)}</div>${ordersTable(result.orders, request.query)}${pagination(result, request.query)}</section>
     `,
       principal,
     );
@@ -406,7 +416,9 @@ export class AdminHttpController {
   private async orderDetail(
     principal: AdminPrincipal,
     targetOrderId: string,
+    query: URLSearchParams,
   ): Promise<AdminHttpResponse> {
+    rejectDuplicateParameters(query, ["return"]);
     const detail = await this.orders.detail(
       principal,
       targetOrderId,
@@ -442,6 +454,7 @@ export class AdminHttpController {
           detail.procurementStatus === "NOT_STARTED" &&
           detail.fulfillmentStatus === "NOT_STARTED",
         hasAdminCapability(principal, "SUPPLIER_VIEW"),
+        safeOrderReturnPath(query.get("return")),
       ),
       principal,
     );
@@ -1028,7 +1041,7 @@ const page = (
   additionalHeaders: Readonly<Record<string, string>> = {},
   csrfSecret?: string,
 ): AdminHttpResponse => ({
-  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.3"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
+  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.4"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
   headers: securityHeaders(additionalHeaders),
   statusCode,
 });
@@ -1072,12 +1085,14 @@ type AdminIconName =
   | "database"
   | "euro"
   | "failure"
+  | "filter"
   | "file"
   | "headset"
   | "home"
   | "logout"
   | "package"
   | "refresh"
+  | "search"
   | "server"
   | "settings"
   | "shield"
@@ -1111,6 +1126,8 @@ const iconSprite = (): string => `<svg class="icon-sprite" aria-hidden="true">
   <symbol id="icon-alert" viewBox="0 0 24 24"><path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5M12 18h.01"/></symbol>
   <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/></symbol>
   <symbol id="icon-failure" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
+  <symbol id="icon-filter" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8L3 5Z"/></symbol>
+  <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
   <symbol id="icon-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></symbol>
   <symbol id="icon-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></symbol>
   <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></symbol>
@@ -1214,17 +1231,49 @@ const optional = (query: URLSearchParams, name: string): string | undefined => {
   return value === null || value === "" ? undefined : value;
 };
 
+const safeOrderReturnPath = (value: string | null): string => {
+  if (!value || value.length > 2048) return "/admin/orders";
+  try {
+    const parsed = new URL(value, "https://admin.invalid");
+    if (
+      parsed.origin !== "https://admin.invalid" ||
+      parsed.pathname !== "/admin/orders"
+    )
+      return "/admin/orders";
+    const allowed = new Set([...orderQueryKeys, "cursor", "direction"]);
+    if ([...parsed.searchParams.keys()].some((key) => !allowed.has(key)))
+      return "/admin/orders";
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return "/admin/orders";
+  }
+};
+
 const compactQuery = (query: URLSearchParams) => {
   const cursor = optional(query, "cursor");
+  const cursorDirection = optional(query, "direction");
   const fromDate = optional(query, "from");
+  const fulfillmentStatus = optional(query, "fulfillment");
+  const limitValue = optional(query, "limit");
+  const paymentStatus = optional(query, "payment");
+  const procurementStatus = optional(query, "procurement");
+  const riskStatus = optional(query, "risk");
   const search = optional(query, "search");
+  const sort = optional(query, "sort");
   const status = optional(query, "status");
   const toDate = optional(query, "to");
   const operationalView = optional(query, "view");
   return {
     ...(cursor ? { cursor } : {}),
+    ...(cursorDirection ? { cursorDirection } : {}),
     ...(fromDate ? { fromDate } : {}),
+    ...(fulfillmentStatus ? { fulfillmentStatus } : {}),
+    ...(limitValue ? { limit: Number(limitValue) } : {}),
+    ...(paymentStatus ? { paymentStatus } : {}),
+    ...(procurementStatus ? { procurementStatus } : {}),
+    ...(riskStatus ? { riskStatus } : {}),
     ...(search ? { search } : {}),
+    ...(sort ? { sort } : {}),
     ...(status ? { status } : {}),
     ...(toDate ? { toDate } : {}),
     ...(operationalView ? { operationalView } : {}),
@@ -1322,20 +1371,133 @@ const recentOrdersTable = (
 
 const ordersTable = (
   orders: readonly AdminOrderListResult["orders"][number][],
+  query: URLSearchParams,
 ): string =>
   orders.length === 0
-    ? '<div class="empty-state"><strong>Keine Bestellungen gefunden</strong><p>Die gewählten Filter liefern keine Ergebnisse.</p></div>'
-    : `<div class="table-wrap"><table class="orders-table"><thead><tr><th scope="col">Bestellung</th><th scope="col">Kunde</th><th scope="col">Produkt</th><th scope="col">Betrag</th><th scope="col">Zahlung</th><th scope="col">Risiko</th><th scope="col">Beschaffung</th><th scope="col">Auslieferung</th><th scope="col">Status</th><th scope="col">Datum</th></tr></thead><tbody>${orders.map((order) => `<tr><td data-label="Bestellung" class="order-reference"><a href="/admin/orders/${order.orderId}">${escapeHtml(order.orderId)}</a></td><td data-label="Kunde" class="customer-reference">${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}</td><td data-label="Produkt">${escapeHtml(order.productTitle)} × ${order.quantity}</td><td data-label="Betrag">${escapeHtml(formatMinor(order.amountMinor, order.currency))}</td><td data-label="Zahlung"><span class="status status-${escapeHtml(order.paymentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.paymentStatus))}</span></td><td data-label="Risiko"><span class="status status-${escapeHtml(order.riskStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.riskStatus))}</span></td><td data-label="Beschaffung"><span class="status status-${escapeHtml(order.procurementStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.procurementStatus))}</span></td><td data-label="Auslieferung"><span class="status status-${escapeHtml(order.fulfillmentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.fulfillmentStatus))}</span></td><td data-label="Status"><span class="status status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(adminStatusLabel(order.status))}</span></td><td data-label="Datum">${escapeHtml(formatDate(order.createdAt))}</td></tr>`).join("")}</tbody></table></div>`;
+    ? `<div class="empty-state order-empty-state">${icon("cart")}<div><strong>Keine Bestellungen gefunden</strong><p>Die aktuelle Suche oder Filterauswahl liefert keine Ergebnisse.</p><a href="/admin/orders">Alle Bestellungen anzeigen</a></div></div>`
+    : `<div class="table-wrap orders-table-wrap"><table class="orders-table"><thead><tr><th scope="col">Bestellung</th><th scope="col">Kunde</th><th scope="col">Produkt</th><th scope="col">Betrag</th><th scope="col">Zahlung</th><th scope="col">Risiko</th><th scope="col">Beschaffung</th><th scope="col">Auslieferung</th><th scope="col">Status</th><th scope="col">Datum</th><th scope="col"><span class="sr-only">Aktion</span></th></tr></thead><tbody>${orders
+        .map((order) => {
+          const returnTo = `/admin/orders${query.toString() ? `?${query.toString()}` : ""}`;
+          const detail = `/admin/orders/${order.orderId}?return=${encodeURIComponent(returnTo)}`;
+          return `<tr><td data-label="Bestellung" class="order-reference"><a href="${escapeHtml(detail)}" title="${escapeHtml(order.orderId)}">${escapeHtml(compactOrderId(order.orderId))}</a></td><td data-label="Kunde" class="customer-reference" title="${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}">${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}</td><td data-label="Produkt"><span class="product-cell"><span class="product-media">${icon("package")}</span><span class="cell-stack"><strong>${escapeHtml(order.productTitle)}</strong><small>${escapeHtml(adminStatusLabel(order.productPlatform))} · Menge ${order.quantity}</small></span></span></td><td data-label="Betrag" class="amount-cell">${escapeHtml(formatMinor(order.amountMinor, order.currency))}</td><td data-label="Zahlung"><span class="status status-${escapeHtml(order.paymentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.paymentStatus))}</span></td><td data-label="Risiko"><span class="status status-${escapeHtml(order.riskStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.riskStatus))}</span></td><td data-label="Beschaffung"><span class="status status-${escapeHtml(order.procurementStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.procurementStatus))}</span></td><td data-label="Auslieferung"><span class="status status-${escapeHtml(order.fulfillmentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.fulfillmentStatus))}</span></td><td data-label="Status"><span class="status status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(adminStatusLabel(order.status))}</span></td><td data-label="Datum" class="date-cell">${escapeHtml(formatDate(order.createdAt))}</td><td data-label="Aktion"><a class="row-action" href="${escapeHtml(detail)}" aria-label="Bestellung ${escapeHtml(order.orderId)} öffnen">Öffnen ${icon("arrow")}</a></td></tr>`;
+        })
+        .join("")}</tbody></table></div>`;
 
-const searchForm = (query: URLSearchParams, compact: boolean): string => {
-  const view = query.get("view");
-  const hiddenView = view
-    ? `<input type="hidden" name="view" value="${escapeHtml(view)}">`
-    : "";
-  const search = `<form class="page-search" method="get" action="/admin/orders">${hiddenView}<label for="order-search">Bestellungen durchsuchen</label><input id="order-search" type="search" name="search" maxlength="254" placeholder="Bestell-ID oder Kunden-E-Mail" value="${escapeHtml(query.get("search") ?? "")}"><button class="button" type="submit">Suchen</button></form>`;
-  if (compact)
-    return `${search}<a class="button-quiet" href="#order-filter">Filter</a><span class="button-disabled" aria-disabled="true" title="Ein sicherer gefilterter Export ist noch nicht angebunden">Export</span>`;
-  return `<details class="filter-panel" id="order-filter"${query.has("status") || query.has("from") || query.has("to") ? " open" : ""}><summary>Detailfilter</summary><form class="filter-bar" method="get" action="/admin/orders">${hiddenView}<input type="hidden" name="search" value="${escapeHtml(query.get("search") ?? "")}"><label>Status<select name="status"><option value="">Alle</option>${adminOrderStatuses.map((status) => `<option value="${status}"${query.get("status") === status ? " selected" : ""}>${escapeHtml(adminStatusLabel(status))}</option>`).join("")}</select></label><label>Von<input type="date" name="from" value="${escapeHtml(query.get("from") ?? "")}"></label><label>Bis<input type="date" name="to" value="${escapeHtml(query.get("to") ?? "")}"></label><button type="submit">Filter anwenden</button><a class="reset-link" href="/admin/orders">Filter zurücksetzen</a></form></details>`;
+const orderQueryKeys = [
+  "search",
+  "status",
+  "payment",
+  "risk",
+  "procurement",
+  "fulfillment",
+  "from",
+  "to",
+  "view",
+  "limit",
+  "sort",
+] as const;
+
+const hiddenOrderQuery = (
+  query: URLSearchParams,
+  excluded: readonly string[],
+): string =>
+  orderQueryKeys
+    .filter((name) => !excluded.includes(name) && query.has(name))
+    .map(
+      (name) =>
+        `<input type="hidden" name="${name}" value="${escapeHtml(query.get(name) ?? "")}">`,
+    )
+    .join("");
+
+const orderHrefWithout = (
+  query: URLSearchParams,
+  removed: readonly string[],
+): string => {
+  const next = new URLSearchParams(query);
+  for (const name of [...removed, "cursor", "direction"]) next.delete(name);
+  return `/admin/orders${next.toString() ? `?${next.toString()}` : ""}`;
+};
+
+const orderActionBar = (query: URLSearchParams): string => {
+  const activeFilterCount = [
+    "status",
+    "payment",
+    "risk",
+    "procurement",
+    "fulfillment",
+    "from",
+    "to",
+  ].filter((name) => query.has(name)).length;
+  const searchValue = query.get("search") ?? "";
+  return `<form class="page-search order-search" method="get" action="/admin/orders">${hiddenOrderQuery(query, ["search"])}<label for="order-search">Bestellungen durchsuchen</label><span class="search-field">${icon("search")}<input id="order-search" type="search" name="search" maxlength="254" placeholder="Exakte Bestell-ID oder Kunden-E-Mail" value="${escapeHtml(searchValue)}"></span><button class="button" type="submit">Suchen</button>${searchValue ? `<a class="search-clear" href="${escapeHtml(orderHrefWithout(query, ["search"]))}" aria-label="Suche zurücksetzen">Zurücksetzen</a>` : ""}</form><a class="button-quiet filter-trigger${activeFilterCount > 0 ? " is-active" : ""}" href="#order-filter">${icon("filter")} Filter${activeFilterCount > 0 ? ` <span>${activeFilterCount}</span>` : ""}</a><span class="button-disabled" aria-disabled="true" title="Ein sicherer vollständiger gefilterter Export ist noch nicht angebunden">${icon("file")} Export</span>`;
+};
+
+const orderFilterPanel = (query: URLSearchParams): string => {
+  const active = [
+    "status",
+    "payment",
+    "risk",
+    "procurement",
+    "fulfillment",
+    "from",
+    "to",
+  ].some((name) => query.has(name));
+  const options = (name: string, values: readonly string[]): string =>
+    `<option value="">Alle</option>${values.map((value) => `<option value="${value}"${query.get(name) === value ? " selected" : ""}>${escapeHtml(adminStatusLabel(value))}</option>`).join("")}`;
+  const resetHref = orderHrefWithout(query, [
+    "status",
+    "payment",
+    "risk",
+    "procurement",
+    "fulfillment",
+    "from",
+    "to",
+  ]);
+  return `<details class="filter-panel order-filter-panel" id="order-filter"${active ? " open" : ""}><summary>${icon("filter")} Filter${active ? " · aktiv" : ""}</summary><form class="order-filter-grid" method="get" action="/admin/orders">${hiddenOrderQuery(query, ["status", "payment", "risk", "procurement", "fulfillment", "from", "to"])}<label>Bestellstatus<select name="status">${options("status", adminOrderStatuses)}</select></label><label>Zahlung<select name="payment">${options("payment", ["NOT_STARTED", "PENDING", "AUTHORIZED", "CAPTURED", "FAILED", "CANCELLED", "REFUNDED", "PARTIALLY_REFUNDED"])}</select></label><label>Risiko<select name="risk">${options("risk", ["NOT_EVALUATED", "APPROVED", "REVIEW_REQUIRED", "REJECTED"])}</select></label><label>Beschaffung<select name="procurement">${options("procurement", ["NOT_STARTED", "PENDING", "IN_PROGRESS", "SUCCEEDED", "FAILED_RETRYABLE", "FAILED_TERMINAL", "AMBIGUOUS"])}</select></label><label>Auslieferung<select name="fulfillment">${options("fulfillment", ["NOT_STARTED", "PENDING", "SUCCEEDED", "FAILED", "MANUAL_REVIEW"])}</select></label><label>Von<input type="date" name="from" value="${escapeHtml(query.get("from") ?? "")}"></label><label>Bis<input type="date" name="to" value="${escapeHtml(query.get("to") ?? "")}"></label><div class="filter-actions"><button type="submit">Anwenden</button><a class="reset-link" href="${escapeHtml(resetHref)}">Zurücksetzen</a></div></form></details>`;
+};
+
+const orderMetrics = (
+  result: AdminOrderListResult,
+  query: URLSearchParams,
+): string => {
+  const href = (view?: string): string => {
+    const next = new URLSearchParams(query);
+    next.delete("cursor");
+    next.delete("direction");
+    if (view) next.set("view", view);
+    else next.delete("view");
+    return `/admin/orders${next.toString() ? `?${next.toString()}` : ""}`;
+  };
+  const selected = query.get("view");
+  return `<section class="metric-grid orders-metrics" aria-label="Bestellkennzahlen">${metric("Bestellungen", result.metrics.totalOrders, { href: href(), iconName: "cart", detail: "Aktueller Filterumfang", selected: !selected })}${metric("Aufmerksamkeit", result.metrics.attentionOrders, { href: href("ATTENTION"), iconName: "alert", detail: "Manuelle Prüfung", selected: selected === "ATTENTION" })}${metric("In Bearbeitung", result.metrics.processingOrders, { href: href("PROCESSING"), iconName: "clock", detail: "Aktive Abwicklung", selected: selected === "PROCESSING" })}${metric("Fehlgeschlagen", result.metrics.failedOrders, { href: href("FAILED"), iconName: "failure", detail: "Terminale Vorgänge", selected: selected === "FAILED" })}</section>`;
+};
+
+const activeOrderFilters = (query: URLSearchParams): string => {
+  const labels: Readonly<Record<string, string>> = {
+    from: "Von",
+    fulfillment: "Auslieferung",
+    payment: "Zahlung",
+    procurement: "Beschaffung",
+    risk: "Risiko",
+    status: "Status",
+    to: "Bis",
+  };
+  const entries = Object.entries(labels).filter(([name]) => query.has(name));
+  if (entries.length === 0 && !query.has("search")) return "";
+  const values = [
+    ...(query.has("search")
+      ? [
+          `<span><strong>Suche:</strong> ${escapeHtml(query.get("search") ?? "")}</span>`,
+        ]
+      : []),
+    ...entries.map(([name, label]) => {
+      const value = query.get(name) ?? "";
+      const shown =
+        name === "from" || name === "to" ? value : adminStatusLabel(value);
+      return `<span><strong>${label}:</strong> ${escapeHtml(shown)}</span>`;
+    }),
+  ];
+  return `<div class="active-filters" aria-label="Aktive Filter">${values.join("")}<a href="/admin/orders">Alle zurücksetzen</a></div>`;
 };
 
 const orderViewNotice = (view: string | null): string => {
@@ -1353,11 +1515,27 @@ const pagination = (
   result: AdminOrderListResult,
   query: URLSearchParams,
 ): string => {
-  if (!result.nextCursorValue) return "";
-  const next = new URLSearchParams(query);
-  next.set("cursor", result.nextCursorValue);
-  return `<a class="pagination" href="/admin/orders?${escapeHtml(next.toString())}">Weitere Bestellungen</a>`;
+  if (!result.nextCursorValue && !result.previousCursorValue) return "";
+  const link = (
+    label: string,
+    cursor: string | undefined,
+    direction: "NEXT" | "PREVIOUS",
+  ): string => {
+    if (!cursor)
+      return `<span class="pagination-disabled" aria-disabled="true">${label}</span>`;
+    const next = new URLSearchParams(query);
+    next.set("cursor", cursor);
+    next.set("direction", direction);
+    return `<a class="pagination" href="/admin/orders?${escapeHtml(next.toString())}">${label}</a>`;
+  };
+  return `<nav class="order-pagination" aria-label="Bestellseiten">${link("Zurück", result.previousCursorValue, "PREVIOUS")}<span>${result.orders.length} von ${result.totalCount} in dieser Ansicht</span>${link("Weiter", result.nextCursorValue, "NEXT")}</nav>`;
 };
+
+const orderResultControls = (
+  query: URLSearchParams,
+  result: AdminOrderListResult,
+): string =>
+  `<form class="result-controls" method="get" action="/admin/orders">${hiddenOrderQuery(query, ["limit", "sort"])}<label>Sortierung<select name="sort"><option value="NEWEST"${result.sort === "NEWEST" ? " selected" : ""}>Neueste zuerst</option><option value="OLDEST"${result.sort === "OLDEST" ? " selected" : ""}>Älteste zuerst</option></select></label><label>Pro Seite<select name="limit">${[10, 25, 50].map((value) => `<option value="${value}"${result.limit === value ? " selected" : ""}>${value}</option>`).join("")}</select></label><button class="button-quiet" type="submit">Übernehmen</button></form>`;
 
 const operationalFilter = (
   action: string,
@@ -1406,7 +1584,7 @@ const customerDetailContent = (
   customer: AdminCustomerSummary,
   orders: AdminOrderListResult,
 ): string =>
-  `${pageActionBar(customer.email, "Kundendetail und zugeordnete Bestellhistorie.", '<a class="button-quiet" href="/admin/customers">Zurück zu Kunden</a>')}<section class="state-strip" aria-label="Kundenstatus"><div><span>Verifizierung</span><strong>${escapeHtml(operationalLabel(customer.verificationState))}</strong></div><div><span>Bestellungen</span><strong>${customer.orderCount}</strong></div><div><span>Registriert</span><strong>${escapeHtml(formatDate(customer.createdAt))}</strong></div><div><span>Letzte Bestellung</span><strong>${customer.lastOrderAt ? escapeHtml(formatDate(customer.lastOrderAt)) : "Keine"}</strong></div></section><section class="content-section"><div class="section-heading"><h2>Bestellverlauf</h2><span>Maximal 25 aktuelle Einträge</span></div>${ordersTable(orders.orders)}</section><p class="page-note">Authentifizierungsdaten, Sitzungen und Verifizierungsnachweise werden in dieser Ansicht nicht ausgegeben.</p>`;
+  `${pageActionBar(customer.email, "Kundendetail und zugeordnete Bestellhistorie.", '<a class="button-quiet" href="/admin/customers">Zurück zu Kunden</a>')}<section class="state-strip" aria-label="Kundenstatus"><div><span>Verifizierung</span><strong>${escapeHtml(operationalLabel(customer.verificationState))}</strong></div><div><span>Bestellungen</span><strong>${customer.orderCount}</strong></div><div><span>Registriert</span><strong>${escapeHtml(formatDate(customer.createdAt))}</strong></div><div><span>Letzte Bestellung</span><strong>${customer.lastOrderAt ? escapeHtml(formatDate(customer.lastOrderAt)) : "Keine"}</strong></div></section><section class="content-section"><div class="section-heading"><h2>Bestellverlauf</h2><span>Maximal 25 aktuelle Einträge</span></div>${ordersTable(orders.orders, new URLSearchParams())}</section><p class="page-note">Authentifizierungsdaten, Sitzungen und Verifizierungsnachweise werden in dieser Ansicht nicht ausgegeben.</p>`;
 
 const productListContent = (
   result: AdminOperationsListResult<AdminProductSummary>,
@@ -1628,8 +1806,9 @@ const orderDetailContent = (
   delayedCsrf: string,
   delayedEligible: boolean,
   canViewSupplier: boolean,
+  returnPath: string,
 ): string =>
-  `<header class="page-heading"><p>Bestelldetails</p><h1>${escapeHtml(order.orderId)}</h1></header><section class="state-strip" aria-label="Bestellzustände">${stateItem("Zahlung", order.paymentStatus)}${stateItem("Risiko", order.riskStatus)}${stateItem("Beschaffung", order.procurementStatus)}${stateItem("Auslieferung", order.fulfillmentStatus)}</section><section class="detail-grid"><article><h2>Bestellung</h2>${detailRow("Produkt", order.productTitle)}${detailRow("Menge", String(order.quantity))}${detailRow("Kunde", order.customerEmail ?? "Nicht verfügbar")}${detailRow("Betrag", formatMinor(order.amountMinor, order.currency))}${detailRow("Status", adminStatusLabel(order.status))}${detailRow("Angelegt", formatDate(order.createdAt))}${detailRow("Aktualisiert", formatDate(order.updatedAt))}</article><article><h2>Operativer Kontext</h2>${detailRow("Gastbestellungs-Zuordnung", adminStatusLabel(order.guestClaimStatus))}${detailRow("Rechnung", adminStatusLabel(order.invoiceStatus))}${canViewSupplier ? `${detailRow("Lieferant", order.supplierId ?? "Nicht verfügbar")}${detailRow("Lieferantenbestellung", order.externalSupplierOrderId ?? "Nicht verfügbar")}` : ""}${detailRow("Abrufstatus", order.retrievalState ? adminStatusLabel(order.retrievalState) : "Nicht verfügbar")}${detailRow("Zustellstatus", order.deliveryState ? adminStatusLabel(order.deliveryState) : "Nicht verfügbar")}</article></section>${delayedEligible ? `<section class="content-section sensitive"><div class="section-heading"><div><p>Synthetischer Staging-Vorgang</p><h2>Verzögerte Auslieferung abschließen</h2></div></div><p>Dieser Vorgang nutzt keine Lieferantenverbindung und erzeugt ausschließlich verschlüsseltes synthetisches Testmaterial.</p><form method="post" action="${escapeHtml(delayedPath)}"><input type="hidden" name="csrf" value="${escapeHtml(delayedCsrf)}"><input type="hidden" name="confirm" value="SYNTHETIC_DELAYED_FULFILLMENT"><button type="submit">Synthetische Auslieferung bestätigen</button></form></section>` : ""}<section class="content-section sensitive"><div class="section-heading"><div><p>Sensibler Vorgang</p><h2>Produktschlüssel</h2></div></div><p>${order.encryptedSecretAvailable ? "Verschlüsseltes Material ist vorhanden. Eine Offenlegung ist nur über den kontrollierten separaten Vorgang möglich." : "Für diese Bestellung ist kein verschlüsseltes Material verfügbar."}</p><form method="post" action="${escapeHtml(revealPath)}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit"${order.encryptedSecretAvailable ? "" : " disabled"}>Kontrollierten Zugriff anfordern</button></form></section><section class="content-section"><div class="section-heading"><h2>Statushistorie</h2></div>${order.history.length === 0 ? '<div class="empty-state"><strong>Keine Statushistorie verfügbar</strong></div>' : `<ol class="timeline">${order.history.map((entry) => `<li><strong>${escapeHtml(adminStatusLabel(entry.toStatus))}</strong><span>${escapeHtml(adminAuditCodeLabel(entry.reasonCode))} · ${escapeHtml(formatDate(entry.occurredAt))}</span></li>`).join("")}</ol>`}</section>`;
+  `${pageActionBar("Bestellung", `Bestelldetail ${compactOrderId(order.orderId)}`, `<a class="button-quiet" href="${escapeHtml(returnPath)}">← Zurück zu Bestellungen</a>`)}<section class="order-detail-identity"><span class="product-media">${icon("package")}</span><div><h2>${escapeHtml(order.productTitle)}</h2><p>${escapeHtml(adminStatusLabel(order.productPlatform))} · Menge ${order.quantity}</p></div><span class="status status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(adminStatusLabel(order.status))}</span></section><section class="state-strip" aria-label="Bestellzustände">${stateItem("Zahlung", order.paymentStatus)}${stateItem("Risiko", order.riskStatus)}${stateItem("Beschaffung", order.procurementStatus)}${stateItem("Auslieferung", order.fulfillmentStatus)}</section><section class="detail-grid"><article><h2>Bestellung</h2>${detailRow("Bestell-ID", order.orderId)}${detailRow("Kunde", order.customerEmail ?? "Nicht verfügbar")}${detailRow("Betrag", formatMinor(order.amountMinor, order.currency))}${detailRow("Angelegt", formatDate(order.createdAt))}${detailRow("Aktualisiert", formatDate(order.updatedAt))}</article><article><h2>Operativer Kontext</h2>${detailRow("Gastbestellungs-Zuordnung", adminStatusLabel(order.guestClaimStatus))}${detailRow("Rechnung", adminStatusLabel(order.invoiceStatus))}${canViewSupplier ? `${detailRow("Lieferant", order.supplierId ?? "Nicht verfügbar")}${detailRow("Lieferantenbestellung", order.externalSupplierOrderId ?? "Nicht verfügbar")}` : ""}${detailRow("Abrufstatus", order.retrievalState ? adminStatusLabel(order.retrievalState) : "Nicht verfügbar")}${detailRow("Zustellstatus", order.deliveryState ? adminStatusLabel(order.deliveryState) : "Nicht verfügbar")}</article></section>${delayedEligible ? `<section class="content-section sensitive"><div class="section-heading"><div><p>Synthetischer Staging-Vorgang</p><h2>Verzögerte Auslieferung abschließen</h2></div></div><p>Dieser Vorgang nutzt keine Lieferantenverbindung und erzeugt ausschließlich verschlüsseltes synthetisches Testmaterial.</p><form method="post" action="${escapeHtml(delayedPath)}"><input type="hidden" name="csrf" value="${escapeHtml(delayedCsrf)}"><input type="hidden" name="confirm" value="SYNTHETIC_DELAYED_FULFILLMENT"><button type="submit">Synthetische Auslieferung bestätigen</button></form></section>` : ""}<section class="content-section sensitive"><div class="section-heading"><div><p>Sensibler Vorgang</p><h2>Produktschlüssel</h2></div></div><p>${order.encryptedSecretAvailable ? "Verschlüsseltes Material ist vorhanden. Eine Offenlegung ist nur über den kontrollierten separaten Vorgang möglich." : "Für diese Bestellung ist kein verschlüsseltes Material verfügbar."}</p><form method="post" action="${escapeHtml(revealPath)}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit"${order.encryptedSecretAvailable ? "" : " disabled"}>Kontrollierten Zugriff anfordern</button></form></section><section class="content-section"><div class="section-heading"><h2>Statushistorie</h2></div>${order.history.length === 0 ? '<div class="empty-state"><strong>Keine Statushistorie verfügbar</strong></div>' : `<ol class="timeline">${order.history.map((entry) => `<li><strong>${escapeHtml(adminStatusLabel(entry.toStatus))}</strong><span>${escapeHtml(adminAuditCodeLabel(entry.reasonCode))} · ${escapeHtml(formatDate(entry.occurredAt))}</span></li>`).join("")}</ol>`}</section>`;
 const stateItem = (label: string, status: string): string =>
   `<div><span>${escapeHtml(label)}</span><strong class="status status-${escapeHtml(status.toLowerCase())}">${escapeHtml(operationalLabel(status))}</strong></div>`;
 const detailRow = (label: string, value: string): string =>

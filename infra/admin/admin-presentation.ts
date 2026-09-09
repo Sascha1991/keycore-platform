@@ -98,8 +98,17 @@ type AdminPresentationStatus =
   | "DEFAULT"
   | "DENY"
   | "GRANTED"
+  | "LINUX"
+  | "MACOS"
+  | "MOBILE"
+  | "NINTENDO"
   | "NONE"
-  | "UNKNOWN";
+  | "PC"
+  | "PLAYSTATION"
+  | "UNKNOWN"
+  | "WEB"
+  | "WINDOWS"
+  | "XBOX";
 
 export const adminStatusLabels = {
   ACTIVE: "Aktiv",
@@ -128,19 +137,25 @@ export const adminStatusLabels = {
   GRANTED: "Erteilt",
   IN_FLIGHT: "In Bearbeitung",
   IN_PROGRESS: "In Bearbeitung",
+  LINUX: "Linux",
+  MACOS: "macOS",
   MANUAL_REVIEW: "Manuelle Prüfung",
   MANUAL_REVIEW_REQUIRED: "Manuelle Prüfung erforderlich",
+  MOBILE: "Mobil",
+  NINTENDO: "Nintendo",
   NOT_AVAILABLE: "Nicht verfügbar",
   NOT_EVALUATED: "Nicht bewertet",
   NOT_READY: "Nicht bereit",
   NOT_STARTED: "Nicht begonnen",
   NONE: "Keine",
   PARTIALLY_REFUNDED: "Teilweise erstattet",
+  PC: "PC",
   PAYMENT_AUTHORIZED: "Zahlung autorisiert",
   PAYMENT_CAPTURED: "Zahlung erfasst",
   PENDING: "Ausstehend",
   PROCUREMENT_IN_PROGRESS: "Beschaffung läuft",
   PROCUREMENT_PENDING: "Beschaffung ausstehend",
+  PLAYSTATION: "PlayStation",
   READY: "Bereit",
   REFUND_PENDING: "Erstattung ausstehend",
   REFUNDED: "Erstattet",
@@ -151,6 +166,9 @@ export const adminStatusLabels = {
   REVOKED: "Widerrufen",
   SUCCEEDED: "Erfolgreich",
   UNKNOWN: "Unbekannt",
+  WEB: "Web",
+  WINDOWS: "Windows",
+  XBOX: "Xbox",
 } as const satisfies Readonly<Record<AdminPresentationStatus, string>>;
 
 type FixedAuditEventType = (typeof auditEventTypes)[number];

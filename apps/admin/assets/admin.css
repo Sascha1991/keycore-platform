@@ -1073,3 +1073,312 @@ td:first-child {
   }
   .status-overview a:last-child { border-bottom: 0; }
 }
+
+/* Human browser review correction 02: orders workspace and detail. */
+.orders-metrics {
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  margin-bottom: 1rem;
+}
+.order-search {
+  flex: 1 1 480px;
+  min-width: min(520px, 100%);
+}
+.search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.search-field .icon {
+  position: absolute;
+  left: 0.8rem;
+  color: #8fa2b5;
+  pointer-events: none;
+}
+.search-field input {
+  padding-left: 2.5rem;
+}
+.search-clear {
+  grid-column: 1 / -1;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+}
+.filter-trigger {
+  gap: 0.45rem;
+}
+.filter-trigger.is-active {
+  border-color: var(--blue);
+  color: #9dceff;
+}
+.filter-trigger span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 21px;
+  height: 21px;
+  border-radius: 999px;
+  background: var(--blue);
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+.order-filter-panel summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.order-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+}
+.order-filter-grid label,
+.result-controls label {
+  display: grid;
+  gap: 0.3rem;
+  color: #c9d2dd;
+  font-size: 0.76rem;
+}
+.order-filter-grid input,
+.order-filter-grid select,
+.result-controls select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--muted-surface);
+  color: var(--text);
+  padding: 0.5rem 0.6rem;
+}
+.filter-actions {
+  display: flex;
+  align-items: end;
+  gap: 0.5rem;
+}
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+.active-filters span {
+  border: 1px solid #315474;
+  border-radius: 999px;
+  background: #0b2235;
+  color: #c8d7e5;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.73rem;
+}
+.active-filters a {
+  margin-left: auto;
+  font-size: 0.76rem;
+}
+.orders-section > .section-heading {
+  align-items: end;
+  margin: 0;
+  padding-bottom: 1rem;
+}
+.orders-section > .section-heading > div:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+.orders-section > .section-heading > div:first-child span {
+  font-size: 0.75rem;
+}
+.result-controls {
+  display: flex;
+  align-items: end;
+  gap: 0.55rem;
+}
+.result-controls label {
+  min-width: 132px;
+}
+.result-controls label:nth-child(2) {
+  min-width: 90px;
+}
+.orders-table-wrap {
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+.orders-table {
+  min-width: 1260px;
+  table-layout: fixed;
+}
+.orders-table th,
+.orders-table td {
+  padding: 0.72rem 0.65rem;
+}
+.orders-table th:nth-child(1) {
+  width: 8%;
+}
+.orders-table th:nth-child(2) {
+  width: 13%;
+}
+.orders-table th:nth-child(3) {
+  width: 15%;
+}
+.orders-table th:nth-child(4) {
+  width: 7%;
+}
+.orders-table th:nth-child(5) {
+  width: 8%;
+}
+.orders-table th:nth-child(6) {
+  width: 8%;
+}
+.orders-table th:nth-child(7) {
+  width: 9%;
+}
+.orders-table th:nth-child(8) {
+  width: 9%;
+}
+.orders-table th:nth-child(9) {
+  width: 9%;
+}
+.orders-table th:nth-child(10) {
+  width: 8%;
+}
+.orders-table th:nth-child(11) {
+  width: 6%;
+}
+.orders-table td {
+  min-width: 0;
+  overflow: hidden;
+}
+.orders-table .status {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.orders-table .customer-reference,
+.orders-table .date-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orders-table .amount-cell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.orders-table .product-cell {
+  min-width: 0;
+}
+.orders-table .product-media,
+.order-detail-identity .product-media {
+  color: #8ac3ff;
+}
+.orders-table .product-media .icon,
+.order-detail-identity .product-media .icon {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+.order-pagination {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+.order-pagination > span:nth-child(2) {
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.76rem;
+}
+.order-pagination .pagination {
+  margin-top: 0;
+}
+.pagination-disabled {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: #657383;
+  padding: 0.45rem 0.75rem;
+}
+.order-empty-state {
+  display: flex;
+  align-items: start;
+  gap: 1rem;
+  margin: 0 1rem 1rem;
+}
+.order-empty-state > .icon {
+  width: 1.6rem;
+  height: 1.6rem;
+  color: #6eb2ff;
+}
+.order-empty-state p {
+  margin-top: 0.25rem;
+}
+.order-detail-identity {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  padding: 1rem;
+}
+.order-detail-identity h2,
+.order-detail-identity p {
+  margin: 0;
+}
+.order-detail-identity p {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+@media (max-width: 1180px) {
+  .orders-metrics {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+  .order-filter-grid {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+  .orders-section > .section-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+}
+@media (max-width: 768px) {
+  .orders-metrics,
+  .order-filter-grid {
+    grid-template-columns: 1fr;
+  }
+  .order-search {
+    min-width: 100%;
+  }
+  .result-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .result-controls label {
+    flex: 1 1 130px;
+  }
+  .orders-table tr {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .orders-table td:nth-child(1),
+  .orders-table td:nth-child(2),
+  .orders-table td:nth-child(3),
+  .orders-table td:nth-child(11) {
+    grid-column: 1 / -1;
+  }
+  .order-pagination {
+    grid-template-columns: 1fr 1fr;
+  }
+  .order-pagination > span:nth-child(2) {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  .order-detail-identity {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+  .order-detail-identity > .status {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}

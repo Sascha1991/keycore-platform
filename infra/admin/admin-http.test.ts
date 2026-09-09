@@ -186,6 +186,17 @@ describe("AdminHttpController", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('class="orders-table"');
+    expect(response.body).toContain('class="metric-grid orders-metrics"');
+    expect(response.body).toContain('id="order-filter"');
+    expect(response.body).toContain('name="payment"');
+    expect(response.body).toContain('name="risk"');
+    expect(response.body).toContain('name="procurement"');
+    expect(response.body).toContain('name="fulfillment"');
+    expect(response.body).toContain('name="sort"');
+    expect(response.body).toContain('name="limit"');
+    expect(response.body).toContain('href="#icon-filter"');
+    expect(response.body).toContain('href="#icon-search"');
+    expect(response.body).toContain("Exakte Bestell-ID oder Kunden-E-Mail");
     expect(response.body).toContain('<th scope="col">Bestellung</th>');
     for (const label of [
       "Bestellung",
@@ -200,6 +211,7 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain(targetOrderId);
     expect(response.body).toContain("customer@example.test");
     expect(response.body).toContain("Arena Eleven");
+    expect(response.body).toContain("Windows · Menge 1");
     expect(response.body).toContain("Auslieferung ausstehend");
     expect(response.body).toContain('value="PAYMENT_AUTHORIZED"');
     expect(response.body).toContain("Zahlung autorisiert");
@@ -231,13 +243,61 @@ describe("AdminHttpController", () => {
     expect(css).toMatch(
       /\.metric-icon \.icon\s*\{[^}]*display:\s*block[^}]*width:\s*28px[^}]*height:\s*28px/gu,
     );
+    expect(css).toContain(
+      "Human browser review correction 02: orders workspace and detail",
+    );
+    expect(css).toMatch(/\.orders-table\s*\{[^}]*table-layout:\s*fixed/gu);
+    expect(css).toMatch(/\.orders-table-wrap\s*\{[^}]*border-right:\s*0/gu);
+  });
+
+  it("preserves operational order filters and validates detail return navigation", async () => {
+    const controller = fixture();
+    const filtered = authenticated("GET", "/admin/orders");
+    filtered.query.set("view", "PROCESSING");
+    filtered.query.set("payment", "CAPTURED");
+    filtered.query.set("risk", "APPROVED");
+    filtered.query.set("procurement", "SUCCEEDED");
+    filtered.query.set("fulfillment", "PENDING");
+    filtered.query.set("sort", "OLDEST");
+    filtered.query.set("limit", "10");
+    const response = await controller.handle(filtered);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain(
+      'class="metric-card" href="/admin/orders?view=PROCESSING',
+    );
+    expect(response.body).toContain('aria-current="true"');
+    expect(response.body).toContain(
+      '<option value="CAPTURED" selected>Erfasst</option>',
+    );
+    expect(response.body).toContain(
+      '<option value="OLDEST" selected>Älteste zuerst</option>',
+    );
+    expect(response.body).toContain("<strong>Zahlung:</strong> Erfasst");
+    expect(response.body).toContain("1 Ergebnis");
+
+    const safeDetail = authenticated("GET", `/admin/orders/${targetOrderId}`);
+    safeDetail.query.set(
+      "return",
+      "/admin/orders?view=PROCESSING&payment=CAPTURED",
+    );
+    const safe = await controller.handle(safeDetail);
+    expect(safe.body).toContain(
+      'href="/admin/orders?view=PROCESSING&amp;payment=CAPTURED"',
+    );
+
+    const unsafeDetail = authenticated("GET", `/admin/orders/${targetOrderId}`);
+    unsafeDetail.query.set("return", "https://attacker.invalid/admin/orders");
+    const unsafe = await controller.handle(unsafeDetail);
+    expect(unsafe.body).toContain('href="/admin/orders"');
+    expect(unsafe.body).not.toContain("attacker.invalid");
   });
 
   it("renders the shared operational shell without fake active controls", async () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.3");
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.4");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
     expect(response.body).toContain('id="icon-home"');
@@ -812,7 +872,16 @@ const fixture = (
       retrievalState: "RETRIEVED",
       supplierId: "supplier-reference",
     }),
-    list: async () => ({ orders: [summary()] }),
+    list: async () => ({
+      metrics: {
+        attentionOrders: 0,
+        failedOrders: 0,
+        processingOrders: 1,
+        totalOrders: 1,
+      },
+      orders: [summary()],
+      totalCount: 1,
+    }),
   };
   const staff: AdminStaffRepository = {
     changeRole: async () => "UPDATED",
@@ -1126,6 +1195,7 @@ const summary = () => ({
   orderId: targetOrderId,
   paymentStatus: "CAPTURED",
   procurementStatus: "SUCCEEDED",
+  productPlatform: "WINDOWS",
   productTitle: "Arena Eleven",
   quantity: 1,
   riskStatus: "APPROVED",
