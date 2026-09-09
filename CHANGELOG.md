@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added KeyRaNo Admin Panel V1 as a German, responsive and capability-filtered
+  operations workspace over existing PostgreSQL/domain authority, including
+  customer, catalog, supplier, support, finance, reporting, fraud-read,
+  notification and versioned emergency-control surfaces. Customer Support now
+  uses the signed ownership-scoped account bridge. No Product Key, production
+  provider, refund, discount or identity behavior was invented; Human-UAT and
+  security approvals remain unchanged.
+
 - Hide WooCommerce's same-order retry action server-side for validated
   synthetic terminal checkout results while retaining the fresh-cart action.
 

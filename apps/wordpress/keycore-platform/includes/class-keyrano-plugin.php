@@ -21,6 +21,8 @@ final class Plugin
         add_action('woocommerce_account_meine-kaeufe_endpoint', [$account, 'render_orders']);
         add_action('woocommerce_account_kauf-details_endpoint', [$account, 'render_order_detail']);
         add_action('woocommerce_account_kauf-hinzufuegen_endpoint', [$account, 'render_claim_shell']);
+        add_action('woocommerce_account_support_endpoint', [$account, 'render_support']);
+        add_action('woocommerce_account_support-details_endpoint', [$account, 'render_support_detail']);
         add_action('woocommerce_before_edit_account_form', [$account, 'render_account_details_header']);
         add_action('woocommerce_edit_account_form_start', [$account, 'render_account_details_form_heading']);
         add_action('admin_post_keyrano_reveal', [$account, 'handle_reveal']);
@@ -29,6 +31,10 @@ final class Plugin
         add_action('admin_post_nopriv_keyrano_claim_purchase', [$account, 'handle_claim']);
         add_action('admin_post_keyrano_invoice', [$account, 'handle_invoice']);
         add_action('admin_post_nopriv_keyrano_invoice', [$account, 'handle_invoice']);
+        add_action('admin_post_keyrano_support_create', [$account, 'handle_support_create']);
+        add_action('admin_post_nopriv_keyrano_support_create', [$account, 'handle_support_create']);
+        add_action('admin_post_keyrano_support_reply', [$account, 'handle_support_reply']);
+        add_action('admin_post_nopriv_keyrano_support_reply', [$account, 'handle_support_reply']);
         add_filter('woocommerce_payment_gateways', [Checkout_Registration_Loader::class, 'gateways']);
         add_filter('woocommerce_thankyou_order_received_title', [self::class, 'terminal_order_received_title'], 10, 2);
         add_filter('woocommerce_thankyou_order_received_text', [self::class, 'terminal_order_received_text'], 10, 2);
@@ -103,6 +109,26 @@ final class Plugin
             return 'pending';
         }
         return 'neutral';
+    }
+
+    public static function support_label(string $value): string
+    {
+        $labels = [
+            'ACCOUNT_PROBLEM' => __('Kontoproblem', 'keycore-platform'),
+            'CLOSED' => __('Geschlossen', 'keycore-platform'),
+            'INVOICE_PROBLEM' => __('Rechnungsproblem', 'keycore-platform'),
+            'IN_PROGRESS' => __('In Bearbeitung', 'keycore-platform'),
+            'KEY_NOT_AVAILABLE' => __('Produktschlüssel nicht verfügbar', 'keycore-platform'),
+            'OPEN' => __('Offen', 'keycore-platform'),
+            'ORDER_STATUS' => __('Bestellstatus', 'keycore-platform'),
+            'OTHER' => __('Sonstiges', 'keycore-platform'),
+            'PAYMENT_PROBLEM' => __('Zahlungsproblem', 'keycore-platform'),
+            'REFUND_REQUEST' => __('Erstattungsanfrage', 'keycore-platform'),
+            'RESOLVED' => __('Gelöst', 'keycore-platform'),
+            'WAITING_FOR_CUSTOMER' => __('Wartet auf deine Antwort', 'keycore-platform'),
+            'WAITING_FOR_INTERNAL' => __('Wird intern geprüft', 'keycore-platform'),
+        ];
+        return $labels[$value] ?? __('Supportanfrage', 'keycore-platform');
     }
 
     public static function money_label(string $amount_minor, string $currency): string

@@ -8,6 +8,7 @@ import {
 import {
   correlationId,
   customerId,
+  orderId,
   orderLineId,
   type AuthenticatedCustomerPrincipal,
   type CorrelationId,
@@ -15,7 +16,10 @@ import {
   type CustomerAccountService,
   type CustomerOrderClaimResult,
   type CustomerId,
+  type OrderId,
   type ProductKeyVaultService,
+  type SupportCaseCategory,
+  type SupportCaseService,
 } from "../../packages/platform/src/contracts.js";
 import { publishableStagingCatalog } from "./staging-catalog.js";
 import {
@@ -56,6 +60,7 @@ export interface StagingStorefrontBridgeOptions {
   readonly vaultService: ProductKeyVaultService;
   readonly checkout: StagingCheckoutPort;
   readonly guestOrderClaim: StagingGuestOrderClaimPort;
+  readonly supportService?: SupportCaseService;
   readonly sharedSecret: string;
   readonly allowedOrigin: string;
   readonly identityMappings: ReadonlyMap<string, CustomerId>;
@@ -217,6 +222,87 @@ export class StagingStorefrontBridge {
           status: "ERROR",
         });
       }
+    }
+
+    if (request.path === "/v1/account/support") {
+      if (!this.options.supportService) return respond(503, unavailable());
+      if (request.method === "GET") {
+        const result = await this.options.supportService.listCustomerCases({
+          principal,
+        });
+        if (result.status !== "LISTED") return respond(404, unavailable());
+        return respond(200, {
+          cases: result.page.items,
+          nextCursor: result.page.nextCursor,
+          status: "OK",
+        });
+      }
+      if (request.method === "POST") {
+        if (!request.csrfVerified)
+          return respond(403, { code: "ACCESS_DENIED", status: "ERROR" });
+        const command = parseSupportCreateBody(request.body);
+        if (!command)
+          return respond(400, {
+            code: "SUPPORT_REQUEST_INVALID",
+            status: "ERROR",
+          });
+        const result = await this.options.supportService.createCustomerCase({
+          ...command,
+          correlationId: requestCorrelationId,
+          principal,
+        });
+        return result.status === "CREATED"
+          ? respond(201, { case: result.detail.case, status: "CREATED" })
+          : respond(
+              result.code === "RESOURCE_NOT_AVAILABLE" ? 404 : 400,
+              unavailable(),
+            );
+      }
+      return respond(404, unavailable());
+    }
+
+    const supportMatch =
+      /^\/v1\/account\/support\/([0-9a-f-]{36})(\/reply)?$/iu.exec(
+        request.path,
+      );
+    if (supportMatch?.[1]) {
+      if (!this.options.supportService) return respond(503, unavailable());
+      if (request.method === "GET" && !supportMatch[2]) {
+        const result = await this.options.supportService.getCustomerCase({
+          caseId: supportMatch[1],
+          principal,
+        });
+        return result.status === "FOUND"
+          ? respond(200, {
+              case: result.detail.case,
+              messages: result.detail.messages,
+              status: "OK",
+            })
+          : respond(404, unavailable());
+      }
+      if (request.method === "POST" && supportMatch[2] === "/reply") {
+        if (!request.csrfVerified)
+          return respond(403, { code: "ACCESS_DENIED", status: "ERROR" });
+        const command = parseSupportReplyBody(request.body);
+        if (!command)
+          return respond(400, {
+            code: "SUPPORT_REQUEST_INVALID",
+            status: "ERROR",
+          });
+        const result = await this.options.supportService.addCustomerReply({
+          caseId: supportMatch[1],
+          correlationId: requestCorrelationId,
+          message: command.message,
+          principal,
+        });
+        return result.status === "FOUND"
+          ? respond(200, { status: "UPDATED" })
+          : respond(
+              result.code === "RESOURCE_NOT_AVAILABLE" ? 404 : 409,
+              unavailable(),
+            );
+      }
+      return respond(404, unavailable());
     }
 
     if (request.method === "GET" && request.path === "/v1/account/orders") {
@@ -463,6 +549,86 @@ const parseGuestClaimBody = (
     return null;
   }
 };
+
+const parseSupportCreateBody = (
+  body: string,
+): {
+  readonly category: SupportCaseCategory;
+  readonly orderId?: OrderId;
+  readonly message: string;
+} | null => {
+  const record = parseObject(body);
+  if (!record || !exactKeys(record, ["category", "message"], ["orderId"]))
+    return null;
+  if (
+    typeof record.category !== "string" ||
+    !supportCategories.includes(record.category as SupportCaseCategory) ||
+    typeof record.message !== "string"
+  )
+    return null;
+  if (
+    record.orderId !== undefined &&
+    (typeof record.orderId !== "string" || !uuidPattern.test(record.orderId))
+  )
+    return null;
+  return {
+    category: record.category as SupportCaseCategory,
+    message: record.message,
+    ...(typeof record.orderId === "string"
+      ? { orderId: orderId(record.orderId) }
+      : {}),
+  };
+};
+
+const parseSupportReplyBody = (
+  body: string,
+): { readonly message: string } | null => {
+  const record = parseObject(body);
+  return record &&
+    exactKeys(record, ["message"], []) &&
+    typeof record.message === "string"
+    ? { message: record.message }
+    : null;
+};
+
+const parseObject = (body: string): Record<string, unknown> | null => {
+  try {
+    const value: unknown = JSON.parse(body);
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const exactKeys = (
+  record: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+): boolean => {
+  const keys = Object.keys(record);
+  return (
+    required.every((key) => keys.includes(key)) &&
+    keys.every((key) => required.includes(key) || optional.includes(key))
+  );
+};
+
+const supportCategories: readonly SupportCaseCategory[] = [
+  "ACCOUNT_PROBLEM",
+  "ACTIVATION_PROBLEM",
+  "INVOICE_PROBLEM",
+  "KEY_NOT_AVAILABLE",
+  "KEY_REVEAL_PROBLEM",
+  "ORDER_STATUS",
+  "PAYMENT_PROBLEM",
+  "REFUND_REQUEST",
+  "SUPPLIER_PROBLEM",
+  "SUSPECTED_DUPLICATE_ORDER",
+  "OTHER",
+];
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export const signStagingStorefrontRequest = (
   secret: string,

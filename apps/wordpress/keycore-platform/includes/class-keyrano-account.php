@@ -15,6 +15,8 @@ final class Account
         add_rewrite_endpoint('meine-kaeufe', EP_ROOT | EP_PAGES);
         add_rewrite_endpoint('kauf-details', EP_ROOT | EP_PAGES);
         add_rewrite_endpoint('kauf-hinzufuegen', EP_ROOT | EP_PAGES);
+        add_rewrite_endpoint('support', EP_ROOT | EP_PAGES);
+        add_rewrite_endpoint('support-details', EP_ROOT | EP_PAGES);
     }
 
     /** @param array<string, string> $items @return array<string, string> */
@@ -24,6 +26,7 @@ final class Account
         unset($items['customer-logout']);
         $items['meine-kaeufe'] = __('Meine Käufe', 'keycore-platform');
         $items['kauf-hinzufuegen'] = __('Kauf hinzufügen', 'keycore-platform');
+        $items['support'] = __('Support', 'keycore-platform');
         if (null !== $logout) {
             $items['customer-logout'] = $logout;
         }
@@ -54,6 +57,75 @@ final class Account
     public function render_claim_shell(): void
     {
         require KEYRANO_PLUGIN_DIR . '/templates/account-claim.php';
+    }
+
+    public function render_support(): void
+    {
+        $identity = $this->identity();
+        $payload = null === $identity ? null : $this->bridge->support_cases($identity['wpUserId'], $identity['customerId']);
+        $orders_payload = null === $identity ? null : $this->bridge->orders($identity['wpUserId'], $identity['customerId']);
+        $cases = is_array($payload['cases'] ?? null) ? $payload['cases'] : [];
+        $orders = is_array($orders_payload['orders'] ?? null) ? $orders_payload['orders'] : [];
+        $unavailable = null === $identity || 'OK' !== ($payload['status'] ?? null);
+        require KEYRANO_PLUGIN_DIR . '/templates/account-support.php';
+    }
+
+    public function render_support_detail(string $case_id = ''): void
+    {
+        $identity = $this->identity();
+        $payload = null === $identity ? null : $this->bridge->support_case(
+            $identity['wpUserId'],
+            $identity['customerId'],
+            sanitize_text_field($case_id)
+        );
+        $support_case = is_array($payload['case'] ?? null) ? $payload['case'] : null;
+        $messages = is_array($payload['messages'] ?? null) ? $payload['messages'] : [];
+        require KEYRANO_PLUGIN_DIR . '/templates/account-support-detail.php';
+    }
+
+    public function handle_support_create(): void
+    {
+        if (! is_user_logged_in()) {
+            auth_redirect();
+            exit;
+        }
+        $nonce = isset($_POST['_wpnonce']) ? sanitize_text_field(wp_unslash((string) $_POST['_wpnonce'])) : '';
+        if (! wp_verify_nonce($nonce, 'keyrano_support_create') || ! $this->same_origin()) {
+            $this->render_support_result('ACCESS_DENIED', 403);
+        }
+        $category = isset($_POST['category']) ? sanitize_key(wp_unslash((string) $_POST['category'])) : '';
+        $message = isset($_POST['message']) ? sanitize_textarea_field(wp_unslash((string) $_POST['message'])) : '';
+        $order_id = isset($_POST['order_id']) ? sanitize_text_field(wp_unslash((string) $_POST['order_id'])) : '';
+        $identity = $this->identity();
+        $command = ['category' => strtoupper($category), 'message' => $message];
+        if ('' !== $order_id) {
+            $command['orderId'] = $order_id;
+        }
+        $payload = null === $identity ? null : $this->bridge->create_support_case(
+            $identity['wpUserId'], $identity['customerId'], $command
+        );
+        $status = is_array($payload) ? (int) ($payload['_httpStatus'] ?? 503) : 503;
+        $this->render_support_result(201 === $status ? 'CREATED' : 'FAILED', $status);
+    }
+
+    public function handle_support_reply(): void
+    {
+        if (! is_user_logged_in()) {
+            auth_redirect();
+            exit;
+        }
+        $case_id = isset($_POST['case_id']) ? sanitize_text_field(wp_unslash((string) $_POST['case_id'])) : '';
+        $nonce = isset($_POST['_wpnonce']) ? sanitize_text_field(wp_unslash((string) $_POST['_wpnonce'])) : '';
+        if (! wp_verify_nonce($nonce, 'keyrano_support_reply_' . $case_id) || ! $this->same_origin()) {
+            $this->render_support_result('ACCESS_DENIED', 403);
+        }
+        $message = isset($_POST['message']) ? sanitize_textarea_field(wp_unslash((string) $_POST['message'])) : '';
+        $identity = $this->identity();
+        $payload = null === $identity ? null : $this->bridge->reply_support_case(
+            $identity['wpUserId'], $identity['customerId'], $case_id, $message
+        );
+        $status = is_array($payload) ? (int) ($payload['_httpStatus'] ?? 503) : 503;
+        $this->render_support_result(200 === $status ? 'UPDATED' : 'FAILED', $status);
     }
 
     public function handle_claim(): void
@@ -215,6 +287,17 @@ final class Account
         header('X-Content-Type-Options: nosniff', true);
         status_header($status);
         require KEYRANO_PLUGIN_DIR . '/templates/account-invoice-unavailable.php';
+        exit;
+    }
+
+    private function render_support_result(string $result, int $status): never
+    {
+        nocache_headers();
+        header('Cache-Control: no-store, no-cache, must-revalidate, private', true);
+        header('Pragma: no-cache', true);
+        header('Referrer-Policy: no-referrer', true);
+        status_header($status);
+        require KEYRANO_PLUGIN_DIR . '/templates/account-support-result.php';
         exit;
     }
 }

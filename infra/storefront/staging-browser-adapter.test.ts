@@ -4,6 +4,7 @@ import type {
   CustomerAccountReadRepository,
   CustomerInvoiceDocumentProvider,
 } from "../../packages/platform/src/contracts.js";
+import { InMemorySupportCaseRepository } from "../support/in-memory-support-case-repository.js";
 
 import {
   signStagingStorefrontRequest,
@@ -520,6 +521,66 @@ describe("staging storefront browser adapter", () => {
     );
     expect(guestClaim.claims).toHaveLength(5);
   });
+
+  it("provides an owner-scoped CSRF-protected customer support browser path", async () => {
+    const supportRepository = new InMemorySupportCaseRepository();
+    supportRepository.addCustomer(stagingCustomerAId);
+    supportRepository.addCustomer(stagingCustomerBId);
+    const runtime = await harness(undefined, { supportRepository });
+    const create = await runtime.bridge.handle(
+      ownerSupport("POST", "/v1/account/support", {
+        category: "ACCOUNT_PROBLEM",
+        message: "Ich benötige Hilfe mit meinem Konto.",
+      }),
+    );
+    const created = json(create.body);
+    const supportCase = created.case as Readonly<Record<string, unknown>>;
+    const caseId = String(supportCase.id);
+    expect(create.statusCode).toBe(201);
+    expect(created.status).toBe("CREATED");
+
+    const list = await runtime.bridge.handle(
+      ownerSupport("GET", "/v1/account/support"),
+    );
+    expect(list.statusCode).toBe(200);
+    expect(list.body).toContain(caseId);
+
+    const detail = await runtime.bridge.handle(
+      ownerSupport("GET", `/v1/account/support/${caseId}`),
+    );
+    expect(detail.statusCode).toBe(200);
+    expect(detail.body).toContain("Ich benötige Hilfe");
+    expect(detail.body).not.toMatch(/INTERNAL|operatorReference/iu);
+
+    const otherCustomer = await runtime.bridge.handle(
+      signed({
+        customerId: stagingCustomerBId,
+        method: "GET",
+        path: `/v1/account/support/${caseId}`,
+        wpUserId: "21",
+      }),
+    );
+    expect(otherCustomer.statusCode).toBe(404);
+    expect(otherCustomer.body).not.toContain(caseId);
+
+    const noCsrf = await runtime.bridge.handle(
+      signed({
+        body: JSON.stringify({ message: "Nicht zulässig" }),
+        customerId: stagingCustomerAId,
+        method: "POST",
+        path: `/v1/account/support/${caseId}/reply`,
+        wpUserId: "20",
+      }),
+    );
+    expect(noCsrf.statusCode).toBe(403);
+    const reply = await runtime.bridge.handle(
+      ownerSupport("POST", `/v1/account/support/${caseId}/reply`, {
+        message: "Hier sind weitere Informationen.",
+      }),
+    );
+    expect(reply.statusCode).toBe(200);
+    expect(reply.body).not.toContain("weitere Informationen");
+  });
 });
 
 const revealPath = `/v1/account/orders/${stagingFulfilledOrderId}/reveal`;
@@ -587,6 +648,20 @@ const ownerInvoice = () =>
     customerId: stagingCustomerAId,
     method: "POST",
     path: invoicePath,
+    wpUserId: "20",
+  });
+
+const ownerSupport = (
+  method: "GET" | "POST",
+  path: string,
+  body?: Readonly<Record<string, unknown>>,
+) =>
+  signed({
+    body: body ? JSON.stringify(body) : "",
+    csrfVerified: method === "POST",
+    customerId: stagingCustomerAId,
+    method,
+    path,
     wpUserId: "20",
   });
 

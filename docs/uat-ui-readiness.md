@@ -27,14 +27,16 @@ Product Key retrieval remain absent.
 | Payment failure/refund      | `PARTIALLY_EXECUTABLE` / UAT-009 `PASS` | Stable synthetic failure/cancel results with fresh-cart retry; no captured payment        | Refund UI remains outside this task                                    |
 | Fraud review/deny           | `NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY` | No operator UI                                                                            | Least-privilege risk interface                                         |
 | Invoice                     | `EXECUTABLE_NOW` / `PASS`               | Owner-only deterministic synthetic PDF through the signed account bridge                  | Production tax/provider approval remains separate                      |
-| Support                     | `NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY` | No support UI                                                                             | Customer/operator support interface                                    |
+| Support                     | `READY_AFTER_ADMIN_PANEL_DEPLOYMENT`    | Ownership-scoped customer cases and least-privilege operator workflow                     | Human staging execution for UAT-014                                    |
 | Purchase history            | `EXECUTABLE_NOW` / `PASS`               | Owner-filtered Meine Käufe and detail                                                     | None for scoped UAT-015 result                                         |
 | Authentication/verification | `PARTIALLY_EXECUTABLE`                  | Controlled synthetic WordPress login mapping                                              | Registration and production verification                               |
-| Emergency/degraded state    | `NOT_EXECUTABLE_AT_CURRENT_UI_BOUNDARY` | Safe generic unavailable states only                                                      | Authorized operations interface                                        |
+| Emergency/degraded state    | `READY_AFTER_ADMIN_PANEL_DEPLOYMENT`    | Authorized checkout pause/resume and fail-closed customer mutation path                   | Human staging execution and mandatory control restoration for UAT-017  |
 | Full browser walkthrough    | `EXECUTABLE_NOW` / `PASS`               | Discovery, synthetic checkout, account, claim, reveal and invoice surfaces                | None for scoped UAT-018 result; broader production gates remain closed |
 
 The machine-readable `uat-readiness.json` and `uat-results.json` remain the
 binding status sources. Human acceptance is `IN_REVIEW`; UAT-001, UAT-002,
 UAT-003, UAT-004, UAT-005, UAT-006, UAT-007, UAT-009, UAT-012, UAT-015 and
 UAT-018 are `PASS`. Seven required scenarios remain pending or not executable, so Phase 11
-remains incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`.
+remains incomplete and `SECURITY-READINESS` remains `NOT_APPROVED`. Admin
+Panel V1 readiness is documented separately and does not change machine-readable
+or Human-UAT status before deployment and explicit human execution.

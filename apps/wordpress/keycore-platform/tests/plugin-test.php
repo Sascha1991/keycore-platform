@@ -179,6 +179,10 @@ final class FakeBridge implements Bridge
     public function invoice(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
     public function reveal(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
     public function claim(int $wp_user_id, string $customer_id, string $claim_code): ?array { return ['status' => 'CLAIMED']; }
+    public function support_cases(int $wp_user_id, string $customer_id): ?array { return ['cases' => [], 'status' => 'OK']; }
+    public function support_case(int $wp_user_id, string $customer_id, string $case_id): ?array { return null; }
+    public function create_support_case(int $wp_user_id, string $customer_id, array $command): ?array { return ['status' => 'CREATED']; }
+    public function reply_support_case(int $wp_user_id, string $customer_id, string $case_id, string $message): ?array { return ['status' => 'UPDATED']; }
 }
 
 function fixture(string $reference): array
@@ -227,7 +231,17 @@ function render_template(string $template): string
     return (string) ob_get_clean();
 }
 
-foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'woocommerce_account_kauf-hinzufuegen_endpoint', 'woocommerce_before_edit_account_form', 'woocommerce_edit_account_form_start', 'admin_post_keyrano_reveal', 'admin_post_keyrano_claim_purchase', 'admin_post_keyrano_invoice', 'admin_post_nopriv_keyrano_invoice', 'woocommerce_blocks_loaded'] as $hook) {
+function render_support(array $support_cases, array $owned_orders, bool $is_unavailable = false): string
+{
+    $cases = $support_cases;
+    $orders = $owned_orders;
+    $unavailable = $is_unavailable;
+    ob_start();
+    require dirname(__DIR__) . '/templates/account-support.php';
+    return (string) ob_get_clean();
+}
+
+foreach (['init', 'woocommerce_account_meine-kaeufe_endpoint', 'woocommerce_account_kauf-details_endpoint', 'woocommerce_account_kauf-hinzufuegen_endpoint', 'woocommerce_account_support_endpoint', 'woocommerce_account_support-details_endpoint', 'woocommerce_before_edit_account_form', 'woocommerce_edit_account_form_start', 'admin_post_keyrano_reveal', 'admin_post_keyrano_claim_purchase', 'admin_post_keyrano_invoice', 'admin_post_nopriv_keyrano_invoice', 'admin_post_keyrano_support_create', 'admin_post_keyrano_support_reply', 'woocommerce_blocks_loaded'] as $hook) {
     assert_true(in_array($hook, $GLOBALS['keyrano_test_actions'], true), 'Missing hook: ' . $hook);
 }
 assert_true(in_array('woocommerce_account_menu_items', $GLOBALS['keyrano_test_filters'], true), 'Missing account menu filter');
@@ -242,6 +256,11 @@ $claim_form = (string) ob_get_clean();
 assert_true(false !== strpos($claim_form, 'type="password"'), 'Guest claim code is not protected as a password input');
 assert_true(false !== strpos($claim_form, 'keyrano_claim_purchase'), 'Guest claim form is not CSRF-bound');
 assert_true(false === stripos($claim_form, 'Bestellnummer'), 'Guest claim form exposes an unnecessary order identifier');
+$support_html = render_support([], []);
+assert_true(false !== strpos($support_html, 'Neue Supportanfrage'), 'Customer support form is absent');
+assert_true(false !== strpos($support_html, 'keyrano_support_create'), 'Customer support form is not nonce-bound');
+assert_true(false !== strpos($support_html, 'Teile keine Passwörter'), 'Customer support safety guidance is absent');
+assert_true(false === stripos($support_html, 'interne notiz'), 'Customer support page exposes internal visibility');
 assert_true('Bezahlt' === \KeyRaNo\Storefront\Plugin::status_label('CAPTURED'), 'Captured status was not localized');
 assert_true('In Bearbeitung' === \KeyRaNo\Storefront\Plugin::status_label('FULFILLMENT_PENDING'), 'Fulfillment status was not presented safely');
 assert_true('Ausstehend' === \KeyRaNo\Storefront\Plugin::status_label('PENDING'), 'Pending order status was not localized');

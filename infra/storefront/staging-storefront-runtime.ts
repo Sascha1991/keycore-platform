@@ -23,6 +23,8 @@ import {
   type CustomerId,
   type CustomerInvoiceDocumentProvider,
   type KeyAccessAuthorizationPort,
+  SupportCaseService,
+  type SupportCaseRepository,
 } from "../../packages/platform/src/contracts.js";
 import { InMemoryCustomerAccountReadRepository } from "../customers/in-memory-customer-account-repository.js";
 import { DevelopmentKeyManagementProvider } from "../key-management/development-provider.js";
@@ -79,6 +81,7 @@ export interface StagingStorefrontRuntimeDependencies {
   readonly checkout?: StagingCheckoutPort;
   readonly guestOrderClaim?: StagingGuestOrderClaimPort;
   readonly invoiceDocumentProvider?: CustomerInvoiceDocumentProvider;
+  readonly supportRepository?: SupportCaseRepository;
 }
 
 export const createStagingStorefrontRuntime = async (
@@ -189,6 +192,15 @@ export const createStagingStorefrontRuntime = async (
         ],
       ]),
       sharedSecret: config.sharedSecret,
+      ...(dependencies.supportRepository
+        ? {
+            supportService: new SupportCaseService({
+              audit,
+              environment: "STAGING",
+              repository: dependencies.supportRepository,
+            }),
+          }
+        : {}),
       vaultService: vault,
     }),
   };

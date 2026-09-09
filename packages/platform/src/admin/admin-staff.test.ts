@@ -23,10 +23,15 @@ describe("Admin staff authorization", () => {
     expect(capabilitiesForRole("SUPPORT")).toEqual([
       "ADMIN_ACCESS",
       "ORDER_VIEW",
+      "CUSTOMER_VIEW",
+      "SUPPORT_VIEW",
+      "SUPPORT_MANAGE",
     ]);
     expect(capabilitiesForRole("SECURITY_AUDITOR")).toEqual([
       "ADMIN_ACCESS",
       "AUDIT_VIEW",
+      "FRAUD_REVIEW_VIEW",
+      "OPERATIONS_CONTROL_VIEW",
     ]);
     expect(capabilitiesForRole("OPERATIONS")).not.toContain(
       "PRODUCT_KEY_REVEAL",
@@ -34,7 +39,10 @@ describe("Admin staff authorization", () => {
     expect(effectiveAdminCapabilities("SUPPORT", ["AUDIT_VIEW"])).toEqual([
       "ADMIN_ACCESS",
       "AUDIT_VIEW",
+      "CUSTOMER_VIEW",
       "ORDER_VIEW",
+      "SUPPORT_MANAGE",
+      "SUPPORT_VIEW",
     ]);
     expect(
       hasAdminCapability(

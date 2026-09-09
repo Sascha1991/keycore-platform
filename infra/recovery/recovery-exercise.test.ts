@@ -59,7 +59,7 @@ describe("KS-11-06 recovery exercise", () => {
       result.targetDatabaseFingerprint,
     );
     expect(result.backup.sizeBytes).toBeGreaterThan(0);
-    expect(result.migrationBaseline).toBe("029");
+    expect(result.migrationBaseline).toBe("030");
     expect(Object.values(result.invariantCounts)).toEqual(
       expect.arrayContaining([0]),
     );

@@ -4,11 +4,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   AdminAuthenticationService,
+  AdminOperationsService,
   AdminOrderService,
   AdminStaffService,
   hashAdminSession,
   orderId,
   type AdminOrderReadRepository,
+  type AdminOperationsRepository,
+  type AdminOperationsControlMutationPort,
+  type AdminSupportOperationsPort,
   type AdminSessionRepository,
   type AdminStaffRepository,
   type AuditEvent,
@@ -208,13 +212,247 @@ describe("AdminHttpController", () => {
     );
 
     expect(css).toContain("@media (max-width: 768px)");
-    expect(css).toContain(".orders-table tbody { display: grid");
+    expect(css).toMatch(/\.orders-table tbody[^{}]*\{[^}]*display:\s*grid/gu);
     expect(css).toContain("content: attr(data-label)");
-    expect(css).toContain(".table-wrap { overflow: visible; }");
-    expect(css).toContain(".detail-grid dl { grid-template-columns: 1fr");
-    expect(css).toContain(
-      ".metric-grid, .filter-bar { grid-template-columns: 1fr",
+    expect(css).toMatch(/\.table-wrap\s*\{[^}]*overflow:\s*visible/gu);
+    expect(css).toMatch(
+      /\.detail-grid dl\s*\{[^}]*grid-template-columns:\s*1fr/gu,
     );
+    expect(css).toMatch(
+      /\.metric-grid,\s*\.filter-bar,\s*\.staff-form\s*\{[^}]*grid-template-columns:\s*1fr/gu,
+    );
+  });
+
+  it("renders the shared operational shell without fake active controls", async () => {
+    const response = await fixture().handle(authenticated("GET", "/admin/"));
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('class="admin-shell"');
+    expect(response.body).toContain('class="admin-toolbar"');
+    expect(response.body).toContain("Sichere Admin-Sitzung");
+    expect(response.body).toContain('href="/admin/orders"');
+    expect(response.body).toContain('href="/admin/staff"');
+    expect(response.body).toContain('href="/admin/audit"');
+    expect(response.body).toContain(
+      'aria-disabled="true" title="Noch nicht als sicherer Admin-Bereich verfügbar"',
+    );
+    expect(response.body).not.toMatch(/onclick=|alert\(/u);
+  });
+
+  it("renders real operational read models and keeps finance role-scoped", async () => {
+    const controller = fixture();
+    const expectations = [
+      ["/admin/customers", "customer-a@example.test"],
+      ["/admin/catalog", "Neonpfad: Berlin"],
+      ["/admin/suppliers", "Synthetic Supplier"],
+      ["/admin/support", "Bestellstatus"],
+      ["/admin/fraud", "Manuelle Prüfungen"],
+      ["/admin/finance", "Erfasstes Zahlungsvolumen (EUR)"],
+      ["/admin/reports", "Berichte &amp; Statistiken"],
+      ["/admin/settings", "Beschaffung anlegen"],
+    ] as const;
+    for (const [path, visible] of expectations) {
+      const response = await controller.handle(authenticated("GET", path));
+      expect(response.statusCode, path).toBe(200);
+      expect(response.body, path).toContain(visible);
+      expect(response.body, path).not.toMatch(
+        /TEST-[A-Z0-9-]+|session_hash|claim_code|ciphertext/iu,
+      );
+    }
+
+    const finance = await controller.handle(
+      authenticated("GET", "/admin/finance"),
+    );
+    expect(finance.body).toContain("9.007.199.254.740.993,12 EUR");
+    expect(finance.body).toContain("Teilweise erstattete Bestellungen (EUR)");
+    expect(finance.body).toContain("Gesamtsicht ohne Datumsfilter");
+    expect(finance.body).toContain(
+      "Autoritative Teil-Erstattungsbeträge liegen im Bestellmodell derzeit nicht vor",
+    );
+    const report = await controller.handle(
+      authenticated("GET", "/admin/reports"),
+    );
+    expect(report.body).toContain("Erfasstes Zahlungsvolumen (EUR)");
+    expect(report.body).toContain("Teilweise erstattete Bestellungen (EUR)");
+    expect(report.body).toContain("Gesamtsicht ohne Datumsfilter");
+    const dashboard = await controller.handle(authenticated("GET", "/admin/"));
+    expect(dashboard.body).toContain("Erfasstes Zahlungsvolumen");
+    expect(dashboard.body).not.toContain("Erfasster Umsatz");
+
+    const customerDetail = await controller.handle(
+      authenticated("GET", `/admin/customers/${targetOrderId}`),
+    );
+    expect(customerDetail.statusCode).toBe(200);
+    expect(customerDetail.body).toContain("Kundendetail");
+    expect(customerDetail.body).toContain("customer-a@example.test");
+    expect(customerDetail.body).toContain("Bestellverlauf");
+    expect(customerDetail.body).toContain("Arena Eleven");
+    expect(customerDetail.body).not.toMatch(
+      /password|session_hash|verification_token|claim_code/iu,
+    );
+
+    const support = fixture({ role: "SUPPORT" });
+    await expect(
+      support.handle(authenticated("GET", "/admin/support")),
+    ).resolves.toMatchObject({ statusCode: 200 });
+    await expect(
+      support.handle(authenticated("GET", "/admin/finance")),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      support.handle(authenticated("GET", "/admin/catalog")),
+    ).resolves.toMatchObject({ statusCode: 403 });
+  });
+
+  it("builds the notification center from live states and filters it by capability", async () => {
+    const ownerResponse = await fixture().handle(
+      authenticated("GET", "/admin/notifications"),
+    );
+    expect(ownerResponse.statusCode).toBe(200);
+    expect(ownerResponse.body).toContain("Offener Supportfall");
+    expect(ownerResponse.body).toContain(
+      "Manuelle Betrugsprüfung erforderlich",
+    );
+    expect(ownerResponse.body).not.toMatch(
+      /class="[^"]*(badge-count|unread-count)/iu,
+    );
+    expect(ownerResponse.body).toContain(
+      "Das Panel zeigt keine erfundene Ungelesen-Zahl.",
+    );
+
+    const supportResponse = await fixture({ role: "SUPPORT" }).handle(
+      authenticated("GET", "/admin/notifications"),
+    );
+    expect(supportResponse.statusCode).toBe(200);
+    expect(supportResponse.body).toContain("Offener Supportfall");
+    expect(supportResponse.body).not.toContain(
+      "Manuelle Betrugsprüfung erforderlich",
+    );
+    expect(supportResponse.body).not.toContain("Betriebsfunktion pausiert");
+  });
+
+  it("protects operations controls with manage permission, exact origin, CSRF and version", async () => {
+    const mutation = new CapturingControlMutation();
+    const controller = fixture({ controlMutation: mutation });
+    const settings = await controller.handle(
+      authenticated("GET", "/admin/settings"),
+    );
+    const path = "/admin/settings/controls/PROCUREMENT_CREATE";
+    const csrf = new RegExp(
+      `action="${path.replaceAll("/", "\\/")}"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"`,
+      "u",
+    ).exec(settings.body)?.[1];
+    expect(settings.statusCode).toBe(200);
+    expect(settings.body).toContain("Versionsgeschützte Notfallsteuerung");
+    expect(settings.body).toContain("Pausieren");
+    expect(csrf).toBeTruthy();
+
+    const validForm = {
+      capability: "PROCUREMENT_CREATE",
+      confirm: "CHANGE_OPERATIONS_CONTROL",
+      csrf: required(csrf),
+      desired_state: "PAUSED",
+      expected_version: "1",
+      operation_id: "browser-control-operation",
+      reason_code: "MAINTENANCE",
+    };
+    await expect(
+      controller.handle(authenticated("GET", path)),
+    ).resolves.toMatchObject({
+      statusCode: 405,
+    });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          path,
+          { origin: "https://attacker.invalid" },
+          validForm,
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          path,
+          { origin },
+          { ...validForm, csrf: "0".repeat(64) },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    expect(mutation.inputs).toHaveLength(0);
+
+    const changed = await controller.handle(
+      authenticated("POST", path, { origin }, validForm),
+    );
+    expect(changed.statusCode).toBe(200);
+    expect(changed.body).toContain("Funktion pausiert");
+    expect(mutation.inputs).toHaveLength(1);
+    expect(mutation.inputs[0]).toMatchObject({
+      capability: "PROCUREMENT_CREATE",
+      desiredState: "PAUSED",
+      expectedVersion: 1,
+      operationId: "browser-control-operation",
+      reasonCode: "MAINTENANCE",
+    });
+
+    const supportSettings = await fixture({ role: "SUPPORT" }).handle(
+      authenticated("GET", "/admin/settings"),
+    );
+    expect(supportSettings.statusCode).toBe(403);
+  });
+
+  it("renders support detail and protects customer-visible replies with exact-origin CSRF", async () => {
+    const supportOperations = new CapturingSupportOperations();
+    const controller = fixture({ supportOperations });
+    const detailPath = `/admin/support/${targetOrderId}`;
+    const detail = await controller.handle(authenticated("GET", detailPath));
+    const action = `${detailPath}/note`;
+    const csrf = new RegExp(
+      `action="${action.replaceAll("/", "\\/")}"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"`,
+      "u",
+    ).exec(detail.body)?.[1];
+
+    expect(detail.statusCode).toBe(200);
+    expect(detail.body).toContain("Supportfalldetail");
+    expect(detail.body).toContain("Für Kunden sichtbar");
+    expect(detail.body).toContain("Interne Notiz");
+    expect(detail.body).toContain("Status ändern");
+    expect(detail.body).not.toContain("<script>alert(1)</script>");
+    expect(csrf).toBeTruthy();
+
+    const form = {
+      csrf: required(csrf),
+      message: "Sichere Antwort an den Kunden",
+      visibility: "CUSTOMER_VISIBLE",
+    };
+    await expect(
+      controller.handle(authenticated("POST", action, {}, form)),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          action,
+          { origin },
+          { ...form, visibility: "OWNER_ONLY" },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 400 });
+    expect(supportOperations.notes).toHaveLength(1);
+
+    await expect(
+      controller.handle(authenticated("POST", action, { origin }, form)),
+    ).resolves.toMatchObject({
+      headers: { Location: detailPath },
+      statusCode: 303,
+    });
+    expect(supportOperations.notes).toHaveLength(2);
+    expect(supportOperations.notes.at(-1)).toMatchObject({
+      caseId: targetOrderId,
+      message: "Sichere Antwort an den Kunden",
+      visibility: "CUSTOMER_VISIBLE",
+    });
   });
 
   it("makes reveal POST-only, rejects invalid CSRF and returns no key after a valid attempt", async () => {
@@ -452,6 +690,8 @@ const fixture = (
       readonly role: "FINANCE" | "SUPPORT";
     };
     readonly backendUnavailable?: boolean;
+    readonly controlMutation?: AdminOperationsControlMutationPort;
+    readonly supportOperations?: AdminSupportOperationsPort;
     readonly delayed?: StagingDelayedFulfillmentPort;
     readonly delayedEligible?: boolean;
     readonly role?: "PROJECT_OWNER" | "SUPPORT";
@@ -587,6 +827,91 @@ const fixture = (
     revokePermission: async () => "UPDATED",
     setStatus: async () => "UPDATED",
   };
+  const operations: AdminOperationsRepository = {
+    financeSummary: async () => [
+      {
+        capturedAmountMinor: "900719925474099312",
+        capturedOrders: 1,
+        currency: "EUR",
+        partiallyRefundedOrders: 1,
+        refundedAmountMinor: "0",
+        refundedOrders: 0,
+      },
+    ],
+    listCustomers: async () => ({
+      items: [
+        {
+          createdAt: new Date("2026-09-01T09:00:00.000Z"),
+          customerId: targetOrderId,
+          email: "customer-a@example.test",
+          lastOrderAt: new Date("2026-09-02T09:00:00.000Z"),
+          orderCount: 1,
+          verificationState: "VERIFIED",
+        },
+      ],
+    }),
+    listFraudReviews: async () => ({
+      items: [
+        {
+          openedAt: new Date("2026-09-02T09:00:00.000Z"),
+          orderId: targetOrderId,
+          reasonCodes: ["MANUAL_REVIEW_REQUIRED"],
+          resolvedAt: null,
+          reviewId: targetOrderId,
+          status: "OPEN",
+        },
+      ],
+    }),
+    listOperationsControls: async () => [
+      {
+        capability: "PROCUREMENT_CREATE",
+        reasonCode: null,
+        recordVersion: 1,
+        state: "ENABLED",
+        updatedAt: new Date("2026-09-02T09:00:00.000Z"),
+      },
+    ],
+    listProducts: async () => ({
+      items: [
+        {
+          active: true,
+          availableOfferCount: 1,
+          lifecycle: "ACTIVE_CANDIDATE",
+          offerCount: 2,
+          platform: "WINDOWS",
+          productId: targetOrderId,
+          productType: "GAME",
+          title: "Neonpfad: Berlin",
+        },
+      ],
+    }),
+    listSuppliers: async () => ({
+      items: [
+        {
+          activeOfferCount: 1,
+          displayName: "Synthetic Supplier",
+          lastSyncAt: null,
+          lastSyncStatus: null,
+          productCount: 1,
+          supplierCode: "synthetic",
+          supplierId: targetOrderId,
+        },
+      ],
+    }),
+    listSupportCases: async () => ({
+      items: [
+        {
+          caseId: targetOrderId,
+          category: "ORDER_STATUS",
+          customerEmail: "customer-a@example.test",
+          orderId: targetOrderId,
+          priority: "NORMAL",
+          status: "OPEN",
+          updatedAt: new Date("2026-09-02T09:00:00.000Z"),
+        },
+      ],
+    }),
+  };
   return new AdminHttpController(
     new AdminAuthenticationService(
       sessions,
@@ -599,8 +924,123 @@ const fixture = (
     new AdminStaffService(staff, audit, hmacMaterial, "STAGING"),
     { allowedOrigin: origin, csrfSecret: hmacMaterial, secureCookies: true },
     options.delayed,
+    new AdminOperationsService(
+      operations,
+      audit,
+      hmacMaterial,
+      "STAGING",
+      undefined,
+      options.controlMutation,
+      options.supportOperations ?? new CapturingSupportOperations(),
+    ),
   );
 };
+
+class CapturingControlMutation implements AdminOperationsControlMutationPort {
+  public readonly inputs: Parameters<
+    AdminOperationsControlMutationPort["change"]
+  >[0][] = [];
+  public async change(
+    input: Parameters<AdminOperationsControlMutationPort["change"]>[0],
+  ) {
+    this.inputs.push(input);
+    return {
+      control: {
+        capability: input.capability,
+        createdAt: new Date("2026-09-01T08:00:00.000Z"),
+        reasonCode: input.reasonCode,
+        recordVersion: input.expectedVersion + 1,
+        state: input.desiredState,
+        updatedAt: new Date("2026-09-02T10:00:00.000Z"),
+      },
+      status: "UPDATED" as const,
+    };
+  }
+}
+
+class CapturingSupportOperations implements AdminSupportOperationsPort {
+  public readonly notes: Parameters<
+    AdminSupportOperationsPort["addNote"]
+  >[0][] = [];
+
+  public async detail() {
+    return supportDetailFixture();
+  }
+
+  public async addNote(
+    input: Parameters<AdminSupportOperationsPort["addNote"]>[0],
+  ) {
+    this.notes.push(input);
+    if (
+      input.visibility !== "CUSTOMER_VISIBLE" &&
+      input.visibility !== "INTERNAL"
+    )
+      return { code: "BAD_REQUEST" as const, status: "FAILED" as const };
+    return { detail: supportDetailFixture(), status: "OK" as const };
+  }
+
+  public async changePriority() {
+    return { detail: supportDetailFixture(), status: "OK" as const };
+  }
+
+  public async transition() {
+    return { detail: supportDetailFixture(), status: "OK" as const };
+  }
+}
+
+const supportDetailFixture = () => ({
+  case: {
+    category: "ORDER_STATUS" as const,
+    closedAt: null,
+    correlationId: "support-case-fixture" as never,
+    createdAt: new Date("2026-09-02T08:00:00.000Z"),
+    customerId: "10000000-0000-4000-8000-000000000001" as never,
+    id: targetOrderId,
+    orderId: targetOrderId,
+    priority: "NORMAL" as const,
+    recordVersion: 1,
+    resolutionCode: null,
+    resolvedAt: null,
+    source: "CUSTOMER" as const,
+    status: "OPEN" as const,
+    updatedAt: new Date("2026-09-02T09:00:00.000Z"),
+  },
+  events: [
+    {
+      actorReference: "10000000-0000-4000-8000-000000000001",
+      actorType: "CUSTOMER" as const,
+      caseId: targetOrderId,
+      eventType: "CASE_CREATED" as const,
+      fromPriority: null,
+      fromStatus: null,
+      id: "50000000-0000-4000-8000-000000000001",
+      linkTargetId: null,
+      linkType: null,
+      occurredAt: new Date("2026-09-02T08:00:00.000Z"),
+      toPriority: null,
+      toStatus: null,
+    },
+  ],
+  links: [],
+  messages: [
+    {
+      authorType: "CUSTOMER" as const,
+      body: "Problem & <script>alert(1)</script>",
+      caseId: targetOrderId,
+      createdAt: new Date("2026-09-02T08:00:00.000Z"),
+      id: "60000000-0000-4000-8000-000000000001",
+      visibility: "CUSTOMER_VISIBLE" as const,
+    },
+    {
+      authorType: "OPERATOR" as const,
+      body: "Interne Untersuchung",
+      caseId: targetOrderId,
+      createdAt: new Date("2026-09-02T08:30:00.000Z"),
+      id: "60000000-0000-4000-8000-000000000002",
+      visibility: "INTERNAL" as const,
+    },
+  ],
+});
 
 class CapturingDelayedFulfillment implements StagingDelayedFulfillmentPort {
   public readonly calls: Parameters<
