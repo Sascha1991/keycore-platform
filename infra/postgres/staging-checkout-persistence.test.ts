@@ -107,7 +107,7 @@ describe.skipIf(!connectionString)(
                 status: "AUTHORIZED" as const,
               }),
             },
-            now: () => now,
+            now: () => new Date("2099-09-01T09:00:00.000Z"),
           },
         );
         await expect(
