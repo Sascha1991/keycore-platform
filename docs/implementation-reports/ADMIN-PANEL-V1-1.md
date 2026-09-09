@@ -68,9 +68,10 @@ states. Existing protected mutations remain unchanged.
   tax, margin, accounting and service-health data are unavailable.
 - Product media is not present in the current Admin read model, so a stable
   platform-derived fallback is shown rather than broken or external imagery.
-- Local Docker did not become ready during validation. Service-backed PostgreSQL
-  tests and browser screenshot comparison must therefore be confirmed by CI
-  and the later approved staging smoke review.
+- Local Docker did not become ready during validation, so local browser
+  screenshots could not be captured. GitHub Quality Gates supplied the clean
+  PostgreSQL/Redis service validation; visual acceptance remains for the later
+  approved staging smoke review.
 
 ## UAT and approval
 
@@ -91,6 +92,10 @@ remains `NOT_APPROVED`, and `SECURITY-READINESS` remains `NOT_APPROVED`.
 - Development/staging Compose rendering: passed.
 - `npm audit --audit-level=low`: zero vulnerabilities.
 - `git diff --check`: passed.
+- GitHub Quality Gates run 34367915914: Node foundation 970/970 passed,
+  security assessment 60 passed with 345 focused exclusions, E2E acceptance
+  16/16 passed, catalog scale 10/10 passed, concurrency 38/38 passed, recovery
+  2/2 passed, PHP/WordPress passed and both Compose configurations passed.
 
 ## Deployment classification
 
