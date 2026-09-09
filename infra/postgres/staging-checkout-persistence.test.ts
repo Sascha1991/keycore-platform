@@ -14,7 +14,9 @@ import {
   createPostgresStagingCheckout,
   type StagingCheckoutResult,
 } from "../storefront/staging-checkout.js";
+import { OperationsControlService } from "../../packages/platform/src/operations/operations-controls.js";
 import { PostgresCustomerAccountReadRepository } from "./customer-account-repositories.js";
+import { PostgresOperationsControlRepository } from "./operations-control-repositories.js";
 import { seedSyntheticStagingCheckoutData } from "./staging-checkout-seed.js";
 import { stagingGuestOrderId } from "./staging-checkout-seed.js";
 import { createPostgresStagingGuestOrderClaim } from "../storefront/staging-guest-claim.js";
@@ -91,6 +93,48 @@ describe.skipIf(!connectionString)(
             typeof value === "bigint" ? value.toString() : value,
         );
         expect(serialized).not.toMatch(/product.?key|ciphertext|synthetic_/iu);
+      });
+    }, 30_000);
+
+    it("honors an authoritative checkout pause without creating customer state", async () => {
+      await withDatabase(async (database) => {
+        const controls = new OperationsControlService(
+          new PostgresOperationsControlRepository(database),
+          {
+            authority: {
+              authorize: async () => ({
+                actorReference: "admin-panel-v1-test",
+                status: "AUTHORIZED" as const,
+              }),
+            },
+            now: () => now,
+          },
+        );
+        await expect(
+          controls.changeControl({
+            capability: "CHECKOUT_CREATE",
+            correlationId: "corr-admin-panel-checkout-pause",
+            desiredState: "PAUSED",
+            expectedVersion: 1,
+            operationId: "admin-panel-checkout-pause",
+            reasonCode: "MAINTENANCE",
+          }),
+        ).resolves.toMatchObject({ status: "UPDATED" });
+
+        const checkout = createPostgresStagingCheckout(database, {
+          now: () => now,
+        });
+        await expect(
+          checkout.checkout(checkoutCommand(customerA, "17", "SUCCESS")),
+        ).resolves.toEqual({
+          reasonCode: "OPERATIONS_CONTROL_BLOCKED",
+          status: "DENIED",
+        });
+        await expect(countCheckoutOrders(database)).resolves.toBe(0);
+        await expect(count(database, "order_payments")).resolves.toBe(0);
+        await expect(count(database, "fulfillment_operations")).resolves.toBe(
+          0,
+        );
       });
     }, 30_000);
 

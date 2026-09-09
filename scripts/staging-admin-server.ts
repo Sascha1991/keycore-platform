@@ -3,10 +3,13 @@ import { createServer, type IncomingMessage } from "node:http";
 
 import {
   AdminAuthenticationService,
+  AdminOperationsService,
   AdminOrderService,
   AdminStaffService,
 } from "../packages/platform/src/contracts.js";
 import { AdminHttpController } from "../infra/admin/admin-http.js";
+import { AdminOperationsControlMutation } from "../infra/admin/admin-operations-control.js";
+import { AdminSupportOperations } from "../infra/admin/admin-support-operations.js";
 import {
   PostgresTransactionBoundary,
   createPostgresPool,
@@ -16,6 +19,9 @@ import {
   PostgresAdminSessionRepository,
   PostgresAdminStaffRepository,
 } from "../infra/postgres/admin-repositories.js";
+import { PostgresAdminOperationsRepository } from "../infra/postgres/admin-operations-repository.js";
+import { PostgresOperationsControlRepository } from "../infra/postgres/operations-control-repositories.js";
+import { PostgresSupportCaseRepository } from "../infra/postgres/support-case-repositories.js";
 import { PostgresAuditEventRepository } from "../infra/postgres/repositories.js";
 import { inspectStagingMigrationStatus } from "../infra/postgres/staging-preflight.js";
 import { PostgresStagingDelayedFulfillment } from "../infra/storefront/staging-delayed-fulfillment.js";
@@ -97,6 +103,23 @@ const controller = new AdminHttpController(
     secureCookies,
   },
   delayedFulfillment,
+  new AdminOperationsService(
+    new PostgresAdminOperationsRepository(database),
+    audit,
+    required("KEYRANO_STAGING_ADMIN_CURSOR_SECRET"),
+    "STAGING",
+    undefined,
+    new AdminOperationsControlMutation(
+      new PostgresOperationsControlRepository(database),
+      audit,
+      "STAGING",
+    ),
+    new AdminSupportOperations(
+      new PostgresSupportCaseRepository(database),
+      audit,
+      "STAGING",
+    ),
+  ),
 );
 const css = await readFile(
   new URL("../apps/admin/assets/admin.css", import.meta.url),

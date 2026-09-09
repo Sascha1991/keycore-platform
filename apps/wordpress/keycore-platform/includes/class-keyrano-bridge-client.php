@@ -94,6 +94,39 @@ final class Bridge_Client implements Bridge
         );
     }
 
+    public function support_cases(int $wp_user_id, string $customer_id): ?array
+    {
+        return $this->request('GET', '/v1/account/support', $wp_user_id, $customer_id);
+    }
+
+    public function support_case(int $wp_user_id, string $customer_id, string $case_id): ?array
+    {
+        if (! self::is_uuid($case_id)) {
+            return null;
+        }
+        return $this->request('GET', '/v1/account/support/' . rawurlencode($case_id), $wp_user_id, $customer_id);
+    }
+
+    public function create_support_case(int $wp_user_id, string $customer_id, array $command): ?array
+    {
+        return $this->request('POST', '/v1/account/support', $wp_user_id, $customer_id, true, $command);
+    }
+
+    public function reply_support_case(int $wp_user_id, string $customer_id, string $case_id, string $message): ?array
+    {
+        if (! self::is_uuid($case_id)) {
+            return null;
+        }
+        return $this->request(
+            'POST',
+            '/v1/account/support/' . rawurlencode($case_id) . '/reply',
+            $wp_user_id,
+            $customer_id,
+            true,
+            ['message' => $message]
+        );
+    }
+
     /** @return array<string, mixed>|null */
     private function request(
         string $method,

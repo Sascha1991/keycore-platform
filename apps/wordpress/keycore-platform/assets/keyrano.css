@@ -548,3 +548,19 @@ footer:has(.keyrano-footer-columns) figure img { height: auto; max-width: min(10
   color: #e9d5ff;
   font-weight: 700;
 }
+.keyrano-support-list { display: grid; gap: 14px; margin-top: 24px; }
+.keyrano-support-list h3 { color: #fff; margin-bottom: 0; }
+.keyrano-support-case { align-items: center; background: #15131c; border: 1px solid #2d2938; border-radius: 10px; display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) auto auto; padding: 18px; }
+.keyrano-support-case > div { display: grid; gap: 5px; min-width: 0; }
+.keyrano-support-case > div span { color: #aaa5b5; font-size: 14px; }
+.keyrano-support-messages { display: grid; gap: 14px; list-style: none; margin: 0 0 24px; padding: 0; }
+.keyrano-support-messages li { background: #15131c; border: 1px solid #2d2938; border-left: 4px solid #7c3aed; border-radius: 10px; padding: 18px; }
+.keyrano-support-messages header { display: flex; justify-content: space-between; gap: 16px; color: #aaa5b5; font-size: 14px; }
+.keyrano-support-messages header strong { color: #fff; }
+.keyrano-support-messages p { color: #d7d2e2; margin-bottom: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.keyrano-form-card textarea { background: #0f0e15; border: 1px solid #4a4359; border-radius: 7px; color: #fff; min-height: 140px; padding: 12px; resize: vertical; width: 100%; }
+@media (max-width: 720px) {
+  .keyrano-support-case { align-items: stretch; grid-template-columns: 1fr; }
+  .keyrano-support-case .keyrano-button { width: 100%; }
+  .keyrano-support-messages header { align-items: flex-start; flex-direction: column; gap: 4px; }
+}

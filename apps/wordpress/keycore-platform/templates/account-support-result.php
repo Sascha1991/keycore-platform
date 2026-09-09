@@ -1,0 +1,2 @@
+<?php defined('ABSPATH') || exit; ?>
+<section class="keyrano-account keyrano-account-surface"><div class="keyrano-empty-state"><strong><?php echo esc_html('CREATED' === $result ? __('Supportanfrage wurde erstellt.', 'keycore-platform') : ('UPDATED' === $result ? __('Antwort wurde hinzugefügt.', 'keycore-platform') : __('Supportanfrage konnte nicht bearbeitet werden.', 'keycore-platform'))); ?></strong><p><a href="<?php echo esc_url(wc_get_account_endpoint_url('support')); ?>"><?php echo esc_html__('Zurück zum Support', 'keycore-platform'); ?></a></p></div></section>

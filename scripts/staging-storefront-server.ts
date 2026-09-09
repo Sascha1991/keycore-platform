@@ -5,6 +5,7 @@ import {
   createPostgresPool,
 } from "../infra/postgres/client.js";
 import { PostgresCustomerAccountReadRepository } from "../infra/postgres/customer-account-repositories.js";
+import { PostgresSupportCaseRepository } from "../infra/postgres/support-case-repositories.js";
 import { createPostgresStagingCheckout } from "../infra/storefront/staging-checkout.js";
 import { createPostgresStagingGuestOrderClaim } from "../infra/storefront/staging-guest-claim.js";
 import { MailpitStagingTransport } from "../infra/storefront/staging-mailpit.js";
@@ -80,6 +81,7 @@ async function dependencies() {
       guestClaimDelivery: mailpit,
     }),
     guestOrderClaim: createPostgresStagingGuestOrderClaim(database),
+    supportRepository: new PostgresSupportCaseRepository(database),
   };
 }
 

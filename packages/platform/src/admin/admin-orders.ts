@@ -32,17 +32,53 @@ export const adminCapabilities = [
   "STAFF_MANAGE",
   "ROLE_ASSIGN",
   "PERMISSION_OVERRIDE_MANAGE",
+  "CUSTOMER_VIEW",
+  "CATALOG_VIEW",
+  "SUPPLIER_VIEW",
+  "SUPPORT_VIEW",
+  "SUPPORT_MANAGE",
+  "FINANCE_VIEW",
+  "REPORT_VIEW",
+  "FRAUD_REVIEW_VIEW",
+  "FRAUD_REVIEW_MANAGE",
+  "REFUND_MANAGE",
+  "OPERATIONS_CONTROL_VIEW",
+  "OPERATIONS_CONTROL_MANAGE",
 ] as const;
 export type AdminCapability = (typeof adminCapabilities)[number];
 
 const roleCapabilities: Readonly<
   Record<AdminRole, readonly AdminCapability[]>
 > = {
-  FINANCE: ["ADMIN_ACCESS", "ORDER_VIEW"],
-  OPERATIONS: ["ADMIN_ACCESS", "ORDER_VIEW", "SENSITIVE_OPERATION"],
+  FINANCE: ["ADMIN_ACCESS", "ORDER_VIEW", "FINANCE_VIEW", "REPORT_VIEW"],
+  OPERATIONS: [
+    "ADMIN_ACCESS",
+    "ORDER_VIEW",
+    "SENSITIVE_OPERATION",
+    "CUSTOMER_VIEW",
+    "CATALOG_VIEW",
+    "SUPPLIER_VIEW",
+    "SUPPORT_VIEW",
+    "SUPPORT_MANAGE",
+    "FRAUD_REVIEW_VIEW",
+    "FRAUD_REVIEW_MANAGE",
+    "OPERATIONS_CONTROL_VIEW",
+    "OPERATIONS_CONTROL_MANAGE",
+  ],
   PROJECT_OWNER: adminCapabilities,
-  SECURITY_AUDITOR: ["ADMIN_ACCESS", "AUDIT_VIEW"],
-  SUPPORT: ["ADMIN_ACCESS", "ORDER_VIEW"],
+  SECURITY_AUDITOR: [
+    "ADMIN_ACCESS",
+    "AUDIT_VIEW",
+    "FRAUD_REVIEW_VIEW",
+    "OPERATIONS_CONTROL_VIEW",
+  ],
+  SUPPORT: [
+    "ADMIN_ACCESS",
+    "ORDER_VIEW",
+    "CUSTOMER_VIEW",
+    "SUPPORT_VIEW",
+    "SUPPORT_MANAGE",
+  ],
 };
 
 export interface AdminPrincipal {

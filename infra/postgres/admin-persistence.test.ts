@@ -12,6 +12,7 @@ import {
   PostgresAdminSessionRepository,
   PostgresAdminStaffRepository,
 } from "./admin-repositories.js";
+import { PostgresAdminOperationsRepository } from "./admin-operations-repository.js";
 import { PostgresTestDatabase } from "./test-database.js";
 
 const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
@@ -164,7 +165,10 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       expect(detail?.effectiveCapabilities).toEqual([
         "ADMIN_ACCESS",
         "AUDIT_VIEW",
+        "CUSTOMER_VIEW",
         "ORDER_VIEW",
+        "SUPPORT_MANAGE",
+        "SUPPORT_VIEW",
       ]);
       expect(detail?.permissionHistory).toHaveLength(1);
       expect(
@@ -205,6 +209,74 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       expect(JSON.stringify(audit.entries)).not.toMatch(
         /session_hash|cookie|authorization|TEST-[A-Z0-9-]+/iu,
       );
+    } finally {
+      await database.cleanup();
+    }
+  }, 30_000);
+
+  it("projects bounded operational admin pages without secret-bearing columns", async () => {
+    const database = await initDatabase();
+    try {
+      const customerId = randomUUID();
+      const productId = await insertProduct(database);
+      await database.query(
+        `INSERT INTO keycore_customers(id, email_normalized, email_verification_state, record_version, created_at, updated_at) VALUES ($1, 'operations-customer@example.test', 'VERIFIED', 1, $2, $2)`,
+        [customerId, now],
+      );
+      const createdOrderId = await insertOrder(database, productId, customerId);
+      const supportId = randomUUID();
+      await database.query(
+        `INSERT INTO support_cases(id, customer_id, order_id, category, status, priority, source, resolution_code, record_version, correlation_id, created_at, updated_at, resolved_at, closed_at) VALUES ($1, $2, $3, 'ORDER_STATUS', 'OPEN', 'NORMAL', 'CUSTOMER', NULL, 1, 'admin-operations-pg', $4, $4, NULL, NULL)`,
+        [supportId, customerId, createdOrderId, now],
+      );
+      const repository = new PostgresAdminOperationsRepository(database);
+
+      await expect(
+        repository.listCustomers({ limit: 25, search: "operations-customer" }),
+      ).resolves.toMatchObject({
+        items: [{ customerId, orderCount: 1, verificationState: "VERIFIED" }],
+      });
+      await expect(
+        repository.listProducts({ limit: 25, search: "Admin Persistence" }),
+      ).resolves.toMatchObject({
+        items: [
+          { active: true, productId, title: "Admin Persistence Product" },
+        ],
+      });
+      await expect(repository.listSuppliers({ limit: 25 })).resolves.toEqual({
+        items: [],
+      });
+      await expect(
+        repository.listSupportCases({ limit: 25, status: "OPEN" }),
+      ).resolves.toMatchObject({
+        items: [
+          {
+            caseId: supportId,
+            customerEmail: "operations-customer@example.test",
+            orderId: createdOrderId,
+          },
+        ],
+      });
+      await expect(repository.financeSummary()).resolves.toMatchObject([
+        { capturedAmountMinor: "2199", capturedOrders: 1, currency: "EUR" },
+      ]);
+      const controls = await repository.listOperationsControls();
+      expect(controls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            capability: "PROCUREMENT_CREATE",
+            recordVersion: expect.any(Number),
+            state: "ENABLED",
+          }),
+        ]),
+      );
+      expect(
+        JSON.stringify({
+          customers: await repository.listCustomers({ limit: 25 }),
+          products: await repository.listProducts({ limit: 25 }),
+          support: await repository.listSupportCases({ limit: 25 }),
+        }),
+      ).not.toMatch(/ciphertext|session_hash|claim_code|verification_token/iu);
     } finally {
       await database.cleanup();
     }

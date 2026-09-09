@@ -86,6 +86,7 @@ describe("German Admin presentation labels", () => {
   it("requires every Admin audit code used by production sources to have a label", () => {
     const productionSources = [
       "../../packages/platform/src/admin/admin-orders.ts",
+      "../../packages/platform/src/admin/admin-operations.ts",
       "../../packages/platform/src/admin/admin-staff.ts",
       "../postgres/admin-repositories.ts",
     ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
