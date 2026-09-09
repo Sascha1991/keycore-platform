@@ -225,17 +225,26 @@ describe("AdminHttpController", () => {
       /\.workspace-grid\s*>\s*aside\s*\{[^}]*position:\s*static/gu,
     );
     expect(css).toMatch(/\.metric-card\s*\{[^}]*border:\s*1px solid/gu);
+    expect(css).toMatch(
+      /\.metric-icon\s*\{[^}]*display:\s*inline-flex[^}]*align-items:\s*center[^}]*justify-content:\s*center[^}]*width:\s*58px[^}]*height:\s*58px[^}]*padding:\s*15px/gu,
+    );
+    expect(css).toMatch(
+      /\.metric-icon \.icon\s*\{[^}]*display:\s*block[^}]*width:\s*28px[^}]*height:\s*28px/gu,
+    );
   });
 
   it("renders the shared operational shell without fake active controls", async () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.2");
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.3");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
     expect(response.body).toContain('id="icon-home"');
     expect(response.body).toContain('id="icon-brand"');
+    expect(response.body).toContain(
+      '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-cart"></use></svg>',
+    );
     expect(response.body).toContain('href="/admin/" aria-current="page"');
     expect(response.body).toContain('href="#icon-cart"');
     expect(response.body).toContain('href="/admin/orders"');

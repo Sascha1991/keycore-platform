@@ -319,15 +319,15 @@ main {
 }
 .metric-card {
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
-  gap: 0.8rem;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 1rem;
   align-items: center;
-  min-height: 112px;
+  min-height: 126px;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--surface);
   box-shadow: 0 10px 30px rgb(0 0 0 / 16%);
-  padding: 1rem;
+  padding: 1.1rem 1.2rem;
   position: relative;
   overflow: hidden;
   color: inherit;
@@ -352,15 +352,19 @@ main {
     0 12px 32px rgb(0 0 0 / 24%);
 }
 .metric-icon {
-  display: grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 58px;
+  min-width: 58px;
+  min-height: 58px;
+  padding: 15px;
   border-radius: 50%;
   background: #0c57bd;
   color: #fff;
-  font-size: 0.78rem;
-  font-weight: 900;
+  line-height: 0;
+  overflow: hidden;
 }
 .metric-card:nth-child(2) .metric-icon {
   background: #237f4e;
@@ -375,15 +379,28 @@ main {
   background: #0d8192;
 }
 .metric-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   min-width: 0;
 }
+.metric-copy > span {
+  color: #b5c2cf;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
 .metric-copy strong {
-  margin-top: 0.2rem;
+  display: block;
+  margin-top: 0.28rem;
+  color: #f7f9fc;
+  font-size: 1.75rem;
+  line-height: 1.05;
 }
 .metric-copy small {
   display: block;
-  margin-top: 0.2rem;
+  margin-top: 0.38rem;
   color: var(--muted);
+  line-height: 1.25;
 }
 .workspace-grid {
   display: grid;
@@ -765,8 +782,10 @@ td:first-child {
   font-size: 0.8rem;
 }
 .metric-icon .icon {
-  width: 1.55rem;
-  height: 1.55rem;
+  display: block;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
 }
 .dashboard-metrics {
   grid-template-columns: repeat(4, minmax(175px, 1fr));
