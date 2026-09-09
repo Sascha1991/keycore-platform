@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Aligned the Admin Panel V1.1 global shell and Übersicht with the Human browser
+  reference: semantic SVG navigation/KPI icons, integrated KeyRaNo branding,
+  active navigation, truthful request-backed service status, a bounded real
+  Top-Products ranking, operational status/action modules and a readable recent
+  Orders surface. Unsupported historic capture and tax authority remains
+  explicit; Human-UAT and security approvals are unchanged.
+
 - Refined KeyRaNo Admin Panel V1.1 with a shared dense operations layout,
   accessible KPI navigation, truthful page action bars, professional no-data
   states and dashboard quick filters backed by matching allowlisted PostgreSQL

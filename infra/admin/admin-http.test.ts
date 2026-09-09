@@ -231,14 +231,19 @@ describe("AdminHttpController", () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.2");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
-    expect(response.body).toContain("Sichere Admin-Sitzung");
+    expect(response.body).toContain('id="icon-home"');
+    expect(response.body).toContain('id="icon-brand"');
+    expect(response.body).toContain('href="/admin/" aria-current="page"');
+    expect(response.body).toContain('href="#icon-cart"');
     expect(response.body).toContain('href="/admin/orders"');
     expect(response.body).toContain('href="/admin/staff"');
     expect(response.body).toContain('href="/admin/audit"');
     expect(response.body).toContain('href="/admin/discounts"');
     expect(response.body).toContain('class="environment-badge">STAGING');
+    expect(response.body).not.toMatch(/>\s*(BE|AU|IB|FG)\s*</u);
     expect(response.body).not.toMatch(/onclick=|alert\(/u);
   });
 
@@ -281,11 +286,20 @@ describe("AdminHttpController", () => {
     expect(report.body).toContain("Gesamtsicht ohne Datumsfilter");
     const dashboard = await controller.handle(authenticated("GET", "/admin/"));
     expect(dashboard.body).toContain("Erfasstes Zahlungsvolumen");
+    expect(dashboard.body).toContain("Serverstatus");
+    expect(dashboard.body).toContain("PostgreSQL");
+    expect(dashboard.body).toContain("Top-Produkte");
+    expect(dashboard.body).toContain("Neonpfad: Berlin");
+    expect(dashboard.body).toContain("Operative Bestellzustände");
+    expect(dashboard.body).toContain("Gleiche Definition wie Schnellfilter");
+    expect(dashboard.body).toContain('class="recent-orders-table"');
     expect(dashboard.body).toContain(
       'class="metric-card" href="/admin/orders"',
     );
     expect(dashboard.body).toContain("/admin/orders?view=PROCESSING");
     expect(dashboard.body).not.toContain("Erfasster Umsatz");
+    expect(dashboard.body).not.toContain("Kinguin API: Online");
+    expect(dashboard.body).not.toContain("Kleinunternehmerstatus");
 
     const processingRequest = authenticated("GET", "/admin/orders");
     processingRequest.query.set("view", "PROCESSING");
@@ -765,6 +779,13 @@ const fixture = (
         processingOrders: 1,
         recentOrders: [summary()],
         revenueByCurrency: [],
+        topProducts: [
+          {
+            productId: "10000000-0000-4000-8000-000000000001",
+            productTitle: "Neonpfad: Berlin",
+            purchasedQuantity: 1,
+          },
+        ],
         totalOrders: 1,
       };
     },

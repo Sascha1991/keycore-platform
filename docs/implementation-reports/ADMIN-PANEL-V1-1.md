@@ -8,11 +8,24 @@ KPI cards, filter panels, responsive workspace grids, consistent tables,
 product and supplier media fallbacks, and polished empty and unavailable
 states. Existing protected mutations remain unchanged.
 
+Human Browser Review Correction Pass 01/13 refines the global shell and
+Dashboard against the supplied Übersicht reference. It adds a coherent local
+SVG icon system, integrated KeyRaNo Admin branding, active navigation states,
+balanced responsive Dashboard composition and real operational modules. The
+category is ready for Human browser review; categories 02-13 are unchanged.
+
 ## Functional changes
 
 - Dashboard KPI cards are accessible links. `Aufmerksamkeit`, `In Bearbeitung`
   and `Fehlgeschlagen` use validated operational views whose PostgreSQL
   predicates match the dashboard aggregate definitions.
+- The Dashboard now ranks at most three qualifying paid Products from the last
+  30 days. The PostgreSQL aggregate uses the shared captured-payment state
+  contract, sums Order quantity, excludes failed/unpaid Orders and applies a
+  deterministic title/ID tie-break.
+- Compact service status is limited to the serving Admin application and the
+  PostgreSQL query that produced the page. Other services are explicitly not
+  evaluated without a current authoritative health check.
 - Customer, catalog, supplier, support and fraud lists have consistent search,
   filter, KPI and table presentation. Their figures are derived only from the
   bounded current result set and are labelled accordingly.
@@ -43,35 +56,43 @@ states. Existing protected mutations remain unchanged.
 
 ## Reference review
 
-| Reference                    | Result                                                                                                                       |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Gesamtübersicht              | `PARTIALLY_ALIGNED`: denser shared workspace and action hierarchy; unavailable historic/system data remains explicit         |
-| Berichte & Statistiken       | `PARTIALLY_ALIGNED`: KPI and analysis layout present; no fabricated time series or category split                            |
-| Einstellungen                | `PARTIALLY_ALIGNED`: tabbed hierarchy and real Operations Controls; unsupported settings remain unavailable                  |
-| Bestellungen                 | `ALIGNED`: action bar, real filters, state-rich bounded table and detail path                                                |
-| Finanzen                     | `PARTIALLY_ALIGNED`: authoritative payment/refund metrics; no invented net profit, tax or margin                             |
-| Lieferanten                  | `ALIGNED_WITH_EMPTY_STATE`: full workspace around real bounded supplier data and secret-free presentation                    |
-| Kunden                       | `ALIGNED_WITH_DOMAIN_LIMIT`: account/order summaries; no invented names, onboarding or authentication mutation               |
-| Mitarbeiter & Rollen         | `ALIGNED`: real staff lifecycle and permission actions retained in the denser layout                                         |
-| Produkte / Katalog           | `ALIGNED_WITH_DOMAIN_LIMIT`: real lifecycle and offer availability with fallback media; no unsafe import/create path         |
-| Rabatte & Kampagnen          | `BLOCKED_BY_DOMAIN`: navigable professional unavailable state; no authoritative discount domain exists                       |
-| Support                      | `ALIGNED`: real cases, priorities, customer-visible/internal messages and transitions                                        |
-| Admin-Panel Gesamt           | `PARTIALLY_ALIGNED`: shared visual language and operational modules; deep workflows remain constrained by existing authority |
-| Markierte Produkt-Action-Bar | `ALIGNED`: reusable title/description/search/filter/action composition implemented                                           |
+| Reference                    | Result                                                                                                                                        |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gesamtübersicht              | `PARTIALLY_COVERED`: reference composition, icons and real operational modules; no authoritative historic capture series or tax-status domain |
+| Berichte & Statistiken       | `PARTIALLY_ALIGNED`: KPI and analysis layout present; no fabricated time series or category split                                             |
+| Einstellungen                | `PARTIALLY_ALIGNED`: tabbed hierarchy and real Operations Controls; unsupported settings remain unavailable                                   |
+| Bestellungen                 | `ALIGNED`: action bar, real filters, state-rich bounded table and detail path                                                                 |
+| Finanzen                     | `PARTIALLY_ALIGNED`: authoritative payment/refund metrics; no invented net profit, tax or margin                                              |
+| Lieferanten                  | `ALIGNED_WITH_EMPTY_STATE`: full workspace around real bounded supplier data and secret-free presentation                                     |
+| Kunden                       | `ALIGNED_WITH_DOMAIN_LIMIT`: account/order summaries; no invented names, onboarding or authentication mutation                                |
+| Mitarbeiter & Rollen         | `ALIGNED`: real staff lifecycle and permission actions retained in the denser layout                                                          |
+| Produkte / Katalog           | `ALIGNED_WITH_DOMAIN_LIMIT`: real lifecycle and offer availability with fallback media; no unsafe import/create path                          |
+| Rabatte & Kampagnen          | `BLOCKED_BY_DOMAIN`: navigable professional unavailable state; no authoritative discount domain exists                                        |
+| Support                      | `ALIGNED`: real cases, priorities, customer-visible/internal messages and transitions                                                         |
+| Admin-Panel Gesamt           | `PARTIALLY_ALIGNED`: shared visual language and operational modules; deep workflows remain constrained by existing authority                  |
+| Markierte Produkt-Action-Bar | `ALIGNED`: reusable title/description/search/filter/action composition implemented                                                            |
 
 ## Accepted limitations
 
 - There is no authoritative discount/campaign engine, customer admin onboarding,
   catalog import/create mutation, supplier credential onboarding, fraud
   resolution, refund initiation or production-shaped identity transport.
-- Historical reporting series, comparison periods, payment-method distribution,
-  tax, margin, accounting and service-health data are unavailable.
+- A historical Dashboard capture series cannot use the established conservative
+  `CAPTURED + REFUNDED + PARTIALLY_REFUNDED` contract with one consistent,
+  immutable capture timestamp in the current model. The payment-volume panel
+  therefore remains an explicit polished limitation instead of showing an
+  inferred chart.
+- Comparison periods, payment-method distribution, tax, margin and accounting
+  authority are unavailable. Dashboard service status reports only states
+  proven by the current request; it does not infer health from configuration.
 - Product media is not present in the current Admin read model, so a stable
   platform-derived fallback is shown rather than broken or external imagery.
-- Local Docker did not become ready during validation, so local browser
-  screenshots could not be captured. GitHub Quality Gates supplied the clean
-  PostgreSQL/Redis service validation; visual acceptance remains for the later
-  approved staging smoke review.
+- Local Docker rendered the corrected Dashboard successfully at approximately
+  1280 x 720. Direct browser review covered the full Dashboard, sparse Top
+  Products and Handlungsbedarf states, refresh, notifications, sidebar active
+  state, KPI quick filters, browser Back behavior and recent-order navigation.
+  The first render exposed and the implementation corrected a page-level
+  horizontal overflow and low-contrast Quick Access labels.
 
 ## UAT and approval
 

@@ -356,6 +356,14 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         amountMinor: 1500,
         paymentStatus: "PARTIALLY_REFUNDED",
       });
+      const failedProductId = await insertProduct(
+        database,
+        "Failed Admin Product",
+      );
+      await insertOrder(database, failedProductId, customerId, {
+        amountMinor: 9999,
+        paymentStatus: "FAILED",
+      });
 
       const dashboard = await new PostgresAdminOrderReadRepository(
         database,
@@ -366,6 +374,13 @@ describePostgres("secure admin PostgreSQL persistence", () => {
 
       expect(dashboard.revenueByCurrency).toEqual([
         { amountMinor: "6699", currency: "EUR" },
+      ]);
+      expect(dashboard.topProducts).toEqual([
+        {
+          productId,
+          productTitle: "Admin Persistence Product",
+          purchasedQuantity: 3,
+        },
       ]);
       expect(finance).toEqual([
         {
@@ -480,9 +495,11 @@ const insertAdmin = async (
 
 const insertProduct = async (
   database: PostgresTestDatabase,
+  title = "Admin Persistence Product",
 ): Promise<string> => {
   const result = await database.query<{ readonly id: string }>(
-    `INSERT INTO products(product_type, title, platform, lifecycle, active, canonical_metadata_confidence) VALUES ('GAME', 'Admin Persistence Product', 'WINDOWS', 'IN_STOCK', true, 'HIGH') RETURNING id::text`,
+    `INSERT INTO products(product_type, title, platform, lifecycle, active, canonical_metadata_confidence) VALUES ('GAME', $1, 'WINDOWS', 'IN_STOCK', true, 'HIGH') RETURNING id::text`,
+    [title],
   );
   return required(result.rows[0]).id;
 };
@@ -493,7 +510,8 @@ const insertOrder = async (
   customerId: string,
   options: {
     readonly amountMinor?: number;
-    readonly paymentStatus?: "CAPTURED" | "REFUNDED" | "PARTIALLY_REFUNDED";
+    readonly paymentStatus?:
+      "CAPTURED" | "FAILED" | "REFUNDED" | "PARTIALLY_REFUNDED";
   } = {},
 ): Promise<string> => {
   const amountMinor = options.amountMinor ?? 2199;
@@ -523,7 +541,11 @@ const insertOrder = async (
       priceLockId,
       customerId,
       amountMinor,
-      refunded ? "REFUNDED" : "FULFILLMENT_PENDING",
+      refunded
+        ? "REFUNDED"
+        : paymentStatus === "FAILED"
+          ? "FAILED"
+          : "FULFILLMENT_PENDING",
       paymentStatus,
       refunded
         ? "SUCCEEDED"

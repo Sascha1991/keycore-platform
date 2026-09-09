@@ -285,6 +285,11 @@ export interface AdminDashboard {
     readonly currency: string;
     readonly amountMinor: string;
   }[];
+  readonly topProducts: readonly {
+    readonly productId: string;
+    readonly productTitle: string;
+    readonly purchasedQuantity: number;
+  }[];
   readonly recentOrders: readonly AdminOrderSummary[];
 }
 

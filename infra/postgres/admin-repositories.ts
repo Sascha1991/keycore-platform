@@ -581,7 +581,7 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
   public constructor(private readonly database: Queryable) {}
 
   public async dashboard(): Promise<AdminDashboard> {
-    const [counts, revenue, recent] = await Promise.all([
+    const [counts, revenue, recent, topProducts] = await Promise.all([
       this.database.query<{
         readonly total_orders: string;
         readonly attention_orders: string;
@@ -611,6 +611,26 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
       this.database.query<OrderSummaryRow>(
         `${summarySelect} ORDER BY orders.created_at DESC, orders.id DESC LIMIT 10`,
       ),
+      this.database.query<{
+        readonly product_id: string;
+        readonly product_title: string;
+        readonly purchased_quantity: string;
+      }>(
+        `
+        SELECT
+          product.id::text AS product_id,
+          product.title AS product_title,
+          sum(orders.quantity)::text AS purchased_quantity
+        FROM keycore_orders orders
+        JOIN products product ON product.id = orders.product_id
+        WHERE orders.payment_status = ANY($1::text[])
+          AND orders.created_at >= current_timestamp - interval '30 days'
+        GROUP BY product.id, product.title
+        ORDER BY sum(orders.quantity) DESC, product.title ASC, product.id ASC
+        LIMIT 3
+      `,
+        [adminCapturedPaymentVolumeStates],
+      ),
     ]);
     const row = required(counts.rows[0]);
     return {
@@ -621,6 +641,11 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
       revenueByCurrency: revenue.rows.map((item) => ({
         amountMinor: item.amount_minor,
         currency: item.currency,
+      })),
+      topProducts: topProducts.rows.map((item) => ({
+        productId: item.product_id,
+        productTitle: item.product_title,
+        purchasedQuantity: Number(item.purchased_quantity),
       })),
       totalOrders: Number(row.total_orders),
     };

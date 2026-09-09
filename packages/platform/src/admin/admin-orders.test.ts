@@ -396,6 +396,13 @@ const repositoryFixture = (): AdminOrderReadRepository => ({
     processingOrders: 1,
     recentOrders: [summary()],
     revenueByCurrency: [{ amountMinor: "2199", currency: "EUR" }],
+    topProducts: [
+      {
+        productId: "10000000-0000-4000-8000-000000000001",
+        productTitle: "Arena Eleven",
+        purchasedQuantity: 1,
+      },
+    ],
     totalOrders: 1,
   })),
   findDetail: vi.fn(async () => detail()),

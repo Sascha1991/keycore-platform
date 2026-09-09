@@ -339,23 +339,37 @@ export class AdminHttpController {
             )
             .join("")
         : "<li><strong>0</strong><span>Kein erfasstes Zahlungsvolumen</span></li>";
+    const topProducts =
+      result.topProducts.length === 0
+        ? emptyState(
+            "Noch keine bezahlten Produkte",
+            "In den letzten 30 Tagen liegen keine qualifizierenden Bestellungen vor.",
+          )
+        : `<ol class="top-products">${result.topProducts
+            .map(
+              (product) =>
+                `<li>${icon("package")}<span><strong>${escapeHtml(product.productTitle)}</strong><small>Verkaufte Einheiten, letzte 30 Tage</small></span><b>${product.purchasedQuantity}</b></li>`,
+            )
+            .join("")}</ol>`;
+    const attention = result.attentionOrders + result.failedOrders;
     return this.render(
       200,
       `
-      ${pageActionBar("Übersicht", "Dein operativer Überblick über Bestellungen, Zahlungen und Handlungsbedarf.", '<a class="button-quiet" href="/admin/">Aktualisieren</a>')}
-      <section class="metric-grid" aria-label="Bestellkennzahlen">
-        ${metric("Bestellungen", result.totalOrders, { href: "/admin/orders", icon: "BE", detail: "Alle Bestellungen" })}${metric("Aufmerksamkeit", result.attentionOrders, { href: "/admin/orders?view=ATTENTION", icon: "AU", detail: "Manuelle Prüfung" })}${metric("In Bearbeitung", result.processingOrders, { href: "/admin/orders?view=PROCESSING", icon: "IB", detail: "Aktive Abwicklung" })}${metric("Fehlgeschlagen", result.failedOrders, { href: "/admin/orders?view=FAILED", icon: "FG", detail: "Fehlgeschlagene Vorgänge" })}
+      ${pageActionBar("Übersicht", "Dein operativer Überblick über Bestellungen, Zahlungen und Handlungsbedarf.", `<span class="period-control">${icon("calendar")} Aktueller Datenstand</span><a class="button-quiet icon-button-text" href="/admin/">${icon("refresh")} Aktualisieren</a>`)}
+      <section class="metric-grid dashboard-metrics" aria-label="Bestellkennzahlen">
+        ${metric("Bestellungen", result.totalOrders, { href: "/admin/orders", iconName: "cart", detail: "Alle Bestellungen" })}${metric("Aufmerksamkeit", result.attentionOrders, { href: "/admin/orders?view=ATTENTION", iconName: "alert", detail: "Manuelle Prüfung" })}${metric("In Bearbeitung", result.processingOrders, { href: "/admin/orders?view=PROCESSING", iconName: "clock", detail: "Aktive Abwicklung" })}${metric("Fehlgeschlagen", result.failedOrders, { href: "/admin/orders?view=FAILED", iconName: "failure", detail: "Fehlgeschlagene Vorgänge" })}
       </section>
-      <div class="workspace-grid">
-        <div class="workspace-stack">
-          <section class="content-section chart-panel"><div class="section-heading"><h2>Erfasstes Zahlungsvolumen</h2><span>Autoritative Gesamtsicht</span></div><ul class="revenue-list">${revenue}</ul>${honestChartState("Eine historische Zeitreihe ist noch nicht an diesen Überblick angebunden.")}</section>
-          <section class="content-section orders-section"><div class="section-heading"><h2>Letzte Bestellungen</h2><a href="/admin/orders">Alle anzeigen</a></div>${ordersTable(result.recentOrders)}</section>
-        </div>
-        <aside class="workspace-stack" aria-label="Operativer Überblick">
-          <section class="content-section"><div class="section-heading"><h2>Handlungsbedarf</h2></div>${result.attentionOrders + result.failedOrders === 0 ? emptyState("Kein aktueller Handlungsbedarf", "Es liegen keine risikobedingten oder fehlgeschlagenen Bestellungen vor.") : `<ul class="insight-list"><li><span>Manuelle Prüfung</span><strong>${result.attentionOrders}</strong></li><li><span>Fehlgeschlagen</span><strong>${result.failedOrders}</strong></li></ul>`}</section>
-          <section class="content-section"><div class="section-heading"><h2>Schnellzugriff</h2></div><nav class="quick-links" aria-label="Dashboard-Schnellzugriff"><a href="/admin/support">Support öffnen <span>→</span></a><a href="/admin/fraud">Betrugsprüfung öffnen <span>→</span></a><a href="/admin/notifications">Benachrichtigungen <span>→</span></a></nav></section>
-        </aside>
+      <div class="dashboard-overview-grid">
+        <section class="content-section service-panel"><div class="section-heading"><h2>Serverstatus</h2><span>Aktueller Request</span></div><ul class="service-list"><li>${icon("server")}<span>Admin-Anwendung</span><strong>Online</strong></li><li>${icon("database")}<span>PostgreSQL</span><strong>Online</strong></li></ul><p class="module-note">Weitere Dienste werden hier nicht ohne aktuellen Health-Check bewertet.</p></section>
+        <section class="content-section chart-panel"><div class="section-heading"><h2>Erfasstes Zahlungsvolumen</h2><span>Autoritative Gesamtsicht</span></div><ul class="revenue-list">${revenue}</ul>${honestChartState("Ein eindeutiger historischer Capture-Zeitpunkt ist noch nicht für alle Zahlungszustände verfügbar.")}</section>
+        <section class="content-section top-products-panel"><div class="section-heading"><h2>Top-Produkte</h2><span>30 Tage</span></div>${topProducts}</section>
       </div>
+      <section class="content-section order-status-panel"><div class="section-heading"><h2>Operative Bestellzustände</h2><span>Gleiche Definition wie Schnellfilter</span></div><div class="status-overview"><a href="/admin/orders"><strong>${result.totalOrders}</strong><span>Bestellungen gesamt</span></a><a href="/admin/orders?view=PROCESSING"><strong>${result.processingOrders}</strong><span>${icon("clock")} In Bearbeitung</span></a><a href="/admin/orders?view=ATTENTION"><strong>${result.attentionOrders}</strong><span>${icon("alert")} Aufmerksamkeit</span></a><a href="/admin/orders?view=FAILED"><strong>${result.failedOrders}</strong><span>${icon("failure")} Fehlgeschlagen</span></a></div></section>
+      <div class="dashboard-lower-grid">
+        <section class="content-section dashboard-action-panel"><div class="section-heading"><h2>Handlungsbedarf</h2><a href="/admin/notifications">Alle anzeigen</a></div>${attention === 0 ? emptyState("Kein aktueller Handlungsbedarf", "Es liegen keine risikobedingten oder fehlgeschlagenen Bestellungen vor.") : `<ul class="action-list">${result.attentionOrders > 0 ? `<li>${icon("alert")}<span><strong>Manuelle Prüfung</strong><small>${result.attentionOrders} Bestellung(en) benötigen Aufmerksamkeit.</small></span><a href="/admin/orders?view=ATTENTION">Öffnen ${icon("arrow")}</a></li>` : ""}${result.failedOrders > 0 ? `<li>${icon("failure")}<span><strong>Fehlgeschlagene Bestellungen</strong><small>${result.failedOrders} Vorgang/Vorgänge sind terminal fehlgeschlagen.</small></span><a href="/admin/orders?view=FAILED">Öffnen ${icon("arrow")}</a></li>` : ""}</ul>`}</section>
+        <section class="content-section quick-access-panel"><div class="section-heading"><h2>Schnellzugriff</h2></div>${dashboardQuickLinks(principal)}</section>
+      </div>
+      <section class="content-section orders-section recent-orders"><div class="section-heading"><h2>Letzte Bestellungen</h2><a href="/admin/orders">Alle anzeigen</a></div>${recentOrdersTable(result.recentOrders)}</section>
     `,
       principal,
     );
@@ -1014,7 +1028,7 @@ const page = (
   additionalHeaders: Readonly<Record<string, string>> = {},
   csrfSecret?: string,
 ): AdminHttpResponse => ({
-  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
+  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.2"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
   headers: securityHeaders(additionalHeaders),
   statusCode,
 });
@@ -1023,7 +1037,7 @@ const loginPage = (): AdminHttpResponse =>
   page(
     200,
     `
-  <section class="login-panel"><div class="brand">KeyRaNo <span>Admin</span></div><h1>Interne Anmeldung</h1><p>Nur für autorisierte Mitarbeitende.</p><form method="post" action="/admin/login"><label for="session_code">Sicherer Zugangscode</label><input id="session_code" name="session_code" type="password" autocomplete="off" required minlength="32" maxlength="512"><button type="submit">Anmelden</button></form></section>
+  ${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Interne Anmeldung</h1><p>Nur für autorisierte Mitarbeitende.</p><form method="post" action="/admin/login"><label for="session_code">Sicherer Zugangscode</label><input id="session_code" name="session_code" type="password" autocomplete="off" required minlength="32" maxlength="512"><button type="submit">Anmelden</button></form></section>
 `,
   );
 
@@ -1033,15 +1047,104 @@ const shell = (
   csrfSecret: string,
 ): string => {
   const csrf = createAdminCsrf(principal, "POST", "/admin/logout", csrfSecret);
+  const currentSection = currentAdminSection(content);
   const link = (
     capability: AdminCapability,
     path: string,
     label: string,
+    iconName: AdminIconName,
   ): string =>
     hasAdminCapability(principal, capability)
-      ? `<a href="${path}">${label}</a>`
+      ? navigationLink(path, label, iconName, currentSection === path)
       : "";
-  return `<div class="admin-shell"><aside class="admin-sidebar"><a class="brand" href="/admin/" aria-label="KeyRaNo Admin Übersicht">KeyRaNo <span>Admin</span></a><nav aria-label="Admin-Navigation"><a href="/admin/">Übersicht</a>${link("ORDER_VIEW", "/admin/orders", "Bestellungen")}${link("CUSTOMER_VIEW", "/admin/customers", "Kunden")}${link("CATALOG_VIEW", "/admin/catalog", "Produkte / Katalog")}${link("SUPPLIER_VIEW", "/admin/suppliers", "Lieferanten")}${link("CATALOG_VIEW", "/admin/discounts", "Rabatte &amp; Kampagnen")}${link("SUPPORT_VIEW", "/admin/support", "Support")}${link("FRAUD_REVIEW_VIEW", "/admin/fraud", "Betrugsprüfung")}${link("FINANCE_VIEW", "/admin/finance", "Finanzen")}${link("REPORT_VIEW", "/admin/reports", "Berichte &amp; Statistiken")}${hasAdminCapability(principal, "STAFF_VIEW") ? '<a href="/admin/staff">Mitarbeiter &amp; Rollen</a>' : ""}${hasAdminCapability(principal, "AUDIT_VIEW") ? '<a href="/admin/audit">Audit-Protokoll</a>' : ""}${link("OPERATIONS_CONTROL_VIEW", "/admin/settings", "Einstellungen")}</nav><div class="identity"><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.map(adminRoleLabel).join(", "))}</small><form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="${csrf}"><button type="submit">Abmelden</button></form></div></aside><main><header class="admin-toolbar"><span class="environment-badge">STAGING</span><a class="notification-link" href="/admin/notifications">Benachrichtigungen</a><span>Sichere Admin-Sitzung</span><strong>${escapeHtml(principal.displayName)}</strong></header>${content}</main></div>`;
+  return `${iconSprite()}<div class="admin-shell"><aside class="admin-sidebar"><a class="brand" href="/admin/" aria-label="KeyRaNo Admin Übersicht">${brandContent()}</a><nav aria-label="Admin-Navigation">${navigationLink("/admin/", "Übersicht", "home", currentSection === "/admin/")}${link("ORDER_VIEW", "/admin/orders", "Bestellungen", "cart")}${link("CUSTOMER_VIEW", "/admin/customers", "Kunden", "users")}${link("CATALOG_VIEW", "/admin/catalog", "Produkte / Katalog", "package")}${link("SUPPLIER_VIEW", "/admin/suppliers", "Lieferanten", "truck")}${link("CATALOG_VIEW", "/admin/discounts", "Rabatte &amp; Kampagnen", "tag")}${link("SUPPORT_VIEW", "/admin/support", "Support", "headset")}${link("FRAUD_REVIEW_VIEW", "/admin/fraud", "Betrugsprüfung", "shield")}${link("FINANCE_VIEW", "/admin/finance", "Finanzen", "euro")}${link("REPORT_VIEW", "/admin/reports", "Berichte &amp; Statistiken", "chart")}${hasAdminCapability(principal, "STAFF_VIEW") ? navigationLink("/admin/staff", "Mitarbeiter &amp; Rollen", "users", currentSection === "/admin/staff") : ""}${hasAdminCapability(principal, "AUDIT_VIEW") ? navigationLink("/admin/audit", "Audit-Protokoll", "file", currentSection === "/admin/audit") : ""}${link("OPERATIONS_CONTROL_VIEW", "/admin/settings", "Einstellungen", "settings")}</nav><div class="identity"><div class="identity-summary"><span class="avatar-icon">${icon("user")}</span><span><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.map(adminRoleLabel).join(", "))}</small></span></div><form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="${csrf}"><button type="submit">${icon("logout")} Abmelden</button></form></div></aside><main><header class="admin-toolbar"><span class="environment-badge">STAGING</span><a class="notification-link" href="/admin/notifications"${currentSection === "/admin/notifications" ? ' aria-current="page"' : ""}>${icon("bell")}<span>Benachrichtigungen</span></a><div class="toolbar-identity"><span class="avatar-icon">${icon("user")}</span><span><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.map(adminRoleLabel).join(", "))}</small></span></div></header>${content}</main></div>`;
+};
+
+type AdminIconName =
+  | "alert"
+  | "arrow"
+  | "bell"
+  | "brand"
+  | "calendar"
+  | "cart"
+  | "chart"
+  | "clock"
+  | "database"
+  | "euro"
+  | "failure"
+  | "file"
+  | "headset"
+  | "home"
+  | "logout"
+  | "package"
+  | "refresh"
+  | "server"
+  | "settings"
+  | "shield"
+  | "tag"
+  | "truck"
+  | "user"
+  | "users";
+
+const icon = (name: AdminIconName): string =>
+  `<svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-${name}"></use></svg>`;
+
+const iconSprite = (): string => `<svg class="icon-sprite" aria-hidden="true">
+  <symbol id="icon-brand" viewBox="0 0 24 24"><path d="M12 2 20 6.5v11L12 22l-8-4.5v-11L12 2Z"/><circle cx="12" cy="10" r="2.4"/><path d="M12 12.5V17"/></symbol>
+  <symbol id="icon-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></symbol>
+  <symbol id="icon-cart" viewBox="0 0 24 24"><path d="M3 4h2l2.2 10h10.9l2-7H6"/><circle cx="9" cy="19" r="1.5"/><circle cx="18" cy="19" r="1.5"/></symbol>
+  <symbol id="icon-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2M16 5a3 3 0 0 1 0 6M17 13a5 5 0 0 1 4 5v2"/></symbol>
+  <symbol id="icon-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+  <symbol id="icon-package" viewBox="0 0 24 24"><path d="m4 7 8-4 8 4-8 4-8-4Z"/><path d="M4 7v10l8 4 8-4V7M12 11v10"/></symbol>
+  <symbol id="icon-truck" viewBox="0 0 24 24"><path d="M3 6h11v11H3zM14 10h4l3 3v4h-7z"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></symbol>
+  <symbol id="icon-tag" viewBox="0 0 24 24"><path d="M3 12V4h8l10 10-7 7L3 12Z"/><circle cx="8" cy="8" r="1.5"/></symbol>
+  <symbol id="icon-headset" viewBox="0 0 24 24"><path d="M4 14v-2a8 8 0 0 1 16 0v2M4 14h4v6H6a2 2 0 0 1-2-2v-4ZM20 14h-4v6h2a2 2 0 0 0 2-2v-4ZM16 20c0 1-1 2-3 2"/></symbol>
+  <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M12 3 20 6v6c0 5-3.5 8-8 10-4.5-2-8-5-8-10V6l8-3Z"/><path d="M12 8v5M12 17h.01"/></symbol>
+  <symbol id="icon-euro" viewBox="0 0 24 24"><path d="M18 6a7 7 0 1 0 0 12M4 10h10M4 14h10"/></symbol>
+  <symbol id="icon-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="icon-file" viewBox="0 0 24 24"><path d="M6 2h8l4 4v16H6zM14 2v5h5M9 12h6M9 16h6"/></symbol>
+  <symbol id="icon-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.5 1A7 7 0 0 0 14.7 6L14.4 3h-4.8l-.4 3A7 7 0 0 0 7.6 7L5 6.1 3 9.5 5.1 11a7 7 0 0 0 0 2L3 14.5 5 18l2.6-1a7 7 0 0 0 1.6 1l.4 3h4.8l.3-3a7 7 0 0 0 1.7-1l2.5 1 2-3.5-2-1.5c.1-.3.1-.7.1-1Z"/></symbol>
+  <symbol id="icon-logout" viewBox="0 0 24 24"><path d="M10 4H4v16h6M14 8l4 4-4 4M8 12h10"/></symbol>
+  <symbol id="icon-bell" viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></symbol>
+  <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7V3l-2 2a9 9 0 1 0 2 10M20 3h-4"/></symbol>
+  <symbol id="icon-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></symbol>
+  <symbol id="icon-alert" viewBox="0 0 24 24"><path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5M12 18h.01"/></symbol>
+  <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/></symbol>
+  <symbol id="icon-failure" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
+  <symbol id="icon-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></symbol>
+  <symbol id="icon-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></symbol>
+  <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></symbol>
+</svg>`;
+
+const brandContent = (): string =>
+  `<span class="brand-mark">${icon("brand")}</span><span class="brand-copy"><strong>KeyRaNo</strong><small>Admin</small></span>`;
+
+const navigationLink = (
+  path: string,
+  label: string,
+  iconName: AdminIconName,
+  current: boolean,
+): string =>
+  `<a href="${path}"${current ? ' aria-current="page"' : ""}>${icon(iconName)}<span>${label}</span></a>`;
+
+const currentAdminSection = (content: string): string => {
+  const title = /<h1>([^<]+)<\/h1>/u.exec(content)?.[1] ?? "";
+  if (title === "Übersicht") return "/admin/";
+  if (title.includes("Bestell")) return "/admin/orders";
+  if (title.includes("Kunde")) return "/admin/customers";
+  if (title.includes("Produkt") || title.includes("Katalog"))
+    return "/admin/catalog";
+  if (title.includes("Lieferant")) return "/admin/suppliers";
+  if (title.includes("Rabatte")) return "/admin/discounts";
+  if (title.includes("Support")) return "/admin/support";
+  if (title.includes("Betrug")) return "/admin/fraud";
+  if (title === "Finanzen") return "/admin/finance";
+  if (title.includes("Berichte")) return "/admin/reports";
+  if (title.includes("Mitarbeiter")) return "/admin/staff";
+  if (title.includes("Audit")) return "/admin/audit";
+  if (title.includes("Einstellungen")) return "/admin/settings";
+  if (title.includes("Benachrichtigungen")) return "/admin/notifications";
+  return "";
 };
 
 const securityHeaders = (
@@ -1168,10 +1271,11 @@ const metric = (
     readonly detail?: string;
     readonly href?: string;
     readonly icon?: string;
+    readonly iconName?: AdminIconName;
     readonly selected?: boolean;
   } = {},
 ): string => {
-  const content = `<span class="metric-icon" aria-hidden="true">${escapeHtml(options.icon ?? label.slice(0, 2).toUpperCase())}</span><span class="metric-copy"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong>${options.detail ? `<small>${escapeHtml(options.detail)}</small>` : ""}</span>`;
+  const content = `<span class="metric-icon" aria-hidden="true">${options.iconName ? icon(options.iconName) : escapeHtml(options.icon ?? label.slice(0, 2).toUpperCase())}</span><span class="metric-copy"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong>${options.detail ? `<small>${escapeHtml(options.detail)}</small>` : ""}</span>`;
   return options.href
     ? `<a class="metric-card" href="${escapeHtml(options.href)}"${options.selected ? ' aria-current="true"' : ""}>${content}</a>`
     : `<article class="metric-card">${content}</article>`;
@@ -1186,6 +1290,35 @@ const pageActionBar = (
 
 const honestChartState = (message: string): string =>
   `<div class="availability-panel"><h3>Auswertung begrenzt</h3><p>${escapeHtml(message)}</p></div>`;
+
+const dashboardQuickLinks = (principal: AdminPrincipal): string => {
+  const links: string[] = [];
+  if (hasAdminCapability(principal, "ORDER_VIEW"))
+    links.push(navigationLink("/admin/orders", "Bestellungen", "cart", false));
+  if (hasAdminCapability(principal, "SUPPORT_VIEW"))
+    links.push(navigationLink("/admin/support", "Support", "headset", false));
+  if (hasAdminCapability(principal, "FRAUD_REVIEW_VIEW"))
+    links.push(
+      navigationLink("/admin/fraud", "Betrugsprüfung", "shield", false),
+    );
+  links.push(
+    navigationLink("/admin/notifications", "Benachrichtigungen", "bell", false),
+  );
+  return `<nav class="quick-links" aria-label="Dashboard-Schnellzugriff">${links.join("")}</nav>`;
+};
+
+const compactOrderId = (value: string): string =>
+  `${value.slice(0, 8)}…${value.slice(-4)}`;
+
+const recentOrdersTable = (
+  orders: readonly AdminOrderListResult["orders"][number][],
+): string =>
+  orders.length === 0
+    ? emptyState(
+        "Keine Bestellungen gefunden",
+        "Es liegen noch keine Bestellungen für den Überblick vor.",
+      )
+    : `<div class="table-wrap"><table class="recent-orders-table"><thead><tr><th scope="col">Bestellung</th><th scope="col">Kunde</th><th scope="col">Produkt</th><th scope="col">Zahlung</th><th scope="col">Risiko</th><th scope="col">Abwicklung</th><th scope="col">Datum</th><th scope="col"><span class="sr-only">Aktion</span></th></tr></thead><tbody>${orders.map((order) => `<tr><td data-label="Bestellung" class="order-reference"><a href="/admin/orders/${order.orderId}" title="${escapeHtml(order.orderId)}">${escapeHtml(compactOrderId(order.orderId))}</a></td><td data-label="Kunde" class="customer-reference" title="${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}">${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}</td><td data-label="Produkt"><span class="product-cell">${icon("package")}<span>${escapeHtml(order.productTitle)} × ${order.quantity}</span></span></td><td data-label="Zahlung"><span class="status status-${escapeHtml(order.paymentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.paymentStatus))}</span></td><td data-label="Risiko"><span class="status status-${escapeHtml(order.riskStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.riskStatus))}</span></td><td data-label="Abwicklung"><span class="cell-stack"><span>${escapeHtml(adminStatusLabel(order.procurementStatus))}</span><small>${escapeHtml(adminStatusLabel(order.fulfillmentStatus))}</small></span></td><td data-label="Datum">${escapeHtml(formatDate(order.createdAt))}</td><td data-label="Aktion"><a class="row-action" href="/admin/orders/${order.orderId}" aria-label="Bestellung ${escapeHtml(order.orderId)} öffnen">Öffnen ${icon("arrow")}</a></td></tr>`).join("")}</tbody></table></div>`;
 
 const ordersTable = (
   orders: readonly AdminOrderListResult["orders"][number][],
