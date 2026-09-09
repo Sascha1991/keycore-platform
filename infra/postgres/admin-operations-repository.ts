@@ -10,6 +10,7 @@ import type {
   AdminSupplierSummary,
   AdminSupportCaseSummary,
 } from "../../packages/platform/src/contracts.js";
+import { adminCapturedPaymentVolumeStates } from "../../packages/platform/src/contracts.js";
 import type { Queryable } from "./client.js";
 
 export class PostgresAdminOperationsRepository implements AdminOperationsRepository {
@@ -161,21 +162,33 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       readonly last_sync_at: Date | null;
     }>(
       `
+      WITH selected_suppliers AS (
+        SELECT supplier.id, supplier.supplier_code, supplier.display_name
+        FROM suppliers supplier
+        ${where(predicates)}
+        ORDER BY lower(supplier.display_name) ASC, supplier.id ASC
+        LIMIT ${parameter(input.limit + 1)}
+      )
       SELECT supplier.id::text, supplier.supplier_code, supplier.display_name,
-        count(DISTINCT supplier_product.id)::text AS product_count,
-        count(DISTINCT supplier_offer.id) FILTER (WHERE supplier_offer.active = true)::text AS active_offer_count,
+        product_stats.product_count,
+        offer_stats.active_offer_count,
         latest_sync.status AS last_sync_status, latest_sync.started_at AS last_sync_at
-      FROM suppliers supplier
-      LEFT JOIN supplier_products supplier_product ON supplier_product.supplier_id = supplier.id
-      LEFT JOIN supplier_offers supplier_offer ON supplier_offer.supplier_id = supplier.id
+      FROM selected_suppliers supplier
+      LEFT JOIN LATERAL (
+        SELECT count(*)::text AS product_count
+        FROM supplier_products supplier_product
+        WHERE supplier_product.supplier_id = supplier.id
+      ) product_stats ON true
+      LEFT JOIN LATERAL (
+        SELECT count(*) FILTER (WHERE supplier_offer.active = true)::text AS active_offer_count
+        FROM supplier_offers supplier_offer
+        WHERE supplier_offer.supplier_id = supplier.id
+      ) offer_stats ON true
       LEFT JOIN LATERAL (
         SELECT status, started_at FROM catalog_sync_runs run
         WHERE run.supplier_id = supplier.id ORDER BY started_at DESC, id DESC LIMIT 1
       ) latest_sync ON true
-      ${where(predicates)}
-      GROUP BY supplier.id, latest_sync.status, latest_sync.started_at
       ORDER BY lower(supplier.display_name) ASC, supplier.id ASC
-      LIMIT ${parameter(input.limit + 1)}
     `,
       values,
     );
@@ -331,18 +344,24 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       readonly refunded_amount_minor: string;
       readonly captured_orders: string;
       readonly refunded_orders: string;
-    }>(`
+      readonly partially_refunded_orders: string;
+    }>(
+      `
       SELECT currency,
-        COALESCE(sum(customer_amount_minor) FILTER (WHERE payment_status IN ('CAPTURED', 'PARTIALLY_REFUNDED')), 0)::text AS captured_amount_minor,
+        COALESCE(sum(customer_amount_minor) FILTER (WHERE payment_status = ANY($1::text[])), 0)::text AS captured_amount_minor,
         COALESCE(sum(customer_amount_minor) FILTER (WHERE payment_status = 'REFUNDED'), 0)::text AS refunded_amount_minor,
-        count(*) FILTER (WHERE payment_status IN ('CAPTURED', 'PARTIALLY_REFUNDED'))::text AS captured_orders,
-        count(*) FILTER (WHERE payment_status = 'REFUNDED')::text AS refunded_orders
+        count(*) FILTER (WHERE payment_status = ANY($1::text[]))::text AS captured_orders,
+        count(*) FILTER (WHERE payment_status = 'REFUNDED')::text AS refunded_orders,
+        count(*) FILTER (WHERE payment_status = 'PARTIALLY_REFUNDED')::text AS partially_refunded_orders
       FROM keycore_orders GROUP BY currency ORDER BY currency ASC
-    `);
+    `,
+      [adminCapturedPaymentVolumeStates],
+    );
     return result.rows.map((row) => ({
       capturedAmountMinor: row.captured_amount_minor,
       capturedOrders: Number(row.captured_orders),
       currency: row.currency,
+      partiallyRefundedOrders: Number(row.partially_refunded_orders),
       refundedAmountMinor: row.refunded_amount_minor,
       refundedOrders: Number(row.refunded_orders),
     }));

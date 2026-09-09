@@ -109,11 +109,6 @@ td:first-child { font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 .notification-list .notification-critical { border-left-color: var(--red); }
 .notification-list li > div { display: grid; gap: .2rem; min-width: 0; }
 .notification-list span, .notification-list small { color: var(--muted); overflow-wrap: anywhere; }
-.control-form { display: grid; grid-template-columns: minmax(170px, 1fr) auto; align-items: end; gap: .55rem; min-width: 300px; }
-.control-form label { display: grid; gap: .3rem; color: var(--muted); font-size: .75rem; }
-.control-form select { min-height: 38px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--muted-surface); color: var(--text); padding: .45rem; }
-.control-form button { min-height: 38px; padding: .45rem .7rem; }
-.button-warning { border-color: #a6630b; background: #6b3d08; color: #fff3d2; }
 .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .state-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-bottom: 1rem; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--border); }
 .state-strip > div { min-width: 0; display: grid; gap: .45rem; padding: 1rem; background: var(--surface); }

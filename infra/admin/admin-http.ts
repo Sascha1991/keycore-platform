@@ -336,7 +336,7 @@ export class AdminHttpController {
                 `<li><strong>${escapeHtml(formatMinor(item.amountMinor, item.currency))}</strong><span>${escapeHtml(item.currency)}</span></li>`,
             )
             .join("")
-        : "<li><strong>0</strong><span>Keine erfassten Umsätze</span></li>";
+        : "<li><strong>0</strong><span>Kein erfasstes Zahlungsvolumen</span></li>";
     return this.render(
       200,
       `
@@ -344,7 +344,7 @@ export class AdminHttpController {
       <section class="metric-grid" aria-label="Bestellkennzahlen">
         ${metric("Bestellungen", result.totalOrders)}${metric("Aufmerksamkeit", result.attentionOrders)}${metric("In Bearbeitung", result.processingOrders)}${metric("Fehlgeschlagen", result.failedOrders)}
       </section>
-      <section class="content-section"><div class="section-heading"><h2>Erfasster Umsatz</h2></div><ul class="revenue-list">${revenue}</ul></section>
+      <section class="content-section"><div class="section-heading"><h2>Erfasstes Zahlungsvolumen</h2></div><ul class="revenue-list">${revenue}</ul></section>
       <section class="content-section orders-section"><div class="section-heading"><h2>Letzte Bestellungen</h2><a href="/admin/orders">Alle anzeigen</a></div>${ordersTable(result.recentOrders)}</section>
     `,
       principal,
@@ -1295,18 +1295,25 @@ const financeContent = (
   const cards = rows
     .flatMap((row) => [
       metric(
-        `Erfasster Umsatz (${row.currency})`,
+        `Erfasstes Zahlungsvolumen (${row.currency})`,
         formatMinor(row.capturedAmountMinor, row.currency),
       ),
-      metric(`Erfasste Bestellungen (${row.currency})`, row.capturedOrders),
+      metric(`Erfasste Zahlungen (${row.currency})`, row.capturedOrders),
       metric(
-        `Vollständig erstattet (${row.currency})`,
+        `Vollständig erstattetes Volumen (${row.currency})`,
         formatMinor(row.refundedAmountMinor, row.currency),
       ),
-      metric(`Erstattete Bestellungen (${row.currency})`, row.refundedOrders),
+      metric(
+        `Vollständig erstattete Bestellungen (${row.currency})`,
+        row.refundedOrders,
+      ),
+      metric(
+        `Teilweise erstattete Bestellungen (${row.currency})`,
+        row.partiallyRefundedOrders,
+      ),
     ])
     .join("");
-  return `<header class="page-heading"><p>${report ? "Auswertung" : "Zahlungsübersicht"}</p><h1>${title}</h1></header>${rows.length === 0 ? emptyState("Keine Finanzdaten verfügbar", "Es wurden noch keine auswertbaren Bestellungen erfasst.") : `<section class="metric-grid">${cards}</section>`}<section class="content-section"><div class="section-heading"><h2>${report ? "Datengrundlage" : "Einordnung"}</h2></div><p>Die Werte stammen direkt aus den gespeicherten Bestell- und Zahlungszuständen. Sie sind keine steuerliche oder buchhalterische Freigabe.</p></section>`;
+  return `<header class="page-heading"><p>${report ? "Auswertung" : "Zahlungsübersicht"}</p><h1>${title}</h1></header>${rows.length === 0 ? emptyState("Keine Finanzdaten verfügbar", "Es wurden noch keine auswertbaren Bestellungen erfasst.") : `<section class="metric-grid">${cards}</section>`}<section class="content-section"><div class="section-heading"><h2>${report ? "Datengrundlage" : "Einordnung"}</h2></div><p>Gesamtsicht ohne Datumsfilter. Das erfasste Zahlungsvolumen umfasst jede Bestellung, deren Zahlung erfasst wurde, einschließlich später vollständig oder teilweise erstatteter Zahlungen. Vollständig erstattete Bestellwerte werden separat ausgewiesen. Autoritative Teil-Erstattungsbeträge liegen im Bestellmodell derzeit nicht vor und werden deshalb nicht abgezogen. Die Werte sind weder Netto-Umsatz noch eine steuerliche oder buchhalterische Freigabe.</p></section>`;
 };
 
 const notificationsContent = (

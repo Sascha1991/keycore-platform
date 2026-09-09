@@ -28,6 +28,14 @@ version-aware transitions.
 - Product Keys, claim codes, session material, credentials, provider payloads
   and raw audit metadata never enter the Admin or Support views.
 - Monetary formatting uses exact minor-unit `BigInt` arithmetic.
+- Supplier product and active-offer totals are computed by independent,
+  index-backed aggregates after bounded supplier selection; no raw
+  product-by-offer join is formed.
+- Dashboard, Finance and Reports share one captured-payment-volume contract:
+  `CAPTURED`, `REFUNDED` and `PARTIALLY_REFUNDED` all contribute their original
+  captured order value. Fully refunded values and counts are shown separately.
+  Authoritative partial-refund amounts are not present in the order model, so
+  the UI does not fabricate a net value or subtract an inferred amount.
 
 ## Database and dependencies
 
@@ -48,6 +56,13 @@ UAT-011, UAT-013 and UAT-016 remain blocked for the reasons recorded in
 Discount/campaign mutation, refund initiation, procurement reconciliation,
 fraud resolution, registration/verification and production IdP transport were
 not invented. They require separate authoritative tasks.
+
+Finance and reporting remain an all-time operational snapshot without a date
+range, which is stated explicitly in both views. Notification composition
+remains bounded to the newest ten open support and fraud records before the
+final list is ranked; guaranteeing older urgent-item inclusion requires a
+separate priority-aware repository contract and is retained as a documented
+low-severity limitation.
 
 ## Main files
 

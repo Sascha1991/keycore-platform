@@ -17,6 +17,7 @@ import type {
   StoredAdminSession,
 } from "../../packages/platform/src/contracts.js";
 import {
+  adminCapturedPaymentVolumeStates,
   capabilitiesForRole,
   effectiveAdminCapabilities,
   orderId,
@@ -597,13 +598,16 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
       this.database.query<{
         readonly currency: string;
         readonly amount_minor: string;
-      }>(`
+      }>(
+        `
         SELECT currency, COALESCE(sum(customer_amount_minor), 0)::text AS amount_minor
         FROM keycore_orders
-        WHERE payment_status IN ('CAPTURED', 'REFUNDED', 'PARTIALLY_REFUNDED')
+        WHERE payment_status = ANY($1::text[])
         GROUP BY currency
         ORDER BY currency ASC
-      `),
+      `,
+        [adminCapturedPaymentVolumeStates],
+      ),
       this.database.query<OrderSummaryRow>(
         `${summarySelect} ORDER BY orders.created_at DESC, orders.id DESC LIMIT 10`,
       ),

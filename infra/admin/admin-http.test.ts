@@ -247,7 +247,7 @@ describe("AdminHttpController", () => {
       ["/admin/suppliers", "Synthetic Supplier"],
       ["/admin/support", "Bestellstatus"],
       ["/admin/fraud", "Manuelle Prüfungen"],
-      ["/admin/finance", "Erfasster Umsatz (EUR)"],
+      ["/admin/finance", "Erfasstes Zahlungsvolumen (EUR)"],
       ["/admin/reports", "Berichte &amp; Statistiken"],
       ["/admin/settings", "Beschaffung anlegen"],
     ] as const;
@@ -264,6 +264,20 @@ describe("AdminHttpController", () => {
       authenticated("GET", "/admin/finance"),
     );
     expect(finance.body).toContain("9.007.199.254.740.993,12 EUR");
+    expect(finance.body).toContain("Teilweise erstattete Bestellungen (EUR)");
+    expect(finance.body).toContain("Gesamtsicht ohne Datumsfilter");
+    expect(finance.body).toContain(
+      "Autoritative Teil-Erstattungsbeträge liegen im Bestellmodell derzeit nicht vor",
+    );
+    const report = await controller.handle(
+      authenticated("GET", "/admin/reports"),
+    );
+    expect(report.body).toContain("Erfasstes Zahlungsvolumen (EUR)");
+    expect(report.body).toContain("Teilweise erstattete Bestellungen (EUR)");
+    expect(report.body).toContain("Gesamtsicht ohne Datumsfilter");
+    const dashboard = await controller.handle(authenticated("GET", "/admin/"));
+    expect(dashboard.body).toContain("Erfasstes Zahlungsvolumen");
+    expect(dashboard.body).not.toContain("Erfasster Umsatz");
 
     const customerDetail = await controller.handle(
       authenticated("GET", `/admin/customers/${targetOrderId}`),
@@ -819,6 +833,7 @@ const fixture = (
         capturedAmountMinor: "900719925474099312",
         capturedOrders: 1,
         currency: "EUR",
+        partiallyRefundedOrders: 1,
         refundedAmountMinor: "0",
         refundedOrders: 0,
       },

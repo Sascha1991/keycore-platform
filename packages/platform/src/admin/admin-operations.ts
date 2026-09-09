@@ -98,12 +98,19 @@ export interface AdminOperationsControlSummary {
   readonly updatedAt: Date;
 }
 
+export const adminCapturedPaymentVolumeStates = [
+  "CAPTURED",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
+] as const;
+
 export interface AdminFinanceCurrencySummary {
   readonly currency: string;
   readonly capturedAmountMinor: string;
   readonly refundedAmountMinor: string;
   readonly capturedOrders: number;
   readonly refundedOrders: number;
+  readonly partiallyRefundedOrders: number;
 }
 
 export interface AdminNotificationItem {
