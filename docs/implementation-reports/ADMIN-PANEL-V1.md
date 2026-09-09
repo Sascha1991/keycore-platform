@@ -64,21 +64,24 @@ not invented. They require separate authoritative tasks.
 ## Validation
 
 - Focused Admin, Support and Storefront: 49 tests passed.
-- `npm run check`: 826 passed, 140 service-gated tests skipped; format, lint,
-  typecheck and secret scan passed.
-- Security assessment: 36 passed, 369 intentionally excluded by the focused
+- Local `npm run check`: 826 passed, 140 service-gated tests skipped; format,
+  lint, typecheck and secret scan passed.
+- GitHub `npm run check`: all 966 tests passed against PostgreSQL and Redis.
+- CI security assessment: 60 passed, 345 intentionally excluded by the focused
   configuration.
-- E2E acceptance: 15 passed, one PostgreSQL-gated test skipped.
+- CI E2E acceptance: all 16 tests passed.
 - UAT structure: 18 scenarios and five omission-first evidence artifacts valid;
   Human Acceptance remains `IN_REVIEW` and Human Approval `NOT_APPROVED`.
 - Development and staging Compose configuration: passed.
 - `npm audit --audit-level=low`: zero vulnerabilities after the Vitest patch.
 - `git diff --check`: passed.
 
-The local Docker engine did not become available during final verification, so
-the PostgreSQL-enabled, PHP 8.3 container and migration rollback runs remain
-delegated to the clean GitHub Actions services. Their unit/integration suites
-remain present and are not skipped or disabled in CI.
+The local Docker engine did not become available during final verification.
+GitHub Actions therefore supplied the authoritative clean-service result:
+PostgreSQL/Redis persistence, migration 030 rollback, PHP/Composer, both
+Compose definitions, 38 concurrency tests, the catalog scale gate and the
+REC-001 through REC-018 native restore exercise all passed in Quality Gates run
+34340644493.
 
 ## Approval state
 
