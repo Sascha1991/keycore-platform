@@ -221,6 +221,10 @@ describe("AdminHttpController", () => {
     expect(css).toMatch(
       /\.metric-grid,\s*\.filter-bar,\s*\.staff-form\s*\{[^}]*grid-template-columns:\s*1fr/gu,
     );
+    expect(css).toMatch(
+      /\.workspace-grid\s*>\s*aside\s*\{[^}]*position:\s*static/gu,
+    );
+    expect(css).toMatch(/\.metric-card\s*\{[^}]*border:\s*1px solid/gu);
   });
 
   it("renders the shared operational shell without fake active controls", async () => {
@@ -233,9 +237,8 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain('href="/admin/orders"');
     expect(response.body).toContain('href="/admin/staff"');
     expect(response.body).toContain('href="/admin/audit"');
-    expect(response.body).toContain(
-      'aria-disabled="true" title="Noch nicht als sicherer Admin-Bereich verfügbar"',
-    );
+    expect(response.body).toContain('href="/admin/discounts"');
+    expect(response.body).toContain('class="environment-badge">STAGING');
     expect(response.body).not.toMatch(/onclick=|alert\(/u);
   });
 
@@ -245,6 +248,7 @@ describe("AdminHttpController", () => {
       ["/admin/customers", "customer-a@example.test"],
       ["/admin/catalog", "Neonpfad: Berlin"],
       ["/admin/suppliers", "Synthetic Supplier"],
+      ["/admin/discounts", "Noch keine Rabattverwaltung verfügbar"],
       ["/admin/support", "Bestellstatus"],
       ["/admin/fraud", "Manuelle Prüfungen"],
       ["/admin/finance", "Erfasstes Zahlungsvolumen (EUR)"],
@@ -277,7 +281,27 @@ describe("AdminHttpController", () => {
     expect(report.body).toContain("Gesamtsicht ohne Datumsfilter");
     const dashboard = await controller.handle(authenticated("GET", "/admin/"));
     expect(dashboard.body).toContain("Erfasstes Zahlungsvolumen");
+    expect(dashboard.body).toContain(
+      'class="metric-card" href="/admin/orders"',
+    );
+    expect(dashboard.body).toContain("/admin/orders?view=PROCESSING");
     expect(dashboard.body).not.toContain("Erfasster Umsatz");
+
+    const processingRequest = authenticated("GET", "/admin/orders");
+    processingRequest.query.set("view", "PROCESSING");
+    const processing = await controller.handle(processingRequest);
+    expect(processing.statusCode).toBe(200);
+    expect(processing.body).toContain("Aktive Schnellansicht: In Bearbeitung");
+    expect(processing.body).toContain('name="view" value="PROCESSING"');
+
+    const discounts = await controller.handle(
+      authenticated("GET", "/admin/discounts"),
+    );
+    expect(discounts.body).toContain('aria-disabled="true"');
+    expect(discounts.body).toContain(
+      "keine autoritative Rabatt- oder Kampagnen-Domain",
+    );
+    expect(discounts.body).not.toContain('<button type="submit">Rabatt');
 
     const customerDetail = await controller.handle(
       authenticated("GET", `/admin/customers/${targetOrderId}`),
@@ -300,6 +324,9 @@ describe("AdminHttpController", () => {
     ).resolves.toMatchObject({ statusCode: 403 });
     await expect(
       support.handle(authenticated("GET", "/admin/catalog")),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      support.handle(authenticated("GET", "/admin/discounts")),
     ).resolves.toMatchObject({ statusCode: 403 });
   });
 
@@ -414,7 +441,7 @@ describe("AdminHttpController", () => {
     ).exec(detail.body)?.[1];
 
     expect(detail.statusCode).toBe(200);
-    expect(detail.body).toContain("Supportfalldetail");
+    expect(detail.body).toContain("Supportfall ");
     expect(detail.body).toContain("Für Kunden sichtbar");
     expect(detail.body).toContain("Interne Notiz");
     expect(detail.body).toContain("Status ändern");

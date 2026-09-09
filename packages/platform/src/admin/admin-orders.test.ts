@@ -254,6 +254,22 @@ describe("secure admin authentication and orders", () => {
     await expect(
       service.list(owner, { limit: 101 }, correlationId("admin-limit-invalid")),
     ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await service.list(
+      owner,
+      { operationalView: "PROCESSING" },
+      correlationId("admin-operational-view"),
+    );
+    expect(repository.list).toHaveBeenLastCalledWith({
+      filters: { operationalView: "PROCESSING" },
+      limit: 25,
+    });
+    await expect(
+      service.list(
+        owner,
+        { operationalView: "EVERYTHING" },
+        correlationId("admin-operational-view-invalid"),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
     await expect(
       service.list(
         owner,

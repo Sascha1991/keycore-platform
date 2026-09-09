@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Refined KeyRaNo Admin Panel V1.1 with a shared dense operations layout,
+  accessible KPI navigation, truthful page action bars, professional no-data
+  states and dashboard quick filters backed by matching allowlisted PostgreSQL
+  predicates. Existing Admin security and business mutations remain unchanged;
+  unavailable discount, reporting and onboarding authority is shown explicitly
+  rather than simulated. Human-UAT and security approvals remain unchanged.
+
 - Added KeyRaNo Admin Panel V1 as a German, responsive and capability-filtered
   operations workspace over existing PostgreSQL/domain authority, including
   customer, catalog, supplier, support, finance, reporting, fraud-read,

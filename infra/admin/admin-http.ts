@@ -117,6 +117,8 @@ export class AdminHttpController {
         return await this.productList(principal, request);
       if (request.method === "GET" && request.path === "/admin/suppliers")
         return await this.supplierList(principal, request);
+      if (request.method === "GET" && request.path === "/admin/discounts")
+        return this.discounts(principal);
       if (request.method === "GET" && request.path === "/admin/support")
         return await this.supportList(principal, request);
       if (request.method === "GET" && request.path === "/admin/fraud")
@@ -340,12 +342,20 @@ export class AdminHttpController {
     return this.render(
       200,
       `
-      <header class="page-heading"><p>Admin-Bereich</p><h1>Übersicht</h1></header>
+      ${pageActionBar("Übersicht", "Dein operativer Überblick über Bestellungen, Zahlungen und Handlungsbedarf.", '<a class="button-quiet" href="/admin/">Aktualisieren</a>')}
       <section class="metric-grid" aria-label="Bestellkennzahlen">
-        ${metric("Bestellungen", result.totalOrders)}${metric("Aufmerksamkeit", result.attentionOrders)}${metric("In Bearbeitung", result.processingOrders)}${metric("Fehlgeschlagen", result.failedOrders)}
+        ${metric("Bestellungen", result.totalOrders, { href: "/admin/orders", icon: "BE", detail: "Alle Bestellungen" })}${metric("Aufmerksamkeit", result.attentionOrders, { href: "/admin/orders?view=ATTENTION", icon: "AU", detail: "Manuelle Prüfung" })}${metric("In Bearbeitung", result.processingOrders, { href: "/admin/orders?view=PROCESSING", icon: "IB", detail: "Aktive Abwicklung" })}${metric("Fehlgeschlagen", result.failedOrders, { href: "/admin/orders?view=FAILED", icon: "FG", detail: "Fehlgeschlagene Vorgänge" })}
       </section>
-      <section class="content-section"><div class="section-heading"><h2>Erfasstes Zahlungsvolumen</h2></div><ul class="revenue-list">${revenue}</ul></section>
-      <section class="content-section orders-section"><div class="section-heading"><h2>Letzte Bestellungen</h2><a href="/admin/orders">Alle anzeigen</a></div>${ordersTable(result.recentOrders)}</section>
+      <div class="workspace-grid">
+        <div class="workspace-stack">
+          <section class="content-section chart-panel"><div class="section-heading"><h2>Erfasstes Zahlungsvolumen</h2><span>Autoritative Gesamtsicht</span></div><ul class="revenue-list">${revenue}</ul>${honestChartState("Eine historische Zeitreihe ist noch nicht an diesen Überblick angebunden.")}</section>
+          <section class="content-section orders-section"><div class="section-heading"><h2>Letzte Bestellungen</h2><a href="/admin/orders">Alle anzeigen</a></div>${ordersTable(result.recentOrders)}</section>
+        </div>
+        <aside class="workspace-stack" aria-label="Operativer Überblick">
+          <section class="content-section"><div class="section-heading"><h2>Handlungsbedarf</h2></div>${result.attentionOrders + result.failedOrders === 0 ? emptyState("Kein aktueller Handlungsbedarf", "Es liegen keine risikobedingten oder fehlgeschlagenen Bestellungen vor.") : `<ul class="insight-list"><li><span>Manuelle Prüfung</span><strong>${result.attentionOrders}</strong></li><li><span>Fehlgeschlagen</span><strong>${result.failedOrders}</strong></li></ul>`}</section>
+          <section class="content-section"><div class="section-heading"><h2>Schnellzugriff</h2></div><nav class="quick-links" aria-label="Dashboard-Schnellzugriff"><a href="/admin/support">Support öffnen <span>→</span></a><a href="/admin/fraud">Betrugsprüfung öffnen <span>→</span></a><a href="/admin/notifications">Benachrichtigungen <span>→</span></a></nav></section>
+        </aside>
+      </div>
     `,
       principal,
     );
@@ -361,6 +371,7 @@ export class AdminHttpController {
       "from",
       "to",
       "cursor",
+      "view",
     ]);
     const result = await this.orders.list(
       principal,
@@ -370,8 +381,8 @@ export class AdminHttpController {
     return this.render(
       200,
       `
-      <header class="page-heading"><p>Bestellverwaltung</p><h1>Bestellungen</h1></header>
-      ${searchForm(request.query)}
+      ${pageActionBar("Bestellungen", "Alle Bestellungen und ihre getrennten Zahlungs-, Risiko-, Beschaffungs- und Auslieferungszustände.", searchForm(request.query, true))}
+      ${orderViewNotice(request.query.get("view"))}${searchForm(request.query, false)}
       <section class="content-section orders-section"><div class="section-heading"><h2>Ergebnisse</h2><span>${result.orders.length} Einträge</span></div>${ordersTable(result.orders)}${pagination(result, request.query)}</section>
     `,
       principal,
@@ -492,6 +503,12 @@ export class AdminHttpController {
       supplierListContent(result, request.query),
       principal,
     );
+  }
+
+  private discounts(principal: AdminPrincipal): AdminHttpResponse {
+    if (!hasAdminCapability(principal, "CATALOG_VIEW"))
+      throw new AdminAccessError("ADMIN_ACCESS_DENIED");
+    return this.render(200, discountsContent(), principal);
   }
 
   private async supportList(
@@ -1016,8 +1033,6 @@ const shell = (
   csrfSecret: string,
 ): string => {
   const csrf = createAdminCsrf(principal, "POST", "/admin/logout", csrfSecret);
-  const unavailable = (label: string): string =>
-    `<span aria-disabled="true" title="Noch nicht als sicherer Admin-Bereich verfügbar">${label}</span>`;
   const link = (
     capability: AdminCapability,
     path: string,
@@ -1026,7 +1041,7 @@ const shell = (
     hasAdminCapability(principal, capability)
       ? `<a href="${path}">${label}</a>`
       : "";
-  return `<div class="admin-shell"><aside class="admin-sidebar"><a class="brand" href="/admin/" aria-label="KeyRaNo Admin Übersicht">KeyRaNo <span>Admin</span></a><nav aria-label="Admin-Navigation"><a href="/admin/">Übersicht</a>${link("ORDER_VIEW", "/admin/orders", "Bestellungen")}${link("CUSTOMER_VIEW", "/admin/customers", "Kunden")}${link("CATALOG_VIEW", "/admin/catalog", "Produkte / Katalog")}${link("SUPPLIER_VIEW", "/admin/suppliers", "Lieferanten")}${unavailable("Rabatte &amp; Kampagnen")}${link("SUPPORT_VIEW", "/admin/support", "Support")}${link("FRAUD_REVIEW_VIEW", "/admin/fraud", "Betrugsprüfung")}${link("FINANCE_VIEW", "/admin/finance", "Finanzen")}${link("REPORT_VIEW", "/admin/reports", "Berichte &amp; Statistiken")}${hasAdminCapability(principal, "STAFF_VIEW") ? '<a href="/admin/staff">Mitarbeiter &amp; Rollen</a>' : ""}${hasAdminCapability(principal, "AUDIT_VIEW") ? '<a href="/admin/audit">Audit-Protokoll</a>' : ""}${link("OPERATIONS_CONTROL_VIEW", "/admin/settings", "Einstellungen")}</nav><div class="identity"><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.map(adminRoleLabel).join(", "))}</small><form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="${csrf}"><button type="submit">Abmelden</button></form></div></aside><main><header class="admin-toolbar"><a href="/admin/notifications">Benachrichtigungen</a><span>Sichere Admin-Sitzung</span><strong>${escapeHtml(principal.displayName)}</strong></header>${content}</main></div>`;
+  return `<div class="admin-shell"><aside class="admin-sidebar"><a class="brand" href="/admin/" aria-label="KeyRaNo Admin Übersicht">KeyRaNo <span>Admin</span></a><nav aria-label="Admin-Navigation"><a href="/admin/">Übersicht</a>${link("ORDER_VIEW", "/admin/orders", "Bestellungen")}${link("CUSTOMER_VIEW", "/admin/customers", "Kunden")}${link("CATALOG_VIEW", "/admin/catalog", "Produkte / Katalog")}${link("SUPPLIER_VIEW", "/admin/suppliers", "Lieferanten")}${link("CATALOG_VIEW", "/admin/discounts", "Rabatte &amp; Kampagnen")}${link("SUPPORT_VIEW", "/admin/support", "Support")}${link("FRAUD_REVIEW_VIEW", "/admin/fraud", "Betrugsprüfung")}${link("FINANCE_VIEW", "/admin/finance", "Finanzen")}${link("REPORT_VIEW", "/admin/reports", "Berichte &amp; Statistiken")}${hasAdminCapability(principal, "STAFF_VIEW") ? '<a href="/admin/staff">Mitarbeiter &amp; Rollen</a>' : ""}${hasAdminCapability(principal, "AUDIT_VIEW") ? '<a href="/admin/audit">Audit-Protokoll</a>' : ""}${link("OPERATIONS_CONTROL_VIEW", "/admin/settings", "Einstellungen")}</nav><div class="identity"><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.map(adminRoleLabel).join(", "))}</small><form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="${csrf}"><button type="submit">Abmelden</button></form></div></aside><main><header class="admin-toolbar"><span class="environment-badge">STAGING</span><a class="notification-link" href="/admin/notifications">Benachrichtigungen</a><span>Sichere Admin-Sitzung</span><strong>${escapeHtml(principal.displayName)}</strong></header>${content}</main></div>`;
 };
 
 const securityHeaders = (
@@ -1102,12 +1117,14 @@ const compactQuery = (query: URLSearchParams) => {
   const search = optional(query, "search");
   const status = optional(query, "status");
   const toDate = optional(query, "to");
+  const operationalView = optional(query, "view");
   return {
     ...(cursor ? { cursor } : {}),
     ...(fromDate ? { fromDate } : {}),
     ...(search ? { search } : {}),
     ...(status ? { status } : {}),
     ...(toDate ? { toDate } : {}),
+    ...(operationalView ? { operationalView } : {}),
   };
 };
 
@@ -1144,8 +1161,31 @@ const formatDate = (date: Date): string =>
     timeStyle: "short",
     timeZone: "Europe/Berlin",
   }).format(date);
-const metric = (label: string, value: string | number): string =>
-  `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></article>`;
+const metric = (
+  label: string,
+  value: string | number,
+  options: {
+    readonly detail?: string;
+    readonly href?: string;
+    readonly icon?: string;
+    readonly selected?: boolean;
+  } = {},
+): string => {
+  const content = `<span class="metric-icon" aria-hidden="true">${escapeHtml(options.icon ?? label.slice(0, 2).toUpperCase())}</span><span class="metric-copy"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong>${options.detail ? `<small>${escapeHtml(options.detail)}</small>` : ""}</span>`;
+  return options.href
+    ? `<a class="metric-card" href="${escapeHtml(options.href)}"${options.selected ? ' aria-current="true"' : ""}>${content}</a>`
+    : `<article class="metric-card">${content}</article>`;
+};
+
+const pageActionBar = (
+  title: string,
+  description: string,
+  actions = "",
+): string =>
+  `<header class="page-action-bar"><div class="page-heading"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></div>${actions ? `<div class="page-actions">${actions}</div>` : ""}</header>`;
+
+const honestChartState = (message: string): string =>
+  `<div class="availability-panel"><h3>Auswertung begrenzt</h3><p>${escapeHtml(message)}</p></div>`;
 
 const ordersTable = (
   orders: readonly AdminOrderListResult["orders"][number][],
@@ -1154,8 +1194,27 @@ const ordersTable = (
     ? '<div class="empty-state"><strong>Keine Bestellungen gefunden</strong><p>Die gewählten Filter liefern keine Ergebnisse.</p></div>'
     : `<div class="table-wrap"><table class="orders-table"><thead><tr><th scope="col">Bestellung</th><th scope="col">Kunde</th><th scope="col">Produkt</th><th scope="col">Betrag</th><th scope="col">Zahlung</th><th scope="col">Risiko</th><th scope="col">Beschaffung</th><th scope="col">Auslieferung</th><th scope="col">Status</th><th scope="col">Datum</th></tr></thead><tbody>${orders.map((order) => `<tr><td data-label="Bestellung" class="order-reference"><a href="/admin/orders/${order.orderId}">${escapeHtml(order.orderId)}</a></td><td data-label="Kunde" class="customer-reference">${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}</td><td data-label="Produkt">${escapeHtml(order.productTitle)} × ${order.quantity}</td><td data-label="Betrag">${escapeHtml(formatMinor(order.amountMinor, order.currency))}</td><td data-label="Zahlung"><span class="status status-${escapeHtml(order.paymentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.paymentStatus))}</span></td><td data-label="Risiko"><span class="status status-${escapeHtml(order.riskStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.riskStatus))}</span></td><td data-label="Beschaffung"><span class="status status-${escapeHtml(order.procurementStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.procurementStatus))}</span></td><td data-label="Auslieferung"><span class="status status-${escapeHtml(order.fulfillmentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.fulfillmentStatus))}</span></td><td data-label="Status"><span class="status status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(adminStatusLabel(order.status))}</span></td><td data-label="Datum">${escapeHtml(formatDate(order.createdAt))}</td></tr>`).join("")}</tbody></table></div>`;
 
-const searchForm = (query: URLSearchParams): string =>
-  `<form class="filter-bar" method="get" action="/admin/orders"><label>Bestell-ID oder E-Mail<input type="search" name="search" maxlength="254" value="${escapeHtml(query.get("search") ?? "")}"></label><label>Status<select name="status"><option value="">Alle</option>${adminOrderStatuses.map((status) => `<option value="${status}"${query.get("status") === status ? " selected" : ""}>${escapeHtml(adminStatusLabel(status))}</option>`).join("")}</select></label><label>Von<input type="date" name="from" value="${escapeHtml(query.get("from") ?? "")}"></label><label>Bis<input type="date" name="to" value="${escapeHtml(query.get("to") ?? "")}"></label><button type="submit">Filtern</button></form>`;
+const searchForm = (query: URLSearchParams, compact: boolean): string => {
+  const view = query.get("view");
+  const hiddenView = view
+    ? `<input type="hidden" name="view" value="${escapeHtml(view)}">`
+    : "";
+  const search = `<form class="page-search" method="get" action="/admin/orders">${hiddenView}<label for="order-search">Bestellungen durchsuchen</label><input id="order-search" type="search" name="search" maxlength="254" placeholder="Bestell-ID oder Kunden-E-Mail" value="${escapeHtml(query.get("search") ?? "")}"><button class="button" type="submit">Suchen</button></form>`;
+  if (compact)
+    return `${search}<a class="button-quiet" href="#order-filter">Filter</a><span class="button-disabled" aria-disabled="true" title="Ein sicherer gefilterter Export ist noch nicht angebunden">Export</span>`;
+  return `<details class="filter-panel" id="order-filter"${query.has("status") || query.has("from") || query.has("to") ? " open" : ""}><summary>Detailfilter</summary><form class="filter-bar" method="get" action="/admin/orders">${hiddenView}<input type="hidden" name="search" value="${escapeHtml(query.get("search") ?? "")}"><label>Status<select name="status"><option value="">Alle</option>${adminOrderStatuses.map((status) => `<option value="${status}"${query.get("status") === status ? " selected" : ""}>${escapeHtml(adminStatusLabel(status))}</option>`).join("")}</select></label><label>Von<input type="date" name="from" value="${escapeHtml(query.get("from") ?? "")}"></label><label>Bis<input type="date" name="to" value="${escapeHtml(query.get("to") ?? "")}"></label><button type="submit">Filter anwenden</button><a class="reset-link" href="/admin/orders">Filter zurücksetzen</a></form></details>`;
+};
+
+const orderViewNotice = (view: string | null): string => {
+  const labels: Readonly<Record<string, string>> = {
+    ATTENTION: "Aufmerksamkeit",
+    FAILED: "Fehlgeschlagen",
+    PROCESSING: "In Bearbeitung",
+  };
+  return view && labels[view]
+    ? `<div class="notice"><strong>Aktive Schnellansicht: ${labels[view]}</strong><p>Die Bestellliste verwendet dieselbe operative Zustandsdefinition wie die Dashboard-Kennzahl. <a href="/admin/orders">Schnellansicht entfernen</a></p></div>`
+    : "";
+};
 
 const pagination = (
   result: AdminOrderListResult,
@@ -1186,35 +1245,64 @@ const operationalPagination = <T>(
   return `<a class="pagination" href="${path}?${escapeHtml(next.toString())}">Weitere Einträge</a>`;
 };
 
+const listActionBar = (
+  title: string,
+  description: string,
+  action: string,
+  query: URLSearchParams,
+  placeholder: string,
+  disabledAction: string,
+): string =>
+  pageActionBar(
+    title,
+    description,
+    `<form class="page-search" method="get" action="${action}"><label for="${title.toLowerCase().replace(/[^a-z]+/g, "-")}-search">${escapeHtml(title)} durchsuchen</label><input id="${title.toLowerCase().replace(/[^a-z]+/g, "-")}-search" type="search" name="search" maxlength="254" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(query.get("search") ?? "")}"><button class="button" type="submit">Suchen</button></form><a class="button-quiet" href="#list-filter">Filter</a><span class="button-disabled" aria-disabled="true" title="Für diese Aktion besteht noch kein freigegebener sicherer Schreibpfad">${escapeHtml(disabledAction)}</span>`,
+  );
+
 const customerListContent = (
   result: AdminOperationsListResult<AdminCustomerSummary>,
   query: URLSearchParams,
 ): string =>
-  `<header class="page-heading"><p>Kundenverwaltung</p><h1>Kunden</h1></header>${operationalFilter("/admin/customers", query, "E-Mail oder Kunden-ID", ["VERIFIED", "UNVERIFIED"])}<section class="content-section operations-section"><div class="section-heading"><h2>Kundenkonten</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Kunden gefunden", "Die gewählten Filter liefern keine Ergebnisse.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Kunden-ID</th><th>E-Mail</th><th>Verifizierung</th><th>Bestellungen</th><th>Letzte Bestellung</th><th>Registriert</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Kunden-ID" class="order-reference"><a href="/admin/customers/${encodeURIComponent(item.customerId)}">${escapeHtml(item.customerId)}</a></td><td data-label="E-Mail" class="customer-reference">${escapeHtml(item.email)}</td><td data-label="Verifizierung"><span class="status status-${item.verificationState.toLowerCase()}">${escapeHtml(operationalLabel(item.verificationState))}</span></td><td data-label="Bestellungen">${item.orderCount}</td><td data-label="Letzte Bestellung">${item.lastOrderAt ? escapeHtml(formatDate(item.lastOrderAt)) : "Keine"}</td><td data-label="Registriert">${escapeHtml(formatDate(item.createdAt))}</td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/customers")}</section>`;
+  `${listActionBar("Kunden", "Kundenkonten, Verifizierung und Bestellbeziehungen auf einen Blick.", "/admin/customers", query, "E-Mail oder Kunden-ID", "Kunde hinzufügen")}<section class="metric-grid" aria-label="Kundenkennzahlen">${metric("Gefundene Kunden", result.items.length, { icon: "KU", detail: "Aktuelle Ergebnisse" })}${metric("Verifiziert", result.items.filter((item) => item.verificationState === "VERIFIED").length, { icon: "VE", detail: "In dieser Auswahl" })}${metric("Mit Bestellungen", result.items.filter((item) => item.orderCount > 0).length, { icon: "BE", detail: "In dieser Auswahl" })}${metric(
+    "Bestellungen",
+    result.items.reduce((sum, item) => sum + item.orderCount, 0),
+    { icon: "BS", detail: "Über gefundene Kunden" },
+  )}</section><details class="filter-panel" id="list-filter"${query.has("status") ? " open" : ""}><summary>Detailfilter</summary>${operationalFilter("/admin/customers", query, "E-Mail oder Kunden-ID", ["VERIFIED", "UNVERIFIED"])}</details><section class="content-section operations-section flush"><div class="section-heading"><h2>Kundenkonten</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Kunden gefunden", "Die gewählten Filter liefern keine Ergebnisse.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Kunden-ID</th><th>E-Mail</th><th>Verifizierung</th><th>Bestellungen</th><th>Letzte Bestellung</th><th>Registriert</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Kunden-ID" class="table-reference"><a href="/admin/customers/${encodeURIComponent(item.customerId)}">${escapeHtml(item.customerId)}</a></td><td data-label="E-Mail"><span class="cell-stack"><strong>${escapeHtml(item.email)}</strong><small>Kundenkonto</small></span></td><td data-label="Verifizierung"><span class="status status-${item.verificationState.toLowerCase()}">${escapeHtml(operationalLabel(item.verificationState))}</span></td><td data-label="Bestellungen">${item.orderCount}</td><td data-label="Letzte Bestellung">${item.lastOrderAt ? escapeHtml(formatDate(item.lastOrderAt)) : "Keine"}</td><td data-label="Registriert">${escapeHtml(formatDate(item.createdAt))}</td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/customers")}</section>`;
 
 const customerDetailContent = (
   customer: AdminCustomerSummary,
   orders: AdminOrderListResult,
 ): string =>
-  `<header class="page-heading"><p>Kundendetail</p><h1>${escapeHtml(customer.email)}</h1></header><section class="state-strip" aria-label="Kundenstatus"><div><span>Verifizierung</span><strong>${escapeHtml(operationalLabel(customer.verificationState))}</strong></div><div><span>Bestellungen</span><strong>${customer.orderCount}</strong></div><div><span>Registriert</span><strong>${escapeHtml(formatDate(customer.createdAt))}</strong></div><div><span>Letzte Bestellung</span><strong>${customer.lastOrderAt ? escapeHtml(formatDate(customer.lastOrderAt)) : "Keine"}</strong></div></section><section class="content-section"><div class="section-heading"><h2>Bestellverlauf</h2><span>Maximal 25 aktuelle Einträge</span></div>${ordersTable(orders.orders)}</section><p class="page-note">Authentifizierungsdaten, Sitzungen und Verifizierungsnachweise werden in dieser Ansicht nicht ausgegeben.</p>`;
+  `${pageActionBar(customer.email, "Kundendetail und zugeordnete Bestellhistorie.", '<a class="button-quiet" href="/admin/customers">Zurück zu Kunden</a>')}<section class="state-strip" aria-label="Kundenstatus"><div><span>Verifizierung</span><strong>${escapeHtml(operationalLabel(customer.verificationState))}</strong></div><div><span>Bestellungen</span><strong>${customer.orderCount}</strong></div><div><span>Registriert</span><strong>${escapeHtml(formatDate(customer.createdAt))}</strong></div><div><span>Letzte Bestellung</span><strong>${customer.lastOrderAt ? escapeHtml(formatDate(customer.lastOrderAt)) : "Keine"}</strong></div></section><section class="content-section"><div class="section-heading"><h2>Bestellverlauf</h2><span>Maximal 25 aktuelle Einträge</span></div>${ordersTable(orders.orders)}</section><p class="page-note">Authentifizierungsdaten, Sitzungen und Verifizierungsnachweise werden in dieser Ansicht nicht ausgegeben.</p>`;
 
 const productListContent = (
   result: AdminOperationsListResult<AdminProductSummary>,
   query: URLSearchParams,
 ): string =>
-  `<header class="page-heading"><p>Sortiment</p><h1>Produkte / Katalog</h1></header>${operationalFilter("/admin/catalog", query, "Produktname oder Produkt-ID", ["ACTIVE", "INACTIVE", "ACTIVE_CANDIDATE", "REVIEW_REQUIRED", "REJECTED"])}<section class="content-section operations-section"><div class="section-heading"><h2>Katalogprodukte</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Produkte gefunden", "Der Katalog enthält für diese Auswahl keine Produkte.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Produkt</th><th>Plattform</th><th>Typ</th><th>Lebenszyklus</th><th>Angebote</th><th>Verfügbar</th><th>Status</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Produkt"><strong>${escapeHtml(item.title)}</strong><small class="table-subline">${escapeHtml(item.productId)}</small></td><td data-label="Plattform">${escapeHtml(operationalLabel(item.platform))}</td><td data-label="Typ">${escapeHtml(operationalLabel(item.productType))}</td><td data-label="Lebenszyklus">${escapeHtml(operationalLabel(item.lifecycle))}</td><td data-label="Angebote">${item.offerCount}</td><td data-label="Verfügbar">${item.availableOfferCount}</td><td data-label="Status"><span class="status status-${item.active ? "active" : "disabled"}">${item.active ? "Aktiv" : "Inaktiv"}</span></td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/catalog")}</section>`;
+  `${listActionBar("Produkte / Katalog", "Digitale Produkte, Lebenszyklus und verfügbare Lieferantenangebote.", "/admin/catalog", query, "Produktname oder Produkt-ID", "Produkt hinzufügen")}<section class="metric-grid" aria-label="Produktkennzahlen">${metric("Produkte", result.items.length, { icon: "PR", detail: "Aktuelle Ergebnisse" })}${metric("Aktiv", result.items.filter((item) => item.active).length, { icon: "AK", detail: "Shop-fähige Datensätze" })}${metric("Mit Angebot", result.items.filter((item) => item.offerCount > 0).length, { icon: "AN", detail: "Mindestens ein Angebot" })}${metric("Verfügbar", result.items.filter((item) => item.availableOfferCount > 0).length, { icon: "VF", detail: "Lieferbares Angebot" })}</section><details class="filter-panel" id="list-filter"${query.has("status") ? " open" : ""}><summary>Detailfilter</summary>${operationalFilter("/admin/catalog", query, "Produktname oder Produkt-ID", ["ACTIVE", "INACTIVE", "ACTIVE_CANDIDATE", "REVIEW_REQUIRED", "REJECTED"])}</details><section class="content-section operations-section flush"><div class="section-heading"><h2>Katalogprodukte</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Produkte gefunden", "Der Katalog enthält für diese Auswahl keine Produkte.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Produkt</th><th>Plattform</th><th>Typ</th><th>Lebenszyklus</th><th>Angebote</th><th>Verfügbar</th><th>Status</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Produkt"><span class="product-cell"><span class="product-media" aria-hidden="true">${escapeHtml(item.platform.slice(0, 2).toUpperCase())}</span><span class="cell-stack"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.productId)}</small></span></span></td><td data-label="Plattform">${escapeHtml(operationalLabel(item.platform))}</td><td data-label="Typ">${escapeHtml(operationalLabel(item.productType))}</td><td data-label="Lebenszyklus">${escapeHtml(operationalLabel(item.lifecycle))}</td><td data-label="Angebote">${item.offerCount}</td><td data-label="Verfügbar">${item.availableOfferCount}</td><td data-label="Status"><span class="status status-${item.active ? "active" : "disabled"}">${item.active ? "Aktiv" : "Inaktiv"}</span></td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/catalog")}</section>`;
 
 const supplierListContent = (
   result: AdminOperationsListResult<AdminSupplierSummary>,
   query: URLSearchParams,
 ): string =>
-  `<header class="page-heading"><p>Beschaffungsquellen</p><h1>Lieferanten</h1></header>${operationalFilter("/admin/suppliers", query, "Name, Code oder Lieferanten-ID", [])}<section class="content-section operations-section"><div class="section-heading"><h2>Konfigurierte Integrationen</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Lieferanten vorhanden", "Es sind keine Lieferantenintegrationen konfiguriert.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Lieferant</th><th>Interner Code</th><th>Produkte</th><th>Aktive Angebote</th><th>Letzte Synchronisierung</th><th>Status</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Lieferant"><strong>${escapeHtml(item.displayName)}</strong><small class="table-subline">${escapeHtml(item.supplierId)}</small></td><td data-label="Interner Code">${escapeHtml(item.supplierCode)}</td><td data-label="Produkte">${item.productCount}</td><td data-label="Aktive Angebote">${item.activeOfferCount}</td><td data-label="Letzte Synchronisierung">${item.lastSyncAt ? escapeHtml(formatDate(item.lastSyncAt)) : "Nicht ausgeführt"}</td><td data-label="Status"><span class="status status-${escapeHtml((item.lastSyncStatus ?? "unknown").toLowerCase())}">${escapeHtml(operationalLabel(item.lastSyncStatus ?? "UNKNOWN"))}</span></td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/suppliers")}</section><p class="page-note">Zugangsdaten und Provider-Geheimnisse werden in diesem Bereich grundsätzlich nicht ausgegeben.</p>`;
+  `${listActionBar("Lieferanten", "Konfigurierte Beschaffungsquellen und deren sichere Betriebsmetadaten.", "/admin/suppliers", query, "Name, Code oder Lieferanten-ID", "Lieferant hinzufügen")}<section class="metric-grid" aria-label="Lieferantenkennzahlen">${metric("Lieferanten", result.items.length, { icon: "LI", detail: "Aktuelle Ergebnisse" })}${metric("Mit Produkten", result.items.filter((item) => item.productCount > 0).length, { icon: "PR", detail: "Zugeordnete Produkte" })}${metric(
+    "Produkte",
+    result.items.reduce((sum, item) => sum + item.productCount, 0),
+    { icon: "GP", detail: "In dieser Auswahl" },
+  )}${metric(
+    "Aktive Angebote",
+    result.items.reduce((sum, item) => sum + item.activeOfferCount, 0),
+    { icon: "AA", detail: "Autoritativ verfügbar" },
+  )}</section><details class="filter-panel" id="list-filter"><summary>Detailfilter</summary>${operationalFilter("/admin/suppliers", query, "Name, Code oder Lieferanten-ID", [])}</details><section class="content-section operations-section flush"><div class="section-heading"><h2>Konfigurierte Integrationen</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Lieferanten vorhanden", "Es sind keine Lieferantenintegrationen konfiguriert.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Lieferant</th><th>Interner Code</th><th>Produkte</th><th>Aktive Angebote</th><th>Letzte Synchronisierung</th><th>Status</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Lieferant"><span class="product-cell"><span class="product-media" aria-hidden="true">${escapeHtml(item.supplierCode.slice(0, 2).toUpperCase())}</span><span class="cell-stack"><strong>${escapeHtml(item.displayName)}</strong><small>${escapeHtml(item.supplierId)}</small></span></span></td><td data-label="Interner Code">${escapeHtml(item.supplierCode)}</td><td data-label="Produkte">${item.productCount}</td><td data-label="Aktive Angebote">${item.activeOfferCount}</td><td data-label="Letzte Synchronisierung">${item.lastSyncAt ? escapeHtml(formatDate(item.lastSyncAt)) : "Nicht ausgeführt"}</td><td data-label="Status"><span class="status status-${escapeHtml((item.lastSyncStatus ?? "unknown").toLowerCase())}">${escapeHtml(operationalLabel(item.lastSyncStatus ?? "UNKNOWN"))}</span></td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/suppliers")}</section><p class="page-note">Zugangsdaten und Provider-Geheimnisse werden in diesem Bereich grundsätzlich nicht ausgegeben.</p>`;
+
+const discountsContent = (): string =>
+  `${pageActionBar("Rabatte & Kampagnen", "Rabatte, Gutscheine und Kampagnen innerhalb der freigegebenen Plattformgrenzen.", '<form class="page-search"><label for="discount-search">Rabatte durchsuchen</label><input id="discount-search" type="search" placeholder="Code, Name oder Beschreibung" disabled><span class="button-disabled" aria-disabled="true" title="Es besteht noch keine autoritative Rabatt-Domain">Rabatt erstellen</span></form>')}<section class="metric-grid" aria-label="Rabattkennzahlen">${metric("Aktive Rabatte", 0, { icon: "RA", detail: "Keine Domain angebunden" })}${metric("Geplante Kampagnen", 0, { icon: "KA", detail: "Keine Domain angebunden" })}${metric("Einlösungen", 0, { icon: "EI", detail: "Nicht verfügbar" })}</section><nav class="section-tabs" aria-label="Rabattansichten"><a href="/admin/discounts" aria-current="page">Alle</a><span aria-disabled="true">Aktiv</span><span aria-disabled="true">Geplant</span><span aria-disabled="true">Abgelaufen</span></nav><section class="content-section">${emptyState("Noch keine Rabattverwaltung verfügbar", "Das aktuelle Plattformmodell enthält keine autoritative Rabatt- oder Kampagnen-Domain. Anlage und Bearbeitung bleiben deshalb sicher deaktiviert.")}</section><p class="page-note">Es werden keine WooCommerce-Gutscheine oder erfundenen Kampagnendaten als KeyCore-Autorität dargestellt.</p>`;
 
 const supportListContent = (
   result: AdminOperationsListResult<AdminSupportCaseSummary>,
   query: URLSearchParams,
 ): string =>
-  `<header class="page-heading"><p>Kundenservice</p><h1>Support</h1></header>${operationalFilter("/admin/support", query, "Fall-, Bestell-ID oder Kunden-E-Mail", ["OPEN", "IN_PROGRESS", "WAITING_FOR_CUSTOMER", "WAITING_FOR_INTERNAL", "RESOLVED", "CLOSED"])}<section class="content-section operations-section"><div class="section-heading"><h2>Supportfälle</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Supportfälle gefunden", "Es liegen für diese Auswahl keine Supportfälle vor.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Fall</th><th>Kunde</th><th>Bestellung</th><th>Kategorie</th><th>Priorität</th><th>Status</th><th>Aktualisiert</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Fall" class="order-reference"><a href="/admin/support/${encodeURIComponent(item.caseId)}">${escapeHtml(item.caseId)}</a></td><td data-label="Kunde">${escapeHtml(item.customerEmail ?? "Nicht verfügbar")}</td><td data-label="Bestellung">${escapeHtml(item.orderId ?? "Nicht zugeordnet")}</td><td data-label="Kategorie">${escapeHtml(operationalLabel(item.category))}</td><td data-label="Priorität"><span class="status status-${item.priority.toLowerCase()}">${escapeHtml(operationalLabel(item.priority))}</span></td><td data-label="Status"><span class="status status-${item.status.toLowerCase()}">${escapeHtml(operationalLabel(item.status))}</span></td><td data-label="Aktualisiert">${escapeHtml(formatDate(item.updatedAt))}</td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/support")}</section>`;
+  `${listActionBar("Support", "Supportanfragen, Prioritäten und Kundenkommunikation sicher bearbeiten.", "/admin/support", query, "Fall-, Bestell-ID oder Kunden-E-Mail", "Ticket erstellen")}<section class="metric-grid" aria-label="Supportkennzahlen">${metric("Supportfälle", result.items.length, { icon: "SU", detail: "Aktuelle Ergebnisse" })}${metric("Offen", result.items.filter((item) => item.status === "OPEN").length, { icon: "OF", detail: "In dieser Auswahl" })}${metric("In Bearbeitung", result.items.filter((item) => item.status === "IN_PROGRESS").length, { icon: "IB", detail: "In dieser Auswahl" })}${metric("Hohe Priorität", result.items.filter((item) => item.priority === "HIGH" || item.priority === "URGENT").length, { icon: "HP", detail: "Hoch oder dringend" })}</section><details class="filter-panel" id="list-filter"${query.has("status") ? " open" : ""}><summary>Detailfilter</summary>${operationalFilter("/admin/support", query, "Fall-, Bestell-ID oder Kunden-E-Mail", ["OPEN", "IN_PROGRESS", "WAITING_FOR_CUSTOMER", "WAITING_FOR_INTERNAL", "RESOLVED", "CLOSED"])}</details><section class="content-section operations-section flush"><div class="section-heading"><h2>Supportfälle</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Supportfälle gefunden", "Es liegen für diese Auswahl keine Supportfälle vor.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Fall</th><th>Kunde</th><th>Bestellung</th><th>Kategorie</th><th>Priorität</th><th>Status</th><th>Aktualisiert</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Fall" class="table-reference"><a href="/admin/support/${encodeURIComponent(item.caseId)}">${escapeHtml(item.caseId)}</a></td><td data-label="Kunde">${escapeHtml(item.customerEmail ?? "Nicht verfügbar")}</td><td data-label="Bestellung">${escapeHtml(item.orderId ?? "Nicht zugeordnet")}</td><td data-label="Kategorie">${escapeHtml(operationalLabel(item.category))}</td><td data-label="Priorität"><span class="status status-${item.priority.toLowerCase()}">${escapeHtml(operationalLabel(item.priority))}</span></td><td data-label="Status"><span class="status status-${item.status.toLowerCase()}">${escapeHtml(operationalLabel(item.status))}</span></td><td data-label="Aktualisiert">${escapeHtml(formatDate(item.updatedAt))}</td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/support")}</section>`;
 
 const supportDetailContent = (
   detail: OperatorSupportCaseDetail,
@@ -1227,7 +1315,7 @@ const supportDetailContent = (
   const canManage = hasAdminCapability(principal, "SUPPORT_MANAGE");
   const current = detail.case;
   const transitions = supportTransitions[current.status] ?? [];
-  return `<header class="page-heading"><p>Supportfalldetail</p><h1>${escapeHtml(current.id)}</h1></header><section class="state-strip" aria-label="Supportfallzustand">${stateItem("Status", current.status)}${stateItem("Priorität", current.priority)}<div><span>Kategorie</span><strong>${escapeHtml(operationalLabel(current.category))}</strong></div><div><span>Quelle</span><strong>${escapeHtml(operationalLabel(current.source))}</strong></div></section><section class="detail-grid"><article><h2>Zuordnung</h2>${detailRow("Kunde", current.customerId ?? "Nicht zugeordnet")}${detailRow("Bestellung", current.orderId ?? "Nicht zugeordnet")}${detailRow("Erstellt", formatDate(current.createdAt))}${detailRow("Aktualisiert", formatDate(current.updatedAt))}${detailRow("Version", String(current.recordVersion))}</article><article><h2>Abschluss</h2>${detailRow("Ergebnis", current.resolutionCode ? operationalLabel(current.resolutionCode) : "Nicht abgeschlossen")}${detailRow("Gelöst", current.resolvedAt ? formatDate(current.resolvedAt) : "Nein")}${detailRow("Geschlossen", current.closedAt ? formatDate(current.closedAt) : "Nein")}</article></section><section class="content-section"><div class="section-heading"><h2>Nachrichtenverlauf</h2><span>${detail.messages.length} Nachrichten</span></div>${detail.messages.length === 0 ? emptyState("Keine Nachrichten", "Dieser Supportfall enthält noch keine Nachrichten.") : `<ol class="message-list">${detail.messages.map((message) => `<li class="message-${message.visibility.toLowerCase()}"><header><strong>${escapeHtml(operationalLabel(message.authorType))}</strong><span>${message.visibility === "INTERNAL" ? "Interne Notiz" : "Für Kunden sichtbar"} · ${escapeHtml(formatDate(message.createdAt))}</span></header><p>${escapeHtml(message.body)}</p></li>`).join("")}</ol>`}</section>${canManage ? supportManagementContent(current, transitions, form) : ""}<section class="content-section"><div class="section-heading"><h2>Aktivitätsverlauf</h2><span>${detail.events.length} Ereignisse</span></div>${detail.events.length === 0 ? emptyState("Keine Ereignisse", "Für diesen Fall liegt noch kein Verlauf vor.") : `<ol class="timeline">${detail.events.map((event) => `<li><strong>${escapeHtml(operationalLabel(event.eventType))}</strong><span>${escapeHtml(formatDate(event.occurredAt))}</span></li>`).join("")}</ol>`}</section>`;
+  return `${pageActionBar(`Supportfall ${current.id}`, "Kundenkommunikation, Zustand und interner Verlauf.", '<a class="button-quiet" href="/admin/support">Zurück zu Support</a>')}<section class="state-strip" aria-label="Supportfallzustand">${stateItem("Status", current.status)}${stateItem("Priorität", current.priority)}<div><span>Kategorie</span><strong>${escapeHtml(operationalLabel(current.category))}</strong></div><div><span>Quelle</span><strong>${escapeHtml(operationalLabel(current.source))}</strong></div></section><section class="detail-grid"><article><h2>Zuordnung</h2>${detailRow("Kunde", current.customerId ?? "Nicht zugeordnet")}${detailRow("Bestellung", current.orderId ?? "Nicht zugeordnet")}${detailRow("Erstellt", formatDate(current.createdAt))}${detailRow("Aktualisiert", formatDate(current.updatedAt))}${detailRow("Version", String(current.recordVersion))}</article><article><h2>Abschluss</h2>${detailRow("Ergebnis", current.resolutionCode ? operationalLabel(current.resolutionCode) : "Nicht abgeschlossen")}${detailRow("Gelöst", current.resolvedAt ? formatDate(current.resolvedAt) : "Nein")}${detailRow("Geschlossen", current.closedAt ? formatDate(current.closedAt) : "Nein")}</article></section><section class="content-section"><div class="section-heading"><h2>Nachrichtenverlauf</h2><span>${detail.messages.length} Nachrichten</span></div>${detail.messages.length === 0 ? emptyState("Keine Nachrichten", "Dieser Supportfall enthält noch keine Nachrichten.") : `<ol class="message-list">${detail.messages.map((message) => `<li class="message-${message.visibility.toLowerCase()}"><header><strong>${escapeHtml(operationalLabel(message.authorType))}</strong><span>${message.visibility === "INTERNAL" ? "Interne Notiz" : "Für Kunden sichtbar"} · ${escapeHtml(formatDate(message.createdAt))}</span></header><p>${escapeHtml(message.body)}</p></li>`).join("")}</ol>`}</section>${canManage ? supportManagementContent(current, transitions, form) : ""}<section class="content-section"><div class="section-heading"><h2>Aktivitätsverlauf</h2><span>${detail.events.length} Ereignisse</span></div>${detail.events.length === 0 ? emptyState("Keine Ereignisse", "Für diesen Fall liegt noch kein Verlauf vor.") : `<ol class="timeline">${detail.events.map((event) => `<li><strong>${escapeHtml(operationalLabel(event.eventType))}</strong><span>${escapeHtml(formatDate(event.occurredAt))}</span></li>`).join("")}</ol>`}</section>`;
 };
 
 const supportManagementContent = (
@@ -1285,13 +1373,12 @@ const fraudListContent = (
   result: AdminOperationsListResult<AdminFraudReviewSummary>,
   query: URLSearchParams,
 ): string =>
-  `<header class="page-heading"><p>Risikosteuerung</p><h1>Betrugsprüfung</h1></header>${operationalFilter("/admin/fraud", query, "Prüfungs- oder Bestell-ID", ["OPEN", "APPROVED", "REJECTED", "CANCELLED"])}<div class="notice notice-warning"><strong>Fail-closed</strong><p>Offene Prüfungen blockieren Beschaffung und Produktschlüsselzugriff. Diese Ansicht legt keine internen Signale gegenüber Kunden offen.</p></div><section class="content-section operations-section"><div class="section-heading"><h2>Manuelle Prüfungen</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Prüfungen gefunden", "Es liegen für diese Auswahl keine manuellen Prüfungen vor.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Prüfung</th><th>Bestellung</th><th>Status</th><th>Gründe</th><th>Geöffnet</th><th>Abgeschlossen</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Prüfung" class="order-reference">${escapeHtml(item.reviewId)}</td><td data-label="Bestellung"><a href="/admin/orders/${encodeURIComponent(item.orderId)}">${escapeHtml(item.orderId)}</a></td><td data-label="Status"><span class="status status-${item.status.toLowerCase()}">${escapeHtml(operationalLabel(item.status))}</span></td><td data-label="Gründe">${escapeHtml(item.reasonCodes.map(adminAuditCodeLabel).join(", "))}</td><td data-label="Geöffnet">${escapeHtml(formatDate(item.openedAt))}</td><td data-label="Abgeschlossen">${item.resolvedAt ? escapeHtml(formatDate(item.resolvedAt)) : "Offen"}</td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/fraud")}</section>`;
+  `${listActionBar("Betrugsprüfung", "Manuelle Risikoprüfungen mit strikt getrennten operativen Zuständen.", "/admin/fraud", query, "Prüfungs- oder Bestell-ID", "Prüfregeln")}<section class="metric-grid" aria-label="Risikokennzahlen">${metric("Prüfungen", result.items.length, { icon: "RP", detail: "Aktuelle Ergebnisse" })}${metric("Offen", result.items.filter((item) => item.status === "OPEN").length, { icon: "OF", detail: "Blockiert Folgeschritte" })}${metric("Freigegeben", result.items.filter((item) => item.status === "APPROVED").length, { icon: "FR", detail: "In dieser Auswahl" })}${metric("Abgelehnt", result.items.filter((item) => item.status === "REJECTED").length, { icon: "AB", detail: "In dieser Auswahl" })}</section><details class="filter-panel" id="list-filter"${query.has("status") ? " open" : ""}><summary>Detailfilter</summary>${operationalFilter("/admin/fraud", query, "Prüfungs- oder Bestell-ID", ["OPEN", "APPROVED", "REJECTED", "CANCELLED"])}</details><div class="notice notice-warning"><strong>Fail-closed</strong><p>Offene Prüfungen blockieren Beschaffung und Produktschlüsselzugriff. Diese Ansicht legt keine internen Signale gegenüber Kunden offen.</p></div><section class="content-section operations-section flush"><div class="section-heading"><h2>Manuelle Prüfungen</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Prüfungen gefunden", "Es liegen für diese Auswahl keine manuellen Prüfungen vor.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Prüfung</th><th>Bestellung</th><th>Status</th><th>Gründe</th><th>Geöffnet</th><th>Abgeschlossen</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Prüfung" class="table-reference">${escapeHtml(item.reviewId)}</td><td data-label="Bestellung"><a href="/admin/orders/${encodeURIComponent(item.orderId)}">${escapeHtml(item.orderId)}</a></td><td data-label="Status"><span class="status status-${item.status.toLowerCase()}">${escapeHtml(operationalLabel(item.status))}</span></td><td data-label="Gründe">${escapeHtml(item.reasonCodes.map(adminAuditCodeLabel).join(", "))}</td><td data-label="Geöffnet">${escapeHtml(formatDate(item.openedAt))}</td><td data-label="Abgeschlossen">${item.resolvedAt ? escapeHtml(formatDate(item.resolvedAt)) : "Offen"}</td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/fraud")}</section>`;
 
 const financeContent = (
   rows: readonly AdminFinanceCurrencySummary[],
   report: boolean,
 ): string => {
-  const title = report ? "Berichte &amp; Statistiken" : "Finanzen";
   const cards = rows
     .flatMap((row) => [
       metric(
@@ -1313,7 +1400,7 @@ const financeContent = (
       ),
     ])
     .join("");
-  return `<header class="page-heading"><p>${report ? "Auswertung" : "Zahlungsübersicht"}</p><h1>${title}</h1></header>${rows.length === 0 ? emptyState("Keine Finanzdaten verfügbar", "Es wurden noch keine auswertbaren Bestellungen erfasst.") : `<section class="metric-grid">${cards}</section>`}<section class="content-section"><div class="section-heading"><h2>${report ? "Datengrundlage" : "Einordnung"}</h2></div><p>Gesamtsicht ohne Datumsfilter. Das erfasste Zahlungsvolumen umfasst jede Bestellung, deren Zahlung erfasst wurde, einschließlich später vollständig oder teilweise erstatteter Zahlungen. Vollständig erstattete Bestellwerte werden separat ausgewiesen. Autoritative Teil-Erstattungsbeträge liegen im Bestellmodell derzeit nicht vor und werden deshalb nicht abgezogen. Die Werte sind weder Netto-Umsatz noch eine steuerliche oder buchhalterische Freigabe.</p></section>`;
+  return `${pageActionBar(report ? "Berichte & Statistiken" : "Finanzen", report ? "Autoritative Kennzahlen mit klar ausgewiesener Datengrundlage." : "Erfasste Zahlungs- und Erstattungszustände ohne buchhalterische Überdehnung.", '<span class="button-disabled" aria-disabled="true" title="Ein sicherer zeitgebundener Export ist noch nicht angebunden">Export</span>')}${rows.length === 0 ? emptyState("Keine Finanzdaten verfügbar", "Es wurden noch keine auswertbaren Bestellungen erfasst.") : `<section class="metric-grid">${cards}</section>`}<div class="workspace-grid"><section class="content-section chart-panel"><div class="section-heading"><h2>${report ? "Entwicklung" : "Zahlungsverlauf"}</h2><span>Gesamtsicht</span></div>${honestChartState("Historische Tages- und Vergleichsreihen sind im aktuellen autoritativen Modell nicht verfügbar.")}</section><aside class="workspace-stack"><section class="content-section"><div class="section-heading"><h2>${report ? "Datengrundlage" : "Einordnung"}</h2></div><p>Gesamtsicht ohne Datumsfilter. Das erfasste Zahlungsvolumen umfasst jede Bestellung, deren Zahlung erfasst wurde, einschließlich später vollständig oder teilweise erstatteter Zahlungen. Vollständig erstattete Bestellwerte werden separat ausgewiesen.</p></section><section class="content-section"><div class="section-heading"><h2>Nicht dargestellt</h2></div><p>Autoritative Teil-Erstattungsbeträge liegen im Bestellmodell derzeit nicht vor und werden deshalb nicht abgezogen. Marge, Steuern und Buchhaltungsfreigaben liegen ebenfalls nicht vor und werden nicht berechnet oder geschätzt.</p></section></aside></div>`;
 };
 
 const notificationsContent = (
@@ -1335,7 +1422,7 @@ const settingsContent = (
   },
 ): string => {
   const canManage = hasAdminCapability(principal, "OPERATIONS_CONTROL_MANAGE");
-  return `<header class="page-heading"><p>Systemkonfiguration</p><h1>Einstellungen</h1></header><section class="content-section"><div class="section-heading"><h2>Betriebssteuerungen</h2><span>${canManage ? "Versionsgeschützte Notfallsteuerung" : "Nur lesend"}</span></div>${controls.length === 0 ? emptyState("Keine Betriebssteuerungen verfügbar", "Der sichere Konfigurationszustand konnte nicht dargestellt werden.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Funktion</th><th>Status</th><th>Grund</th><th>Version</th><th>Aktualisiert</th>${canManage ? "<th>Aktion</th>" : ""}</tr></thead><tbody>${controls.map((item) => `<tr><td data-label="Funktion">${escapeHtml(operationalLabel(item.capability))}</td><td data-label="Status"><span class="status status-${item.state.toLowerCase()}">${escapeHtml(operationalLabel(item.state))}</span></td><td data-label="Grund">${escapeHtml(item.reasonCode ? operationalLabel(item.reasonCode) : "Keiner")}</td><td data-label="Version">${item.recordVersion}</td><td data-label="Aktualisiert">${escapeHtml(formatDate(item.updatedAt))}</td>${canManage ? `<td data-label="Aktion">${controlForm(item, form(item.capability))}</td>` : ""}</tr>`).join("")}</tbody></table></div>`}</section><section class="content-section"><div class="section-heading"><h2>Sichere Konfigurationsgrenze</h2></div><p>Deployment-, Provider- und Secret-Konfiguration wird nicht im Browser bearbeitet. Dieser Bereich zeigt ausschließlich freigegebene betriebliche Zustände.</p></section>`;
+  return `${pageActionBar("Einstellungen", "Systemzustände und freigegebene betriebliche Steuerungen verwalten.")}<nav class="section-tabs" aria-label="Einstellungsbereiche"><a href="/admin/settings" aria-current="page">Betrieb</a><span aria-disabled="true">Shop</span><span aria-disabled="true">Benachrichtigungen</span><span aria-disabled="true">Sicherheit</span><span aria-disabled="true">Zahlungen</span><span aria-disabled="true">Integrationen</span></nav><div class="workspace-grid"><section class="content-section"><div class="section-heading"><h2>Betriebssteuerungen</h2><span>${canManage ? "Versionsgeschützte Notfallsteuerung" : "Nur lesend"}</span></div>${controls.length === 0 ? emptyState("Keine Betriebssteuerungen verfügbar", "Der sichere Konfigurationszustand konnte nicht dargestellt werden.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Funktion</th><th>Status</th><th>Grund</th><th>Version</th><th>Aktualisiert</th>${canManage ? "<th>Aktion</th>" : ""}</tr></thead><tbody>${controls.map((item) => `<tr><td data-label="Funktion">${escapeHtml(operationalLabel(item.capability))}</td><td data-label="Status"><span class="status status-${item.state.toLowerCase()}">${escapeHtml(operationalLabel(item.state))}</span></td><td data-label="Grund">${escapeHtml(item.reasonCode ? operationalLabel(item.reasonCode) : "Keiner")}</td><td data-label="Version">${item.recordVersion}</td><td data-label="Aktualisiert">${escapeHtml(formatDate(item.updatedAt))}</td>${canManage ? `<td data-label="Aktion">${controlForm(item, form(item.capability))}</td>` : ""}</tr>`).join("")}</tbody></table></div>`}</section><aside class="workspace-stack"><section class="content-section"><div class="section-heading"><h2>Sichere Konfigurationsgrenze</h2></div><p>Deployment-, Provider- und Secret-Konfiguration wird nicht im Browser bearbeitet. Dieser Bereich zeigt ausschließlich freigegebene betriebliche Zustände.</p></section><section class="content-section"><div class="section-heading"><h2>Weitere Bereiche</h2></div><nav class="quick-links"><span>Shop-Einstellungen <small>Nicht angebunden</small></span><span>Zahlungsmethoden <small>Deployment-gesteuert</small></span><span>Systemstatus <small>Kein Browser-Schreibzugriff</small></span></nav></section></aside></div>`;
 };
 
 const controlForm = (
@@ -1355,10 +1442,16 @@ const operationalLabel = (value: string): string => {
     ACTIVATION_PROBLEM: "Aktivierungsproblem",
     ACTIVE_CANDIDATE: "Aktiver Kandidat",
     CLOSED: "Geschlossen",
+    CUSTOMER: "Kunde",
+    CUSTOMER_ACTION_REQUIRED: "Kundenaktion erforderlich",
     CUSTOMER_KEY_DELIVERY: "Kundenzustellung",
+    DUPLICATE_REQUEST: "Doppelte Anfrage",
     ENABLED: "Aktiviert",
     GAME: "Spiel",
     HIGH: "Hoch",
+    INFORMATION_PROVIDED: "Information bereitgestellt",
+    IN_PROGRESS: "In Bearbeitung",
+    INTERNAL: "Intern",
     INACTIVE: "Inaktiv",
     INVOICE_PROBLEM: "Rechnungsproblem",
     KEY_NOT_AVAILABLE: "Produktschlüssel nicht verfügbar",
@@ -1366,19 +1459,24 @@ const operationalLabel = (value: string): string => {
     LOW: "Niedrig",
     MAINTENANCE: "Wartung",
     NORMAL: "Normal",
+    NO_PLATFORM_ERROR_FOUND: "Kein Plattformfehler festgestellt",
     OPEN: "Offen",
+    ORDER_COMPLETED: "Bestellung abgeschlossen",
     ORDER_STATUS: "Bestellstatus",
     OTHER: "Sonstiges",
     PAUSED: "Pausiert",
     PAYMENT_PROBLEM: "Zahlungsproblem",
     PROCUREMENT_CREATE: "Beschaffung anlegen",
     REFUND_REQUEST: "Erstattungsanfrage",
+    REFUND_REFERRED: "Erstattung weitergeleitet",
     RESOLVED: "Gelöst",
     SOFTWARE: "Software",
     SUPPLIER_CLAIM_SUBMISSION: "Lieferantenreklamation senden",
     SUPPLIER_KEY_RETRIEVAL: "Lieferantenschlüssel abrufen",
     SUPPLIER_PROBLEM: "Lieferantenproblem",
+    SUPPLIER_REVIEW_REQUIRED: "Lieferantenprüfung erforderlich",
     SUSPECTED_DUPLICATE_ORDER: "Mögliche Doppelbestellung",
+    SYSTEM: "System",
     UNKNOWN: "Unbekannt",
     UNVERIFIED: "Nicht verifiziert",
     URGENT: "Dringend",
@@ -1400,7 +1498,7 @@ const orderDetailContent = (
 ): string =>
   `<header class="page-heading"><p>Bestelldetails</p><h1>${escapeHtml(order.orderId)}</h1></header><section class="state-strip" aria-label="Bestellzustände">${stateItem("Zahlung", order.paymentStatus)}${stateItem("Risiko", order.riskStatus)}${stateItem("Beschaffung", order.procurementStatus)}${stateItem("Auslieferung", order.fulfillmentStatus)}</section><section class="detail-grid"><article><h2>Bestellung</h2>${detailRow("Produkt", order.productTitle)}${detailRow("Menge", String(order.quantity))}${detailRow("Kunde", order.customerEmail ?? "Nicht verfügbar")}${detailRow("Betrag", formatMinor(order.amountMinor, order.currency))}${detailRow("Status", adminStatusLabel(order.status))}${detailRow("Angelegt", formatDate(order.createdAt))}${detailRow("Aktualisiert", formatDate(order.updatedAt))}</article><article><h2>Operativer Kontext</h2>${detailRow("Gastbestellungs-Zuordnung", adminStatusLabel(order.guestClaimStatus))}${detailRow("Rechnung", adminStatusLabel(order.invoiceStatus))}${canViewSupplier ? `${detailRow("Lieferant", order.supplierId ?? "Nicht verfügbar")}${detailRow("Lieferantenbestellung", order.externalSupplierOrderId ?? "Nicht verfügbar")}` : ""}${detailRow("Abrufstatus", order.retrievalState ? adminStatusLabel(order.retrievalState) : "Nicht verfügbar")}${detailRow("Zustellstatus", order.deliveryState ? adminStatusLabel(order.deliveryState) : "Nicht verfügbar")}</article></section>${delayedEligible ? `<section class="content-section sensitive"><div class="section-heading"><div><p>Synthetischer Staging-Vorgang</p><h2>Verzögerte Auslieferung abschließen</h2></div></div><p>Dieser Vorgang nutzt keine Lieferantenverbindung und erzeugt ausschließlich verschlüsseltes synthetisches Testmaterial.</p><form method="post" action="${escapeHtml(delayedPath)}"><input type="hidden" name="csrf" value="${escapeHtml(delayedCsrf)}"><input type="hidden" name="confirm" value="SYNTHETIC_DELAYED_FULFILLMENT"><button type="submit">Synthetische Auslieferung bestätigen</button></form></section>` : ""}<section class="content-section sensitive"><div class="section-heading"><div><p>Sensibler Vorgang</p><h2>Produktschlüssel</h2></div></div><p>${order.encryptedSecretAvailable ? "Verschlüsseltes Material ist vorhanden. Eine Offenlegung ist nur über den kontrollierten separaten Vorgang möglich." : "Für diese Bestellung ist kein verschlüsseltes Material verfügbar."}</p><form method="post" action="${escapeHtml(revealPath)}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit"${order.encryptedSecretAvailable ? "" : " disabled"}>Kontrollierten Zugriff anfordern</button></form></section><section class="content-section"><div class="section-heading"><h2>Statushistorie</h2></div>${order.history.length === 0 ? '<div class="empty-state"><strong>Keine Statushistorie verfügbar</strong></div>' : `<ol class="timeline">${order.history.map((entry) => `<li><strong>${escapeHtml(adminStatusLabel(entry.toStatus))}</strong><span>${escapeHtml(adminAuditCodeLabel(entry.reasonCode))} · ${escapeHtml(formatDate(entry.occurredAt))}</span></li>`).join("")}</ol>`}</section>`;
 const stateItem = (label: string, status: string): string =>
-  `<div><span>${escapeHtml(label)}</span><strong class="status status-${escapeHtml(status.toLowerCase())}">${escapeHtml(adminStatusLabel(status))}</strong></div>`;
+  `<div><span>${escapeHtml(label)}</span><strong class="status status-${escapeHtml(status.toLowerCase())}">${escapeHtml(operationalLabel(status))}</strong></div>`;
 const detailRow = (label: string, value: string): string =>
   `<dl><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></dl>`;
 const staffListContent = (
@@ -1415,7 +1513,7 @@ const staffListContent = (
   const create = hasAdminCapability(principal, "STAFF_MANAGE")
     ? `<section class="content-section"><div class="section-heading"><h2>Mitarbeiter anlegen</h2></div><form class="staff-form" method="post" action="/admin/staff"><input type="hidden" name="csrf" value="${csrf}"><label>Vorname<input name="first_name" maxlength="80" required></label><label>Nachname<input name="last_name" maxlength="80" required></label><label>Mitarbeiter-ID<input name="employee_number" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" required></label><label>E-Mail / Anmeldekennung (optional)<input name="email" type="email" maxlength="254"></label><label>Rolle<select name="role">${roleOptions()}</select></label><button type="submit">Mitarbeiter anlegen</button></form><p class="muted">Es wird kein Passwort und keine Anmeldemöglichkeit erzeugt.</p></section>`
     : "";
-  return `<header class="page-heading"><p>Administration</p><h1>Mitarbeiter &amp; Rollen</h1></header><section class="content-section staff-section"><div class="section-heading"><h2>Mitarbeitende</h2><span>${staff.length} Einträge</span></div>${rows}</section>${create}`;
+  return `${pageActionBar("Mitarbeiter & Rollen", "Mitarbeiterkonten, Rollen und wirksame Berechtigungen sicher verwalten.", hasAdminCapability(principal, "STAFF_MANAGE") ? '<a class="button" href="#staff-create">Mitarbeiter hinzufügen</a>' : "")}<section class="metric-grid" aria-label="Mitarbeiterkennzahlen">${metric("Mitarbeitende", staff.length, { icon: "MA", detail: "Gesamt" })}${metric("Aktiv", staff.filter((item) => item.status === "ACTIVE").length, { icon: "AK", detail: "Aktive Konten" })}${metric("Inaktiv", staff.filter((item) => item.status !== "ACTIVE").length, { icon: "IN", detail: "Nicht aktive Konten" })}${metric("Mit Zusatzrechten", staff.filter((item) => item.hasAdditionalPermissions).length, { icon: "ZR", detail: "Individuelle Berechtigungen" })}</section><section class="content-section staff-section flush"><div class="section-heading"><h2>Mitarbeitende</h2><span>${staff.length} Einträge</span></div>${rows}</section>${create.replace('<section class="content-section">', '<section class="content-section" id="staff-create">')}`;
 };
 
 const staffDetailContent = (

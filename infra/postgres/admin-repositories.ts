@@ -647,6 +647,16 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
       );
     if (input.filters.status)
       predicates.push(`orders.status = ${parameter(input.filters.status)}`);
+    if (input.filters.operationalView === "ATTENTION")
+      predicates.push(
+        `(orders.status = 'MANUAL_REVIEW' OR orders.risk_status = 'REVIEW_REQUIRED')`,
+      );
+    if (input.filters.operationalView === "PROCESSING")
+      predicates.push(
+        `orders.status IN ('PAYMENT_CAPTURED', 'PROCUREMENT_PENDING', 'PROCUREMENT_IN_PROGRESS', 'FULFILLMENT_PENDING')`,
+      );
+    if (input.filters.operationalView === "FAILED")
+      predicates.push(`orders.status = 'FAILED'`);
     if (input.filters.fromDate)
       predicates.push(
         `orders.created_at >= ${parameter(`${input.filters.fromDate}T00:00:00.000Z`)}::timestamptz`,

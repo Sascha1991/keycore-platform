@@ -77,6 +77,18 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         orderId: orderId(createdOrderId),
         productTitle: "Admin Persistence Product",
       });
+      const processing = await repository.list({
+        filters: { operationalView: "PROCESSING" },
+        limit: 25,
+      });
+      expect(processing.orders.map((item) => item.orderId)).toContain(
+        orderId(createdOrderId),
+      );
+      const failed = await repository.list({
+        filters: { operationalView: "FAILED" },
+        limit: 25,
+      });
+      expect(failed.orders).toHaveLength(0);
       const detail = await repository.findDetail(orderId(createdOrderId));
       expect(detail).toMatchObject({
         encryptedSecretAvailable: false,

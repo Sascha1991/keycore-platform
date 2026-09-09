@@ -292,6 +292,7 @@ export interface AdminOrderFilters {
   readonly exactOrderId?: OrderId;
   readonly exactCustomerEmail?: string;
   readonly status?: string;
+  readonly operationalView?: "ATTENTION" | "PROCESSING" | "FAILED";
   readonly fromDate?: string;
   readonly toDate?: string;
 }
@@ -319,6 +320,7 @@ export interface AdminOrderReadRepository {
 export interface AdminOrderQuery {
   readonly search?: string;
   readonly status?: string;
+  readonly operationalView?: string;
   readonly fromDate?: string;
   readonly toDate?: string;
   readonly limit?: number;
@@ -564,6 +566,7 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
     exactOrderId?: OrderId;
     exactCustomerEmail?: string;
     status?: string;
+    operationalView?: "ATTENTION" | "PROCESSING" | "FAILED";
     fromDate?: string;
     toDate?: string;
   } = {};
@@ -585,6 +588,12 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
       throw new AdminAccessError("ADMIN_INPUT_INVALID");
     }
     filters.status = query.status;
+  }
+  if (query.operationalView !== undefined && query.operationalView !== "") {
+    if (!["ATTENTION", "PROCESSING", "FAILED"].includes(query.operationalView))
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    filters.operationalView = query.operationalView as
+      "ATTENTION" | "PROCESSING" | "FAILED";
   }
   if (query.fromDate !== undefined && query.fromDate !== "") {
     filters.fromDate = parseIsoDate(query.fromDate);
