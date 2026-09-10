@@ -284,8 +284,10 @@ describe("secure admin authentication and orders", () => {
     await service.list(
       owner,
       {
+        customerEmail: "ADMIN@EXAMPLE.TEST",
         fulfillmentStatus: "SUCCEEDED",
         limit: 10,
+        operatorReference: "kr0000001",
         paymentStatus: "CAPTURED",
         procurementStatus: "SUCCEEDED",
         riskStatus: "APPROVED",
@@ -296,6 +298,8 @@ describe("secure admin authentication and orders", () => {
     expect(repository.list).toHaveBeenLastCalledWith({
       cursorDirection: "NEXT",
       filters: {
+        exactCustomerEmail: "admin@example.test",
+        exactOperatorReference: "KR0000001",
         fulfillmentStatus: "SUCCEEDED",
         paymentStatus: "CAPTURED",
         procurementStatus: "SUCCEEDED",
@@ -304,6 +308,23 @@ describe("secure admin authentication and orders", () => {
       limit: 10,
       sort: "OLDEST",
     });
+    await expect(
+      service.list(
+        owner,
+        { operatorReference: "KR-PARTIAL" },
+        correlationId("admin-reference-invalid"),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await expect(
+      service.list(
+        owner,
+        {
+          operatorReference: "KR0000001",
+          search: "KR0000002",
+        },
+        correlationId("admin-reference-conflict"),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
     await expect(
       service.list(
         owner,
@@ -479,6 +500,7 @@ const summary = () => ({
   amountMinor: "2199",
   createdAt: now,
   currency: "EUR",
+  customerAccessConfirmed: false,
   customerEmail: "admin@example.test",
   fulfillmentStatus: "PENDING",
   orderId: targetOrderId,

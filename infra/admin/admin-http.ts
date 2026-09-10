@@ -381,6 +381,8 @@ export class AdminHttpController {
   ): Promise<AdminHttpResponse> {
     rejectDuplicateParameters(request.query, [
       "search",
+      "reference",
+      "customer",
       "status",
       "payment",
       "risk",
@@ -395,6 +397,10 @@ export class AdminHttpController {
       "view",
       "panel",
     ]);
+    const panel = optional(request.query, "panel");
+    if (panel && panel !== "filters" && panel !== "closed") {
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    }
     const result = await this.orders.list(
       principal,
       compactQuery(request.query),
@@ -408,7 +414,7 @@ export class AdminHttpController {
       ${orderViewNotice(request.query.get("view"))}
       ${activeOrderFilters(request.query)}
       ${orderFilterPanel(request.query)}
-      <section class="content-section orders-section flush"><div class="section-heading"><div><h2>Bestellungen</h2><span>${result.totalCount} Ergebnis${result.totalCount === 1 ? "" : "se"}</span></div>${orderResultControls(request.query, result)}</div>${ordersTable(result.orders, request.query)}${pagination(result, request.query)}</section>
+      <section class="content-section orders-section flush"><div class="section-heading"><div><h2>Bestellungen</h2><span>${result.totalCount} Ergebnis${result.totalCount === 1 ? "" : "se"}</span></div>${orderResultControls(request.query, result)}</div>${orderStatusLegend()}${ordersTable(result.orders, request.query)}${pagination(result, request.query)}</section>
     `,
       principal,
     );
@@ -1253,6 +1259,7 @@ const safeOrderReturnPath = (value: string | null): string => {
 const compactQuery = (query: URLSearchParams) => {
   const cursor = optional(query, "cursor");
   const cursorDirection = optional(query, "direction");
+  const customerEmail = optional(query, "customer");
   const fromDate = optional(query, "from");
   const fulfillmentStatus = optional(query, "fulfillment");
   const limitValue = optional(query, "limit");
@@ -1264,9 +1271,11 @@ const compactQuery = (query: URLSearchParams) => {
   const status = optional(query, "status");
   const toDate = optional(query, "to");
   const operationalView = optional(query, "view");
+  const operatorReference = optional(query, "reference");
   return {
     ...(cursor ? { cursor } : {}),
     ...(cursorDirection ? { cursorDirection } : {}),
+    ...(customerEmail ? { customerEmail } : {}),
     ...(fromDate ? { fromDate } : {}),
     ...(fulfillmentStatus ? { fulfillmentStatus } : {}),
     ...(limitValue ? { limit: Number(limitValue) } : {}),
@@ -1278,6 +1287,7 @@ const compactQuery = (query: URLSearchParams) => {
     ...(status ? { status } : {}),
     ...(toDate ? { toDate } : {}),
     ...(operationalView ? { operationalView } : {}),
+    ...(operatorReference ? { operatorReference } : {}),
   };
 };
 
@@ -1367,6 +1377,34 @@ const recentOrdersTable = (
       )
     : `<div class="table-wrap"><table class="recent-orders-table"><thead><tr><th scope="col">Bestellung</th><th scope="col">Kunde</th><th scope="col">Produkt</th><th scope="col">Zahlung</th><th scope="col">Risiko</th><th scope="col">Abwicklung</th><th scope="col">Datum</th><th scope="col"><span class="sr-only">Aktion</span></th></tr></thead><tbody>${orders.map((order) => `<tr><td data-label="Bestellung" class="order-reference"><a href="/admin/orders/${order.orderId}" title="Technische Bestell-ID: ${escapeHtml(order.orderId)}">${escapeHtml(order.operatorReference)}</a></td><td data-label="Kunde" class="customer-reference" title="${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}">${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}</td><td data-label="Produkt"><span class="product-cell">${icon("package")}<span>${escapeHtml(order.productTitle)} × ${order.quantity}</span></span></td><td data-label="Zahlung"><span class="status status-${escapeHtml(order.paymentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.paymentStatus))}</span></td><td data-label="Risiko"><span class="status status-${escapeHtml(order.riskStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.riskStatus))}</span></td><td data-label="Abwicklung"><span class="cell-stack"><span>${escapeHtml(adminStatusLabel(order.procurementStatus))}</span><small>${escapeHtml(adminStatusLabel(order.fulfillmentStatus))}</small></span></td><td data-label="Datum">${escapeHtml(formatDate(order.createdAt))}</td><td data-label="Aktion"><a class="row-action" href="/admin/orders/${order.orderId}" aria-label="Bestellung ${escapeHtml(order.operatorReference)} öffnen">Öffnen ${icon("arrow")}</a></td></tr>`).join("")}</tbody></table></div>`;
 
+const orderStateIndicator = (
+  tone: "blue" | "green" | "amber" | "red" | "neutral",
+  label: string,
+): string =>
+  `<span class="order-state-indicator state-${tone}"><span class="state-dot" aria-hidden="true"></span><span>${escapeHtml(label)}</span></span>`;
+
+const orderStatusLegend = (): string =>
+  `<div class="order-status-legend" aria-label="Legende der Bestellzustände">${orderStateIndicator("blue", "Auslieferung abgeschlossen")}${orderStateIndicator("green", "Kundenabruf bestätigt")}${orderStateIndicator("amber", "Auslieferung ausstehend")}${orderStateIndicator("red", "Auslieferung fehlgeschlagen")}</div>`;
+
+const orderDeliveryIndicators = (
+  order: AdminOrderListResult["orders"][number],
+): string => {
+  const fulfillment =
+    order.fulfillmentStatus === "SUCCEEDED"
+      ? orderStateIndicator("blue", "Ausgeliefert")
+      : order.fulfillmentStatus === "FAILED"
+        ? orderStateIndicator("red", "Fehlgeschlagen")
+        : order.fulfillmentStatus === "PENDING"
+          ? orderStateIndicator("amber", "Ausstehend")
+          : order.fulfillmentStatus === "MANUAL_REVIEW"
+            ? orderStateIndicator("amber", "Manuelle Prüfung")
+            : orderStateIndicator("neutral", "Nicht gestartet");
+  const customerAccess = order.customerAccessConfirmed
+    ? orderStateIndicator("green", "Kundenabruf bestätigt")
+    : orderStateIndicator("neutral", "Kein Abrufnachweis");
+  return `<span class="order-state-stack">${fulfillment}${customerAccess}</span>`;
+};
+
 const ordersTable = (
   orders: readonly AdminOrderListResult["orders"][number][],
   query: URLSearchParams,
@@ -1375,14 +1413,16 @@ const ordersTable = (
     ? `<div class="empty-state order-empty-state">${icon("cart")}<div><strong>Keine Bestellungen gefunden</strong><p>Die aktuelle Suche oder Filterauswahl liefert keine Ergebnisse.</p><a href="/admin/orders">Alle Bestellungen anzeigen</a></div></div>`
     : `<div class="table-wrap orders-table-wrap"><table class="orders-table"><thead><tr><th scope="col">Bestellung</th><th scope="col">Kunde</th><th scope="col">Produkt</th><th scope="col">Betrag</th><th scope="col">Zahlung</th><th scope="col">Risiko</th><th scope="col">Beschaffung</th><th scope="col">Auslieferung</th><th scope="col">Status</th><th scope="col">Datum</th><th scope="col"><span class="sr-only">Aktion</span></th></tr></thead><tbody>${orders
         .map((order) => {
-          const returnTo = `/admin/orders${query.toString() ? `?${query.toString()}` : ""}`;
+          const returnTo = orderHrefWithout(query, []);
           const detail = `/admin/orders/${order.orderId}?return=${encodeURIComponent(returnTo)}`;
-          return `<tr><td data-label="Bestellung" class="order-reference"><a href="${escapeHtml(detail)}" title="Technische Bestell-ID: ${escapeHtml(order.orderId)}">${escapeHtml(order.operatorReference)}</a></td><td data-label="Kunde" class="customer-reference" title="${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}">${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}</td><td data-label="Produkt"><span class="product-cell"><span class="product-media">${icon("package")}</span><span class="cell-stack"><strong>${escapeHtml(order.productTitle)}</strong><small>${escapeHtml(adminStatusLabel(order.productPlatform))} · Menge ${order.quantity}</small></span></span></td><td data-label="Betrag" class="amount-cell">${escapeHtml(formatMinor(order.amountMinor, order.currency))}</td><td data-label="Zahlung"><span class="status status-${escapeHtml(order.paymentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.paymentStatus))}</span></td><td data-label="Risiko"><span class="status status-${escapeHtml(order.riskStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.riskStatus))}</span></td><td data-label="Beschaffung"><span class="status status-${escapeHtml(order.procurementStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.procurementStatus))}</span></td><td data-label="Auslieferung"><span class="status status-${escapeHtml(order.fulfillmentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.fulfillmentStatus))}</span></td><td data-label="Status"><span class="status status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(adminStatusLabel(order.status))}</span></td><td data-label="Datum" class="date-cell">${escapeHtml(formatDate(order.createdAt))}</td><td data-label="Aktion"><a class="row-action" href="${escapeHtml(detail)}" aria-label="Bestellung ${escapeHtml(order.operatorReference)} öffnen">Öffnen ${icon("arrow")}</a></td></tr>`;
+          return `<tr><td data-label="Bestellung" class="order-reference"><a href="${escapeHtml(detail)}" title="Technische Bestell-ID: ${escapeHtml(order.orderId)}">${escapeHtml(order.operatorReference)}</a></td><td data-label="Kunde" class="customer-reference" title="${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}">${escapeHtml(order.customerEmail ?? "Nicht verfügbar")}</td><td data-label="Produkt"><span class="product-cell"><span class="product-media">${icon("package")}</span><span class="cell-stack"><strong>${escapeHtml(order.productTitle)}</strong><small>${escapeHtml(adminStatusLabel(order.productPlatform))} · Menge ${order.quantity}</small></span></span></td><td data-label="Betrag" class="amount-cell">${escapeHtml(formatMinor(order.amountMinor, order.currency))}</td><td data-label="Zahlung"><span class="status status-${escapeHtml(order.paymentStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.paymentStatus))}</span></td><td data-label="Risiko"><span class="status status-${escapeHtml(order.riskStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.riskStatus))}</span></td><td data-label="Beschaffung"><span class="status status-${escapeHtml(order.procurementStatus.toLowerCase())}">${escapeHtml(adminStatusLabel(order.procurementStatus))}</span></td><td data-label="Auslieferung">${orderDeliveryIndicators(order)}</td><td data-label="Status"><span class="status status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(adminStatusLabel(order.status))}</span></td><td data-label="Datum" class="date-cell">${escapeHtml(formatDate(order.createdAt))}</td><td data-label="Aktion"><a class="row-action" href="${escapeHtml(detail)}" aria-label="Bestellung ${escapeHtml(order.operatorReference)} öffnen">Öffnen ${icon("arrow")}</a></td></tr>`;
         })
         .join("")}</tbody></table></div>`;
 
 const orderQueryKeys = [
   "search",
+  "reference",
+  "customer",
   "status",
   "payment",
   "risk",
@@ -1396,12 +1436,47 @@ const orderQueryKeys = [
   "panel",
 ] as const;
 
+const structuredOrderFilterKeys = [
+  "reference",
+  "customer",
+  "status",
+  "payment",
+  "risk",
+  "procurement",
+  "fulfillment",
+  "from",
+  "to",
+] as const;
+
+const orderQueryHasValue = (query: URLSearchParams, name: string): boolean =>
+  optional(query, name) !== undefined;
+
+const normalizedOrderQuery = (query: URLSearchParams): URLSearchParams => {
+  const normalized = new URLSearchParams(query);
+  const emptyNames = [...normalized.entries()]
+    .filter(([, value]) => value === "")
+    .map(([name]) => name);
+  for (const name of emptyNames) normalized.delete(name);
+  return normalized;
+};
+
+const orderFiltersActive = (query: URLSearchParams): boolean =>
+  structuredOrderFilterKeys.some((name) => orderQueryHasValue(query, name));
+
+const orderFilterExpanded = (query: URLSearchParams): boolean => {
+  if (query.get("panel") === "filters") return true;
+  if (query.get("panel") === "closed") return false;
+  return orderFiltersActive(query);
+};
+
 const hiddenOrderQuery = (
   query: URLSearchParams,
   excluded: readonly string[],
 ): string =>
   orderQueryKeys
-    .filter((name) => !excluded.includes(name) && query.has(name))
+    .filter(
+      (name) => !excluded.includes(name) && orderQueryHasValue(query, name),
+    )
     .map(
       (name) =>
         `<input type="hidden" name="${name}" value="${escapeHtml(query.get(name) ?? "")}">`,
@@ -1412,44 +1487,33 @@ const orderHrefWithout = (
   query: URLSearchParams,
   removed: readonly string[],
 ): string => {
-  const next = new URLSearchParams(query);
+  const next = normalizedOrderQuery(query);
   for (const name of [...removed, "cursor", "direction"]) next.delete(name);
   return `/admin/orders${next.toString() ? `?${next.toString()}` : ""}`;
 };
 
 const orderActionBar = (query: URLSearchParams): string => {
-  const activeFilterCount = [
-    "status",
-    "payment",
-    "risk",
-    "procurement",
-    "fulfillment",
-    "from",
-    "to",
-  ].filter((name) => query.has(name)).length;
+  const activeFilterCount = structuredOrderFilterKeys.filter((name) =>
+    orderQueryHasValue(query, name),
+  ).length;
+  const expanded = orderFilterExpanded(query);
   const searchValue = query.get("search") ?? "";
-  const filterQuery = new URLSearchParams(query);
+  const filterQuery = normalizedOrderQuery(query);
   filterQuery.delete("cursor");
   filterQuery.delete("direction");
-  filterQuery.set("panel", "filters");
+  filterQuery.set("panel", expanded ? "closed" : "filters");
   const filterHref = `/admin/orders?${filterQuery.toString()}#order-filter`;
-  return `<form class="page-search order-search" method="get" action="/admin/orders">${hiddenOrderQuery(query, ["search"])}<label for="order-search">Bestellungen durchsuchen</label><span class="search-field">${icon("search")}<input id="order-search" type="search" name="search" maxlength="254" placeholder="Bestellreferenz, Bestell-ID oder Kunden-E-Mail" value="${escapeHtml(searchValue)}"></span><button class="button" type="submit">Suchen</button>${searchValue ? `<a class="search-clear" href="${escapeHtml(orderHrefWithout(query, ["search"]))}" aria-label="Suche zurücksetzen">Zurücksetzen</a>` : ""}</form><a class="button-quiet filter-trigger${activeFilterCount > 0 ? " is-active" : ""}" href="${escapeHtml(filterHref)}">${icon("filter")} Filter${activeFilterCount > 0 ? ` <span>${activeFilterCount}</span>` : ""}</a><span class="button-disabled" aria-disabled="true" title="Ein sicherer vollständiger gefilterter Export ist noch nicht angebunden">${icon("file")} Export</span>`;
+  return `<form class="page-search order-search" method="get" action="/admin/orders">${hiddenOrderQuery(query, ["search"])}<label for="order-search">Bestellungen durchsuchen</label><span class="search-field">${icon("search")}<input id="order-search" type="search" name="search" maxlength="254" placeholder="Bestellreferenz, Bestell-ID oder Kunden-E-Mail" value="${escapeHtml(searchValue)}"></span><button class="button" type="submit">Suchen</button>${searchValue ? `<a class="search-clear" href="${escapeHtml(orderHrefWithout(query, ["search"]))}" aria-label="Suche zurücksetzen">Zurücksetzen</a>` : ""}</form><a class="button-quiet filter-trigger${activeFilterCount > 0 ? " is-active" : ""}" href="${escapeHtml(filterHref)}" role="button" aria-controls="order-filter" aria-expanded="${expanded ? "true" : "false"}">${icon("filter")} Filter${activeFilterCount > 0 ? ` <span>${activeFilterCount}</span>` : ""}</a><span class="button-disabled" aria-disabled="true" title="Ein sicherer vollständiger gefilterter Export ist noch nicht angebunden">${icon("file")} Export</span>`;
 };
 
 const orderFilterPanel = (query: URLSearchParams): string => {
-  const filtersActive = [
-    "status",
-    "payment",
-    "risk",
-    "procurement",
-    "fulfillment",
-    "from",
-    "to",
-  ].some((name) => query.has(name));
-  const expanded = filtersActive || query.get("panel") === "filters";
+  const filtersActive = orderFiltersActive(query);
+  const expanded = orderFilterExpanded(query);
   const options = (name: string, values: readonly string[]): string =>
     `<option value="">Alle</option>${values.map((value) => `<option value="${value}"${query.get(name) === value ? " selected" : ""}>${escapeHtml(adminStatusLabel(value))}</option>`).join("")}`;
   const resetHref = orderHrefWithout(query, [
+    "reference",
+    "customer",
     "status",
     "payment",
     "risk",
@@ -1458,7 +1522,7 @@ const orderFilterPanel = (query: URLSearchParams): string => {
     "from",
     "to",
   ]);
-  return `<details class="filter-panel order-filter-panel" id="order-filter"${expanded ? " open" : ""}><summary>${icon("filter")} Filter${filtersActive ? " · aktiv" : ""}</summary><form class="order-filter-grid" method="get" action="/admin/orders">${hiddenOrderQuery(query, ["status", "payment", "risk", "procurement", "fulfillment", "from", "to"])}<label>Bestellstatus<select name="status">${options("status", adminOrderStatuses)}</select></label><label>Zahlung<select name="payment">${options("payment", ["NOT_STARTED", "PENDING", "AUTHORIZED", "CAPTURED", "FAILED", "CANCELLED", "REFUNDED", "PARTIALLY_REFUNDED"])}</select></label><label>Risiko<select name="risk">${options("risk", ["NOT_EVALUATED", "APPROVED", "REVIEW_REQUIRED", "REJECTED"])}</select></label><label>Beschaffung<select name="procurement">${options("procurement", ["NOT_STARTED", "PENDING", "IN_PROGRESS", "SUCCEEDED", "FAILED_RETRYABLE", "FAILED_TERMINAL", "AMBIGUOUS"])}</select></label><label>Auslieferung<select name="fulfillment">${options("fulfillment", ["NOT_STARTED", "PENDING", "SUCCEEDED", "FAILED", "MANUAL_REVIEW"])}</select></label><label>Von<input type="date" name="from" value="${escapeHtml(query.get("from") ?? "")}"></label><label>Bis<input type="date" name="to" value="${escapeHtml(query.get("to") ?? "")}"></label><div class="filter-actions"><button type="submit">Anwenden</button><a class="reset-link" href="${escapeHtml(resetHref)}">Zurücksetzen</a></div></form></details>`;
+  return `<details class="filter-panel order-filter-panel" id="order-filter"${expanded ? " open" : ""}><summary>${icon("filter")} Filter${filtersActive ? " · aktiv" : ""}</summary><form class="order-filter-grid" method="get" action="/admin/orders">${hiddenOrderQuery(query, ["reference", "customer", "status", "payment", "risk", "procurement", "fulfillment", "from", "to"])}<label>Bestellreferenz<input type="text" name="reference" maxlength="9" pattern="KR[0-9A-Fa-f]{7}" placeholder="KR0000001" value="${escapeHtml(query.get("reference") ?? "")}"></label><label>Kunden-E-Mail<input type="email" name="customer" maxlength="254" autocomplete="off" value="${escapeHtml(query.get("customer") ?? "")}"></label><label>Bestellstatus<select name="status">${options("status", adminOrderStatuses)}</select></label><label>Zahlung<select name="payment">${options("payment", ["NOT_STARTED", "PENDING", "AUTHORIZED", "CAPTURED", "FAILED", "CANCELLED", "REFUNDED", "PARTIALLY_REFUNDED"])}</select></label><label>Risiko<select name="risk">${options("risk", ["NOT_EVALUATED", "APPROVED", "REVIEW_REQUIRED", "REJECTED"])}</select></label><label>Beschaffung<select name="procurement">${options("procurement", ["NOT_STARTED", "PENDING", "IN_PROGRESS", "SUCCEEDED", "FAILED_RETRYABLE", "FAILED_TERMINAL", "AMBIGUOUS"])}</select></label><label>Auslieferung<select name="fulfillment">${options("fulfillment", ["NOT_STARTED", "PENDING", "SUCCEEDED", "FAILED", "MANUAL_REVIEW"])}</select></label><label>Von<input type="date" name="from" value="${escapeHtml(query.get("from") ?? "")}"></label><label>Bis<input type="date" name="to" value="${escapeHtml(query.get("to") ?? "")}"></label><div class="filter-actions"><button type="submit">Anwenden</button><a class="reset-link" href="${escapeHtml(resetHref)}">Zurücksetzen</a></div></form></details>`;
 };
 
 const orderMetrics = (
@@ -1466,7 +1530,7 @@ const orderMetrics = (
   query: URLSearchParams,
 ): string => {
   const href = (view?: string): string => {
-    const next = new URLSearchParams(query);
+    const next = normalizedOrderQuery(query);
     next.delete("cursor");
     next.delete("direction");
     if (view) next.set("view", view);
@@ -1479,26 +1543,34 @@ const orderMetrics = (
 
 const activeOrderFilters = (query: URLSearchParams): string => {
   const labels: Readonly<Record<string, string>> = {
+    customer: "Kunden-E-Mail",
     from: "Von",
     fulfillment: "Auslieferung",
     payment: "Zahlung",
     procurement: "Beschaffung",
     risk: "Risiko",
+    reference: "Bestellreferenz",
     status: "Status",
     to: "Bis",
   };
-  const entries = Object.entries(labels).filter(([name]) => query.has(name));
-  if (entries.length === 0 && !query.has("search")) return "";
+  const entries = Object.entries(labels).filter(([name]) =>
+    orderQueryHasValue(query, name),
+  );
+  const search = optional(query, "search");
+  if (entries.length === 0 && !search) return "";
   const values = [
-    ...(query.has("search")
-      ? [
-          `<span><strong>Suche:</strong> ${escapeHtml(query.get("search") ?? "")}</span>`,
-        ]
+    ...(search
+      ? [`<span><strong>Suche:</strong> ${escapeHtml(search)}</span>`]
       : []),
     ...entries.map(([name, label]) => {
       const value = query.get(name) ?? "";
       const shown =
-        name === "from" || name === "to" ? value : adminStatusLabel(value);
+        name === "from" ||
+        name === "to" ||
+        name === "reference" ||
+        name === "customer"
+          ? value
+          : adminStatusLabel(value);
       return `<span><strong>${label}:</strong> ${escapeHtml(shown)}</span>`;
     }),
   ];

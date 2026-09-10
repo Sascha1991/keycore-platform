@@ -62,6 +62,7 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         [customerId, now],
       );
       const createdOrderId = await insertOrder(database, productId, customerId);
+      await insertConfirmedCustomerAccess(database, createdOrderId, customerId);
       await database.query(
         `INSERT INTO order_transition_history(order_id, from_status, to_status, reason_code, correlation_id, actor_type, occurred_at) VALUES ($1, NULL, 'FULFILLMENT_PENDING', 'ADMIN_TEST_FIXTURE', 'corr-admin-pg', 'SYSTEM', $2)`,
         [createdOrderId, now],
@@ -78,6 +79,7 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       expect(page.orders[0]).toMatchObject({
         orderId: orderId(createdOrderId),
         operatorReference: expect.stringMatching(/^KR[0-9A-F]{7}$/u),
+        customerAccessConfirmed: true,
         productPlatform: "WINDOWS",
         productTitle: "Admin Persistence Product",
       });
@@ -99,6 +101,20 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         sort: "NEWEST",
       });
       expect(byReference.orders.map((item) => item.orderId)).toEqual([
+        orderId(createdOrderId),
+      ]);
+      const combined = await repository.list({
+        cursorDirection: "NEXT",
+        filters: {
+          exactCustomerEmail: "admin-customer@example.test",
+          exactOperatorReference: operatorReference,
+          fulfillmentStatus: "PENDING",
+          paymentStatus: "CAPTURED",
+        },
+        limit: 10,
+        sort: "NEWEST",
+      });
+      expect(combined.orders.map((item) => item.orderId)).toEqual([
         orderId(createdOrderId),
       ]);
       const dimensional = await repository.list({
@@ -601,6 +617,36 @@ const insertOrder = async (
     ],
   );
   return id;
+};
+
+const insertConfirmedCustomerAccess = async (
+  database: PostgresTestDatabase,
+  targetOrderId: string,
+  customerId: string,
+): Promise<void> => {
+  const fulfillmentId = randomUUID();
+  const approvalId = randomUUID();
+  await database.query(
+    `INSERT INTO fulfillment_operations(id, order_id, supplier_id, external_supplier_order_id, expected_quantity, status, retrieval_state, delivery_state, record_version, correlation_id, created_at, updated_at, retrieved_at, delivered_at) VALUES ($1, $2, 'synthetic-admin-supplier', 'synthetic-admin-order', 1, 'DELIVERED', 'RETRIEVED', 'DELIVERED', 1, 'corr-admin-access', $3, $3, $3, $3)`,
+    [fulfillmentId, targetOrderId, now],
+  );
+  await database.query(
+    `INSERT INTO customer_key_delivery_approvals(id, fulfillment_id, order_id, customer_id, purpose, version, token_hash, context_fingerprint, status, issued_at, expires_at, consumed_at, correlation_id, record_version, created_at, updated_at) VALUES ($1, $2, $3, $4, 'customer-key-delivery', 1, $5, $6, 'CONSUMED', $7, $8, $7, 'corr-admin-access', 1, $7, $7)`,
+    [
+      approvalId,
+      fulfillmentId,
+      targetOrderId,
+      customerId,
+      "a".repeat(64),
+      "b".repeat(64),
+      now,
+      new Date(now.getTime() + 60_000),
+    ],
+  );
+  await database.query(
+    `INSERT INTO customer_key_delivery_attempts(approval_id, fulfillment_id, order_id, customer_id, channel, status, delivered_at, delivery_reference, correlation_id, record_version, created_at, updated_at) VALUES ($1, $2, $3, $4, 'TEST', 'DELIVERED', $5, 'synthetic-admin-delivery', 'corr-admin-access', 1, $5, $5)`,
+    [approvalId, fulfillmentId, targetOrderId, customerId, now],
+  );
 };
 
 const required = <T>(value: T | undefined): T => {

@@ -240,6 +240,7 @@ export class AdminAccessError extends Error {
 export interface AdminOrderSummary {
   readonly orderId: OrderId;
   readonly operatorReference: string;
+  readonly customerAccessConfirmed: boolean;
   readonly customerEmail: string | null;
   readonly productTitle: string;
   readonly productPlatform: string;
@@ -343,6 +344,8 @@ export interface AdminOrderReadRepository {
 
 export interface AdminOrderQuery {
   readonly search?: string;
+  readonly operatorReference?: string;
+  readonly customerEmail?: string;
   readonly status?: string;
   readonly paymentStatus?: string;
   readonly riskStatus?: string;
@@ -660,6 +663,27 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
     fromDate?: string;
     toDate?: string;
   } = {};
+  if (
+    query.operatorReference !== undefined &&
+    query.operatorReference.trim() !== ""
+  ) {
+    const reference = query.operatorReference.trim();
+    if (!operatorReferencePattern.test(reference)) {
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    }
+    filters.exactOperatorReference = reference.toUpperCase();
+  }
+  if (query.customerEmail !== undefined && query.customerEmail.trim() !== "") {
+    const customerEmail = query.customerEmail.trim();
+    if (
+      customerEmail.length > 254 ||
+      /[\u0000-\u001f\u007f]/u.test(customerEmail) ||
+      !emailPattern.test(customerEmail)
+    ) {
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    }
+    filters.exactCustomerEmail = customerEmail.toLowerCase();
+  }
   if (query.search !== undefined && query.search.trim() !== "") {
     const search = query.search.trim();
     if (search.length > 254 || /[\u0000-\u001f\u007f]/u.test(search)) {
@@ -668,9 +692,23 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
     if (uuidPattern.test(search)) {
       filters.exactOrderId = orderId(search.toLowerCase());
     } else if (operatorReferencePattern.test(search)) {
-      filters.exactOperatorReference = search.toUpperCase();
+      const reference = search.toUpperCase();
+      if (
+        filters.exactOperatorReference &&
+        filters.exactOperatorReference !== reference
+      ) {
+        throw new AdminAccessError("ADMIN_INPUT_INVALID");
+      }
+      filters.exactOperatorReference = reference;
     } else if (emailPattern.test(search)) {
-      filters.exactCustomerEmail = search.toLowerCase();
+      const customerEmail = search.toLowerCase();
+      if (
+        filters.exactCustomerEmail &&
+        filters.exactCustomerEmail !== customerEmail
+      ) {
+        throw new AdminAccessError("ADMIN_INPUT_INVALID");
+      }
+      filters.exactCustomerEmail = customerEmail;
     } else {
       throw new AdminAccessError("ADMIN_INPUT_INVALID");
     }

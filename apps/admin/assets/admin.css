@@ -1187,6 +1187,46 @@ td:first-child {
 .orders-section > .section-heading > div:first-child span {
   font-size: 0.75rem;
 }
+.order-status-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1.2rem;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0.65rem 1rem;
+}
+.order-state-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  color: #c9d2dd;
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
+.state-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #708397;
+}
+.state-blue .state-dot {
+  background: #2583f7;
+}
+.state-green .state-dot {
+  background: #43c56b;
+}
+.state-amber .state-dot {
+  background: #f3a514;
+}
+.state-red .state-dot {
+  background: #ef4b4b;
+}
+.order-state-stack {
+  display: grid;
+  gap: 0.35rem;
+}
 .result-controls {
   display: flex;
   align-items: end;
@@ -1353,6 +1393,10 @@ td:first-child {
   .orders-metrics,
   .order-filter-grid {
     grid-template-columns: 1fr;
+  }
+  .order-status-legend {
+    align-items: flex-start;
+    flex-direction: column;
   }
   .order-search {
     grid-template-columns: 1fr;

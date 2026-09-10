@@ -27,6 +27,7 @@ import type { Queryable, TransactionalQueryable } from "./client.js";
 interface OrderSummaryRow {
   readonly id: string;
   readonly operator_reference: string;
+  readonly customer_access_confirmed: boolean;
   readonly customer_email: string | null;
   readonly product_title: string;
   readonly product_platform: string;
@@ -774,6 +775,12 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
         SELECT
           orders.id::text,
           orders.operator_reference,
+          EXISTS (
+            SELECT 1
+            FROM customer_key_delivery_attempts customer_delivery
+            WHERE customer_delivery.order_id = orders.id
+              AND customer_delivery.status = 'DELIVERED'
+          ) AS customer_access_confirmed,
           COALESCE(customer.email_normalized, orders.checkout_email_normalized) AS customer_email,
           product.title AS product_title,
           product.platform AS product_platform,
@@ -854,6 +861,12 @@ const summarySelect = `
   SELECT
     orders.id::text,
     orders.operator_reference,
+    EXISTS (
+      SELECT 1
+      FROM customer_key_delivery_attempts customer_delivery
+      WHERE customer_delivery.order_id = orders.id
+        AND customer_delivery.status = 'DELIVERED'
+    ) AS customer_access_confirmed,
     COALESCE(customer.email_normalized, orders.checkout_email_normalized) AS customer_email,
     product.title AS product_title,
     product.platform AS product_platform,
@@ -971,6 +984,7 @@ const mapOrderSummary = (row: OrderSummaryRow) => ({
   amountMinor: row.customer_amount_minor,
   createdAt: row.created_at,
   currency: row.currency,
+  customerAccessConfirmed: row.customer_access_confirmed,
   customerEmail: row.customer_email,
   fulfillmentStatus: row.fulfillment_status,
   orderId: orderId(row.id),

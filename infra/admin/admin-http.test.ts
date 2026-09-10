@@ -189,6 +189,8 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain('class="metric-grid orders-metrics"');
     expect(response.body).toContain('id="order-filter"');
     expect(response.body).toContain('name="payment"');
+    expect(response.body).toContain('name="reference"');
+    expect(response.body).toContain('name="customer"');
     expect(response.body).toContain('name="risk"');
     expect(response.body).toContain('name="procurement"');
     expect(response.body).toContain('name="fulfillment"');
@@ -202,6 +204,7 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain(
       'href="/admin/orders?panel=filters#order-filter"',
     );
+    expect(response.body).toContain('aria-expanded="false"');
     expect(response.body).toContain(">KR0000001</a>");
     expect(response.body).toContain('<th scope="col">Bestellung</th>');
     for (const label of [
@@ -219,6 +222,8 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain("Arena Eleven");
     expect(response.body).toContain("Windows · Menge 1");
     expect(response.body).toContain("Auslieferung ausstehend");
+    expect(response.body).toContain("Legende der Bestellzustände");
+    expect(response.body).toContain("Kein Abrufnachweis");
     expect(response.body).toContain('value="PAYMENT_AUTHORIZED"');
     expect(response.body).toContain("Zahlung autorisiert");
     expect(visibleText(response.body)).not.toMatch(
@@ -262,34 +267,78 @@ describe("AdminHttpController", () => {
     opened.query.set("panel", "filters");
     const openedResponse = await controller.handle(opened);
     expect(openedResponse.body).toContain('id="order-filter" open><summary>');
+    expect(openedResponse.body).toContain('aria-expanded="true"');
+    expect(openedResponse.body).toContain("panel=closed#order-filter");
 
     const filtered = authenticated("GET", "/admin/orders");
+    filtered.query.set("reference", "KR0000001");
+    filtered.query.set("customer", "customer@example.test");
+    filtered.query.set("status", "");
     filtered.query.set("view", "PROCESSING");
     filtered.query.set("payment", "CAPTURED");
     filtered.query.set("risk", "APPROVED");
     filtered.query.set("procurement", "SUCCEEDED");
     filtered.query.set("fulfillment", "PENDING");
+    filtered.query.set("from", "");
+    filtered.query.set("to", "");
     filtered.query.set("sort", "OLDEST");
     filtered.query.set("limit", "10");
     const response = await controller.handle(filtered);
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain(
-      'class="metric-card" href="/admin/orders?view=PROCESSING',
+      'class="metric-card" href="/admin/orders?reference=KR0000001&amp;customer=customer%40example.test&amp;view=PROCESSING',
     );
+    expect(response.body).toContain('aria-current="true"');
     expect(response.body).toContain('aria-current="true"');
     expect(response.body).toContain(
       '<option value="CAPTURED" selected>Erfasst</option>',
+    );
+    expect(response.body).toContain(
+      'name="reference" maxlength="9" pattern="KR[0-9A-Fa-f]{7}" placeholder="KR0000001" value="KR0000001"',
+    );
+    expect(response.body).toContain(
+      'name="customer" maxlength="254" autocomplete="off" value="customer@example.test"',
     );
     expect(response.body).toContain(
       '<option value="OLDEST" selected>Älteste zuerst</option>',
     );
     expect(response.body).toContain("<strong>Zahlung:</strong> Erfasst");
     expect(response.body).toContain("1 Ergebnis");
-    expect(response.body).toContain("panel=filters#order-filter");
+    expect(response.body).toContain("panel=closed#order-filter");
+    expect(response.body).toContain(
+      "<strong>Bestellreferenz:</strong> KR0000001",
+    );
+    expect(response.body).toContain(
+      "<strong>Kunden-E-Mail:</strong> customer@example.test",
+    );
+    expect(response.body).toContain("Filter <span>6</span>");
+    expect(response.body).not.toContain("<strong>Status:</strong>");
+    expect(response.body).not.toContain("<strong>Von:</strong>");
+    expect(response.body).not.toContain("<strong>Bis:</strong>");
+    expect(response.body).not.toContain("status=&amp;");
+    expect(response.body).not.toContain("from=&amp;");
+    expect(response.body).not.toContain("to=&amp;");
     expect(response.body).toContain(
       'href="/admin/orders?view=PROCESSING&amp;sort=OLDEST&amp;limit=10"',
     );
+
+    const closed = authenticated("GET", "/admin/orders");
+    closed.query.set("reference", "KR0000001");
+    closed.query.set("customer", "customer@example.test");
+    closed.query.set("payment", "CAPTURED");
+    closed.query.set("panel", "closed");
+    const closedResponse = await controller.handle(closed);
+    expect(closedResponse.body).toContain('aria-expanded="false"');
+    expect(closedResponse.body).toContain('id="order-filter"><summary>');
+    expect(closedResponse.body).toContain('value="KR0000001"');
+    expect(closedResponse.body).toContain('value="customer@example.test"');
+    expect(closedResponse.body).toContain("panel=filters#order-filter");
+
+    const invalidPanel = authenticated("GET", "/admin/orders");
+    invalidPanel.query.set("panel", "unexpected");
+    const invalidPanelResponse = await controller.handle(invalidPanel);
+    expect(invalidPanelResponse.statusCode).toBe(400);
 
     const safeDetail = authenticated("GET", `/admin/orders/${targetOrderId}`);
     safeDetail.query.set(
@@ -308,6 +357,15 @@ describe("AdminHttpController", () => {
     const unsafe = await controller.handle(unsafeDetail);
     expect(unsafe.body).toContain('href="/admin/orders"');
     expect(unsafe.body).not.toContain("attacker.invalid");
+  });
+
+  it("renders customer retrieval only from authoritative delivered evidence", async () => {
+    const response = await fixture({ customerAccessConfirmed: true }).handle(
+      authenticated("GET", "/admin/orders"),
+    );
+
+    expect(response.body).toContain("Kundenabruf bestätigt");
+    expect(response.body).not.toContain("Kein Abrufnachweis");
   });
 
   it("renders the shared operational shell without fake active controls", async () => {
@@ -818,6 +876,7 @@ const fixture = (
     };
     readonly backendUnavailable?: boolean;
     readonly controlMutation?: AdminOperationsControlMutationPort;
+    readonly customerAccessConfirmed?: boolean;
     readonly supportOperations?: AdminSupportOperationsPort;
     readonly delayed?: StagingDelayedFulfillmentPort;
     readonly delayedEligible?: boolean;
@@ -863,7 +922,14 @@ const fixture = (
         attentionOrders: 0,
         failedOrders: 0,
         processingOrders: 1,
-        recentOrders: [summary()],
+        recentOrders: [
+          {
+            ...summary(),
+            customerAccessConfirmed:
+              options.customerAccessConfirmed ??
+              summary().customerAccessConfirmed,
+          },
+        ],
         revenueByCurrency: [],
         topProducts: [
           {
@@ -896,7 +962,14 @@ const fixture = (
         processingOrders: 1,
         totalOrders: 1,
       },
-      orders: [summary()],
+      orders: [
+        {
+          ...summary(),
+          customerAccessConfirmed:
+            options.customerAccessConfirmed ??
+            summary().customerAccessConfirmed,
+        },
+      ],
       totalCount: 1,
     }),
   };
@@ -1207,6 +1280,7 @@ const summary = () => ({
   amountMinor: "2199",
   createdAt: new Date("2026-09-02T09:00:00.000Z"),
   currency: "EUR",
+  customerAccessConfirmed: false,
   customerEmail: "customer@example.test",
   fulfillmentStatus: "PENDING",
   orderId: targetOrderId,
