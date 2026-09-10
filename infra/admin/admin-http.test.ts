@@ -196,7 +196,13 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain('name="limit"');
     expect(response.body).toContain('href="#icon-filter"');
     expect(response.body).toContain('href="#icon-search"');
-    expect(response.body).toContain("Exakte Bestell-ID oder Kunden-E-Mail");
+    expect(response.body).toContain(
+      "Bestellreferenz, Bestell-ID oder Kunden-E-Mail",
+    );
+    expect(response.body).toContain(
+      'href="/admin/orders?panel=filters#order-filter"',
+    );
+    expect(response.body).toContain(">KR0000001</a>");
     expect(response.body).toContain('<th scope="col">Bestellung</th>');
     for (const label of [
       "Bestellung",
@@ -252,6 +258,11 @@ describe("AdminHttpController", () => {
 
   it("preserves operational order filters and validates detail return navigation", async () => {
     const controller = fixture();
+    const opened = authenticated("GET", "/admin/orders");
+    opened.query.set("panel", "filters");
+    const openedResponse = await controller.handle(opened);
+    expect(openedResponse.body).toContain('id="order-filter" open><summary>');
+
     const filtered = authenticated("GET", "/admin/orders");
     filtered.query.set("view", "PROCESSING");
     filtered.query.set("payment", "CAPTURED");
@@ -275,6 +286,10 @@ describe("AdminHttpController", () => {
     );
     expect(response.body).toContain("<strong>Zahlung:</strong> Erfasst");
     expect(response.body).toContain("1 Ergebnis");
+    expect(response.body).toContain("panel=filters#order-filter");
+    expect(response.body).toContain(
+      'href="/admin/orders?view=PROCESSING&amp;sort=OLDEST&amp;limit=10"',
+    );
 
     const safeDetail = authenticated("GET", `/admin/orders/${targetOrderId}`);
     safeDetail.query.set(
@@ -282,6 +297,8 @@ describe("AdminHttpController", () => {
       "/admin/orders?view=PROCESSING&payment=CAPTURED",
     );
     const safe = await controller.handle(safeDetail);
+    expect(safe.body).toContain("Bestellung KR0000001");
+    expect(safe.body).toContain("Technische Bestell-ID");
     expect(safe.body).toContain(
       'href="/admin/orders?view=PROCESSING&amp;payment=CAPTURED"',
     );
@@ -1193,6 +1210,7 @@ const summary = () => ({
   customerEmail: "customer@example.test",
   fulfillmentStatus: "PENDING",
   orderId: targetOrderId,
+  operatorReference: "KR0000001",
   paymentStatus: "CAPTURED",
   procurementStatus: "SUCCEEDED",
   productPlatform: "WINDOWS",

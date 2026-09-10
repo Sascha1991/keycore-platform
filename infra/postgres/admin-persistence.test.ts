@@ -77,6 +77,7 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       expect(page.orders).toHaveLength(1);
       expect(page.orders[0]).toMatchObject({
         orderId: orderId(createdOrderId),
+        operatorReference: expect.stringMatching(/^KR[0-9A-F]{7}$/u),
         productPlatform: "WINDOWS",
         productTitle: "Admin Persistence Product",
       });
@@ -89,6 +90,17 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         },
         totalCount: 1,
       });
+      const operatorReference = page.orders[0]?.operatorReference;
+      if (!operatorReference) throw new Error("Operator reference unavailable");
+      const byReference = await repository.list({
+        cursorDirection: "NEXT",
+        filters: { exactOperatorReference: operatorReference },
+        limit: 10,
+        sort: "NEWEST",
+      });
+      expect(byReference.orders.map((item) => item.orderId)).toEqual([
+        orderId(createdOrderId),
+      ]);
       const dimensional = await repository.list({
         cursorDirection: "NEXT",
         filters: {
@@ -124,6 +136,7 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         encryptedSecretAvailable: false,
         history: [{ reasonCode: "ADMIN_TEST_FIXTURE" }],
         invoiceStatus: "NOT_AVAILABLE",
+        operatorReference,
       });
       expect(JSON.stringify(detail)).not.toMatch(
         /ciphertext|encryption_nonce|wrapped_data_encryption_key/iu,

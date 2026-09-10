@@ -239,6 +239,7 @@ export class AdminAccessError extends Error {
 
 export interface AdminOrderSummary {
   readonly orderId: OrderId;
+  readonly operatorReference: string;
   readonly customerEmail: string | null;
   readonly productTitle: string;
   readonly productPlatform: string;
@@ -296,6 +297,7 @@ export interface AdminDashboard {
 
 export interface AdminOrderFilters {
   readonly exactOrderId?: OrderId;
+  readonly exactOperatorReference?: string;
   readonly exactCustomerEmail?: string;
   readonly status?: string;
   readonly paymentStatus?: string;
@@ -647,6 +649,7 @@ export const verifyAdminCsrf = (actual: string, expected: string): boolean => {
 const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
   const filters: {
     exactOrderId?: OrderId;
+    exactOperatorReference?: string;
     exactCustomerEmail?: string;
     status?: string;
     paymentStatus?: string;
@@ -664,6 +667,8 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
     }
     if (uuidPattern.test(search)) {
       filters.exactOrderId = orderId(search.toLowerCase());
+    } else if (operatorReferencePattern.test(search)) {
+      filters.exactOperatorReference = search.toUpperCase();
     } else if (emailPattern.test(search)) {
       filters.exactCustomerEmail = search.toLowerCase();
     } else {
@@ -713,6 +718,8 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
   }
   return filters;
 };
+
+const operatorReferencePattern = /^KR[0-9A-F]{7}$/iu;
 
 const parsePageLimit = (value: number | undefined): number => {
   if (value === undefined) return 25;

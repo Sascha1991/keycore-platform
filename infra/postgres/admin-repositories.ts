@@ -26,6 +26,7 @@ import type { Queryable, TransactionalQueryable } from "./client.js";
 
 interface OrderSummaryRow {
   readonly id: string;
+  readonly operator_reference: string;
   readonly customer_email: string | null;
   readonly product_title: string;
   readonly product_platform: string;
@@ -772,6 +773,7 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
       `
         SELECT
           orders.id::text,
+          orders.operator_reference,
           COALESCE(customer.email_normalized, orders.checkout_email_normalized) AS customer_email,
           product.title AS product_title,
           product.platform AS product_platform,
@@ -851,6 +853,7 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
 const summarySelect = `
   SELECT
     orders.id::text,
+    orders.operator_reference,
     COALESCE(customer.email_normalized, orders.checkout_email_normalized) AS customer_email,
     product.title AS product_title,
     product.platform AS product_platform,
@@ -915,6 +918,10 @@ const orderFilterSql = (
   };
   if (filters.exactOrderId)
     predicates.push(`orders.id = ${parameter(filters.exactOrderId)}::uuid`);
+  if (filters.exactOperatorReference)
+    predicates.push(
+      `orders.operator_reference = ${parameter(filters.exactOperatorReference)}`,
+    );
   if (filters.exactCustomerEmail)
     predicates.push(
       `COALESCE(customer.email_normalized, orders.checkout_email_normalized) = ${parameter(filters.exactCustomerEmail)}`,
@@ -967,6 +974,7 @@ const mapOrderSummary = (row: OrderSummaryRow) => ({
   customerEmail: row.customer_email,
   fulfillmentStatus: row.fulfillment_status,
   orderId: orderId(row.id),
+  operatorReference: row.operator_reference,
   paymentStatus: row.payment_status,
   procurementStatus: row.procurement_status,
   productTitle: row.product_title,

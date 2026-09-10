@@ -196,6 +196,16 @@ describe("secure admin authentication and orders", () => {
       }),
     );
     expect(first.nextCursorValue).toBeTruthy();
+    await service.list(
+      owner,
+      { search: "kr0000001" },
+      correlationId("admin-reference-search"),
+    );
+    expect(repository.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        filters: { exactOperatorReference: "KR0000001" },
+      }),
+    );
     const cursor = required(first.nextCursorValue);
     await service.list(
       owner,
@@ -472,6 +482,7 @@ const summary = () => ({
   customerEmail: "admin@example.test",
   fulfillmentStatus: "PENDING",
   orderId: targetOrderId,
+  operatorReference: "KR0000001",
   paymentStatus: "CAPTURED",
   procurementStatus: "SUCCEEDED",
   productPlatform: "WINDOWS",
