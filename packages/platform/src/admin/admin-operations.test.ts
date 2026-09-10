@@ -81,6 +81,89 @@ describe("AdminOperationsService", () => {
     ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
   });
 
+  it("validates and binds customer-specific filters and sorting", async () => {
+    const repository = new MemoryRepository(true);
+    const service = new AdminOperationsService(
+      repository,
+      new MemoryAudit(),
+      secret,
+      "CI",
+    );
+    const first = await service.listCustomers(
+      owner(),
+      {
+        limit: 10,
+        orderPresence: "WITH_ORDERS",
+        registeredFrom: "2026-08-01",
+        registeredTo: "2026-09-30",
+        sort: "EMAIL_ASC",
+        status: "VERIFIED",
+      },
+      requestId,
+    );
+    expect(repository.customerInput).toMatchObject({
+      limit: 10,
+      orderPresence: "WITH_ORDERS",
+      registeredFrom: new Date("2026-08-01T00:00:00.000Z"),
+      registeredTo: new Date("2026-09-30T23:59:59.999Z"),
+      sort: "EMAIL_ASC",
+      status: "VERIFIED",
+    });
+
+    await service.listCustomers(
+      owner(),
+      {
+        cursor: required(first.nextCursorValue),
+        limit: 10,
+        orderPresence: "WITH_ORDERS",
+        registeredFrom: "2026-08-01",
+        registeredTo: "2026-09-30",
+        sort: "EMAIL_ASC",
+        status: "VERIFIED",
+      },
+      requestId,
+    );
+    expect(repository.customerInput?.after).toEqual({
+      id: customer.customerId,
+      sortValue: customer.email.toLowerCase(),
+    });
+
+    await expect(
+      service.listCustomers(
+        owner(),
+        { orderPresence: "ANY", sort: "EMAIL_ASC" },
+        requestId,
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await expect(
+      service.listCustomers(
+        owner(),
+        { registeredFrom: "2026-10-01", registeredTo: "2026-09-01" },
+        requestId,
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+  });
+
+  it("retrieves customer detail through the dedicated capability-checked read", async () => {
+    const audit = new MemoryAudit();
+    const service = new AdminOperationsService(
+      new MemoryRepository(),
+      audit,
+      secret,
+      "CI",
+    );
+
+    await expect(
+      service.customerDetail(owner(), customer.customerId, requestId),
+    ).resolves.toEqual(customer);
+    expect(audit.events.at(-1)?.reasonCode).toBe(
+      "ADMIN_CUSTOMER_DETAIL_VIEWED",
+    );
+    await expect(
+      service.customerDetail(owner(), "not-a-customer-id", requestId),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_RESOURCE_UNAVAILABLE" });
+  });
+
   it("rejects unbounded or control-character input", async () => {
     const service = new AdminOperationsService(
       new MemoryRepository(),
@@ -153,15 +236,27 @@ class MemoryRepository implements AdminOperationsRepository {
     this.customerInput = input;
     return {
       items: [customer],
+      metrics: {
+        customersWithOrders: 0,
+        totalCustomers: 1,
+        totalOrders: 0,
+        verifiedCustomers: 1,
+      },
+      totalCount: 1,
       ...(this.withCursor
         ? {
             nextCursor: {
               id: customer.customerId,
-              sortValue: customer.createdAt.toISOString(),
+              sortValue: input.sort.startsWith("EMAIL_")
+                ? customer.email.toLowerCase()
+                : customer.createdAt.toISOString(),
             },
           }
         : {}),
     };
+  }
+  public async findCustomer(customerId: string) {
+    return customerId === customer.customerId ? customer : null;
   }
   public async listProducts() {
     return { items: [] };
@@ -217,6 +312,8 @@ const customer = {
   customerId: "20000000-0000-4000-8000-000000000001",
   email: "customer@example.test",
   lastOrderAt: null,
+  lastOrderReference: null,
+  lastOrderStatus: null,
   orderCount: 0,
   verificationState: "VERIFIED" as const,
 };

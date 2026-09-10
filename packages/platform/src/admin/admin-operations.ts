@@ -36,6 +36,13 @@ export interface AdminListQuery {
   readonly limit?: number;
 }
 
+export interface AdminCustomerQuery extends AdminListQuery {
+  readonly orderPresence?: string;
+  readonly registeredFrom?: string;
+  readonly registeredTo?: string;
+  readonly sort?: string;
+}
+
 export interface AdminReadCursor {
   readonly sortValue: string;
   readonly id: string;
@@ -47,7 +54,41 @@ export interface AdminCustomerSummary {
   readonly verificationState: "UNVERIFIED" | "VERIFIED";
   readonly orderCount: number;
   readonly lastOrderAt: Date | null;
+  readonly lastOrderReference: string | null;
+  readonly lastOrderStatus: string | null;
   readonly createdAt: Date;
+}
+
+export interface AdminCustomerMetrics {
+  readonly customersWithOrders: number;
+  readonly totalCustomers: number;
+  readonly totalOrders: number;
+  readonly verifiedCustomers: number;
+}
+
+export interface AdminCustomerPage extends AdminOperationsPage<AdminCustomerSummary> {
+  readonly metrics: AdminCustomerMetrics;
+  readonly totalCount: number;
+}
+
+export interface AdminCustomerListResult extends AdminCustomerPage {
+  readonly nextCursorValue?: string;
+  readonly limit: number;
+  readonly sort: AdminCustomerSort;
+}
+
+export type AdminCustomerSort =
+  "NEWEST" | "OLDEST" | "EMAIL_ASC" | "EMAIL_DESC";
+
+export interface AdminCustomerRepositoryListInput {
+  readonly search?: string;
+  readonly status?: string;
+  readonly orderPresence?: "WITH_ORDERS" | "WITHOUT_ORDERS";
+  readonly registeredFrom?: Date;
+  readonly registeredTo?: Date;
+  readonly sort: AdminCustomerSort;
+  readonly limit: number;
+  readonly after?: AdminReadCursor;
 }
 
 export interface AdminProductSummary {
@@ -134,8 +175,9 @@ export interface AdminOperationsListResult<T> extends AdminOperationsPage<T> {
 
 export interface AdminOperationsRepository {
   listCustomers(
-    input: AdminRepositoryListInput,
-  ): Promise<AdminOperationsPage<AdminCustomerSummary>>;
+    input: AdminCustomerRepositoryListInput,
+  ): Promise<AdminCustomerPage>;
+  findCustomer(customerId: string): Promise<AdminCustomerSummary | null>;
   listProducts(
     input: AdminRepositoryListInput,
   ): Promise<AdminOperationsPage<AdminProductSummary>>;
@@ -226,14 +268,90 @@ export class AdminOperationsService {
       );
   }
 
-  public listCustomers(
+  public async listCustomers(
     principal: AdminPrincipal,
-    query: AdminListQuery,
+    query: AdminCustomerQuery,
     correlationId: CorrelationId,
-  ) {
-    return this.list("customers", principal, query, correlationId, (input) =>
-      this.repository.listCustomers(input),
+  ): Promise<AdminCustomerListResult> {
+    this.require(principal, "CUSTOMER_VIEW");
+    const search = parseSearch(query.search);
+    const status = parseCustomerStatus(query.status);
+    const orderPresence = parseOrderPresence(query.orderPresence);
+    const registeredFrom = parseCustomerDate(query.registeredFrom, false);
+    const registeredTo = parseCustomerDate(query.registeredTo, true);
+    if (
+      registeredFrom &&
+      registeredTo &&
+      registeredFrom.getTime() > registeredTo.getTime()
+    )
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    const sort = parseCustomerSort(query.sort);
+    const limit = parseLimit(query.limit);
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          orderPresence,
+          registeredFrom: registeredFrom?.toISOString(),
+          registeredTo: registeredTo?.toISOString(),
+          search,
+          section: "customers",
+          sort,
+          status,
+        }),
+        "utf8",
+      )
+      .digest("hex");
+    const after = query.cursor
+      ? decodeCursor(query.cursor, fingerprint, this.cursorSecret)
+      : undefined;
+    const page = await this.repository.listCustomers({
+      ...(after ? { after } : {}),
+      ...(orderPresence ? { orderPresence } : {}),
+      ...(registeredFrom ? { registeredFrom } : {}),
+      ...(registeredTo ? { registeredTo } : {}),
+      ...(search ? { search } : {}),
+      ...(status ? { status } : {}),
+      limit,
+      sort,
+    });
+    await this.auditRead(
+      principal,
+      correlationId,
+      "ADMIN_CUSTOMERS_VIEWED",
+      page.items.length,
     );
+    return {
+      ...page,
+      limit,
+      sort,
+      ...(page.nextCursor
+        ? {
+            nextCursorValue: encodeCursor(
+              page.nextCursor,
+              fingerprint,
+              this.cursorSecret,
+            ),
+          }
+        : {}),
+    };
+  }
+
+  public async customerDetail(
+    principal: AdminPrincipal,
+    customerId: string,
+    correlationId: CorrelationId,
+  ): Promise<AdminCustomerSummary | null> {
+    this.require(principal, "CUSTOMER_VIEW");
+    if (!isUuid(customerId))
+      throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    const customer = await this.repository.findCustomer(customerId);
+    await this.auditRead(
+      principal,
+      correlationId,
+      "ADMIN_CUSTOMER_DETAIL_VIEWED",
+      customer ? 1 : 0,
+    );
+    return customer;
   }
 
   public listProducts(
@@ -556,6 +674,52 @@ const parseStatus = (value: string | undefined): string | undefined => {
     throw new AdminAccessError("ADMIN_INPUT_INVALID");
   return normalized;
 };
+
+const parseCustomerStatus = (
+  value: string | undefined,
+): "VERIFIED" | "UNVERIFIED" | undefined => {
+  const status = parseStatus(value);
+  if (!status) return undefined;
+  if (status !== "VERIFIED" && status !== "UNVERIFIED")
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return status;
+};
+
+const parseOrderPresence = (
+  value: string | undefined,
+): "WITH_ORDERS" | "WITHOUT_ORDERS" | undefined => {
+  if (!value) return undefined;
+  if (value !== "WITH_ORDERS" && value !== "WITHOUT_ORDERS")
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value;
+};
+
+const parseCustomerSort = (value: string | undefined): AdminCustomerSort => {
+  if (!value) return "NEWEST";
+  if (!["NEWEST", "OLDEST", "EMAIL_ASC", "EMAIL_DESC"].includes(value))
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value as AdminCustomerSort;
+};
+
+const parseCustomerDate = (
+  value: string | undefined,
+  endOfDay: boolean,
+): Date | undefined => {
+  if (!value) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value))
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  const date = new Date(
+    `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`,
+  );
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value)
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return date;
+};
+
+const isUuid = (value: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+    value,
+  );
 
 const parseLimit = (value: number | undefined): number => {
   if (value === undefined) return 25;

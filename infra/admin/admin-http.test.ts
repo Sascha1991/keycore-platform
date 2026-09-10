@@ -372,7 +372,7 @@ describe("AdminHttpController", () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.4");
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.5");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
     expect(response.body).toContain('id="icon-home"');
@@ -486,6 +486,51 @@ describe("AdminHttpController", () => {
     await expect(
       support.handle(authenticated("GET", "/admin/discounts")),
     ).resolves.toMatchObject({ statusCode: 403 });
+  });
+
+  it("renders the authoritative customer workspace and privacy-bounded detail", async () => {
+    const controller = fixture();
+    const request = authenticated("GET", "/admin/customers");
+    request.query.set("status", "VERIFIED");
+    request.query.set("orders", "WITH_ORDERS");
+    request.query.set("registered_from", "2026-08-01");
+    request.query.set("registered_to", "2026-09-30");
+    request.query.set("sort", "EMAIL_ASC");
+    const list = await controller.handle(request);
+
+    expect(list.statusCode).toBe(200);
+    expect(list.body).toContain('class="metric-grid customer-metrics"');
+    expect(list.body).toContain('id="customer-search"');
+    expect(list.body).toContain('class="filter-panel customer-filter-panel"');
+    expect(list.body).toContain('name="orders"');
+    expect(list.body).toContain('name="registered_from"');
+    expect(list.body).toContain('value="EMAIL_ASC" selected');
+    expect(list.body).toContain('type="hidden" name="sort" value="EMAIL_ASC"');
+    expect(list.body).toContain('type="hidden" name="status" value="VERIFIED"');
+    expect(list.body).toContain("customer-a@example.test");
+    expect(list.body).toContain("KR-100001");
+    expect(list.body).toContain(
+      "/admin/orders?customer=customer-a%40example.test",
+    );
+    expect(list.body).toContain(`/admin/customers/${targetOrderId}`);
+    expect(list.body).not.toContain("Max Mustermann");
+    expect(list.body).not.toMatch(
+      /password|session_hash|verification_token|claim_code/iu,
+    );
+
+    const detail = await controller.handle(
+      authenticated("GET", `/admin/customers/${targetOrderId}`),
+    );
+    expect(detail.statusCode).toBe(200);
+    expect(detail.body).toContain("Kundendetail");
+    expect(detail.body).toContain(`Kunden-ID ${targetOrderId}`);
+    expect(detail.body).toContain("Maximal 10 aktuelle Einträge");
+    expect(detail.body).toContain(
+      "/admin/orders?customer=customer-a%40example.test",
+    );
+    expect(detail.body).not.toMatch(
+      /password|session_hash|verification_token|claim_code|provider_subject/iu,
+    );
   });
 
   it("builds the notification center from live states and filters it by capability", async () => {
@@ -1061,10 +1106,29 @@ const fixture = (
           customerId: targetOrderId,
           email: "customer-a@example.test",
           lastOrderAt: new Date("2026-09-02T09:00:00.000Z"),
+          lastOrderReference: "KR-100001",
+          lastOrderStatus: "COMPLETED",
           orderCount: 1,
           verificationState: "VERIFIED",
         },
       ],
+      metrics: {
+        customersWithOrders: 1,
+        totalCustomers: 1,
+        totalOrders: 1,
+        verifiedCustomers: 1,
+      },
+      totalCount: 1,
+    }),
+    findCustomer: async () => ({
+      createdAt: new Date("2026-09-01T09:00:00.000Z"),
+      customerId: targetOrderId,
+      email: "customer-a@example.test",
+      lastOrderAt: new Date("2026-09-02T09:00:00.000Z"),
+      lastOrderReference: "KR-100001",
+      lastOrderStatus: "COMPLETED",
+      orderCount: 1,
+      verificationState: "VERIFIED",
     }),
     listFraudReviews: async () => ({
       items: [

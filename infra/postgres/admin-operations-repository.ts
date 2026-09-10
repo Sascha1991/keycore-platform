@@ -1,5 +1,7 @@
 import type {
   AdminCustomerSummary,
+  AdminCustomerRepositoryListInput,
+  AdminCustomerSort,
   AdminFinanceCurrencySummary,
   AdminFraudReviewSummary,
   AdminOperationsControlSummary,
@@ -16,48 +18,107 @@ import type { Queryable } from "./client.js";
 export class PostgresAdminOperationsRepository implements AdminOperationsRepository {
   public constructor(private readonly database: Queryable) {}
 
-  public async listCustomers(
-    input: AdminRepositoryListInput,
-  ): Promise<AdminOperationsPage<AdminCustomerSummary>> {
+  public async listCustomers(input: AdminCustomerRepositoryListInput) {
     const values: unknown[] = [];
-    const predicates: string[] = [];
+    const basePredicates: string[] = [];
     const parameter = (value: unknown) => {
       values.push(value);
       return `$${values.length}`;
     };
     if (input.search)
-      predicates.push(
+      basePredicates.push(
         `(customer.id::text = ${parameter(input.search)} OR customer.email_normalized ILIKE ${parameter(like(input.search))} ESCAPE '\\')`,
       );
     if (input.status)
-      predicates.push(
+      basePredicates.push(
         `customer.email_verification_state = ${parameter(input.status)}`,
       );
-    if (input.after)
-      predicates.push(
-        `(customer.created_at, customer.id) < (${parameter(input.after.sortValue)}::timestamptz, ${parameter(input.after.id)}::uuid)`,
+    if (input.orderPresence === "WITH_ORDERS")
+      basePredicates.push(
+        "EXISTS (SELECT 1 FROM keycore_orders owned_order WHERE owned_order.customer_id = customer.id)",
       );
-    const result = await this.database.query<{
-      readonly id: string;
-      readonly email_normalized: string;
-      readonly email_verification_state: AdminCustomerSummary["verificationState"];
-      readonly order_count: string;
-      readonly last_order_at: Date | null;
-      readonly created_at: Date;
-    }>(
-      `
+    if (input.orderPresence === "WITHOUT_ORDERS")
+      basePredicates.push(
+        "NOT EXISTS (SELECT 1 FROM keycore_orders owned_order WHERE owned_order.customer_id = customer.id)",
+      );
+    if (input.registeredFrom)
+      basePredicates.push(
+        `customer.created_at >= ${parameter(input.registeredFrom)}`,
+      );
+    if (input.registeredTo)
+      basePredicates.push(
+        `customer.created_at <= ${parameter(input.registeredTo)}`,
+      );
+
+    const metricsValues = [...values];
+    const baseWhere = where(basePredicates);
+    const predicates = [...basePredicates];
+    const sort = customerSort(input.sort);
+    if (input.after) {
+      const sortParameter = parameter(input.after.sortValue);
+      const idParameter = parameter(input.after.id);
+      predicates.push(
+        `(${sort.expression}, customer.id) ${sort.comparator} (${sort.cast(sortParameter)}, ${idParameter}::uuid)`,
+      );
+    }
+    const [result, metricResult] = await Promise.all([
+      this.database.query<{
+        readonly id: string;
+        readonly email_normalized: string;
+        readonly email_verification_state: AdminCustomerSummary["verificationState"];
+        readonly order_count: string;
+        readonly last_order_at: Date | null;
+        readonly last_order_reference: string | null;
+        readonly last_order_status: string | null;
+        readonly created_at: Date;
+      }>(
+        `
       SELECT customer.id::text, customer.email_normalized, customer.email_verification_state,
-        count(orders.id)::text AS order_count, max(orders.created_at) AS last_order_at, customer.created_at
+        count(orders.id)::text AS order_count,
+        latest_order.created_at AS last_order_at,
+        latest_order.operator_reference AS last_order_reference,
+        latest_order.status AS last_order_status,
+        customer.created_at
       FROM keycore_customers customer
       LEFT JOIN keycore_orders orders ON orders.customer_id = customer.id
+      LEFT JOIN LATERAL (
+        SELECT recent_order.operator_reference, recent_order.status, recent_order.created_at
+        FROM keycore_orders recent_order
+        WHERE recent_order.customer_id = customer.id
+        ORDER BY recent_order.created_at DESC, recent_order.id DESC
+        LIMIT 1
+      ) latest_order ON true
       ${where(predicates)}
-      GROUP BY customer.id
-      ORDER BY customer.created_at DESC, customer.id DESC
+      GROUP BY customer.id, latest_order.operator_reference, latest_order.status, latest_order.created_at
+      ORDER BY ${sort.expression} ${sort.direction}, customer.id ${sort.direction}
       LIMIT ${parameter(input.limit + 1)}
     `,
-      values,
-    );
-    return page(
+        values,
+      ),
+      this.database.query<{
+        readonly customers_with_orders: string;
+        readonly total_customers: string;
+        readonly total_orders: string;
+        readonly verified_customers: string;
+      }>(
+        `
+        SELECT
+          count(*)::text AS total_customers,
+          count(*) FILTER (WHERE scoped.email_verification_state = 'VERIFIED')::text AS verified_customers,
+          count(*) FILTER (WHERE scoped.order_count > 0)::text AS customers_with_orders,
+          COALESCE(sum(scoped.order_count), 0)::text AS total_orders
+        FROM (
+          SELECT customer.id, customer.email_verification_state, count(orders.id) AS order_count
+          FROM keycore_customers customer
+          LEFT JOIN keycore_orders orders ON orders.customer_id = customer.id
+          ${baseWhere}
+          GROUP BY customer.id
+        ) scoped
+        `,
+        metricsValues,
+      ),
+    ]);
+    const paged = page(
       input.limit,
       result.rows,
       (row) => ({
@@ -65,11 +126,79 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
         customerId: row.id,
         email: row.email_normalized,
         lastOrderAt: row.last_order_at,
+        lastOrderReference: row.last_order_reference,
+        lastOrderStatus: row.last_order_status,
         orderCount: Number(row.order_count),
         verificationState: row.email_verification_state,
       }),
-      (row) => ({ id: row.id, sortValue: row.created_at.toISOString() }),
+      (row) => ({
+        id: row.id,
+        sortValue:
+          input.sort === "EMAIL_ASC" || input.sort === "EMAIL_DESC"
+            ? row.email_normalized.toLowerCase()
+            : row.created_at.toISOString(),
+      }),
     );
+    const metrics = required(metricResult.rows[0]);
+    return {
+      ...paged,
+      metrics: {
+        customersWithOrders: Number(metrics.customers_with_orders),
+        totalCustomers: Number(metrics.total_customers),
+        totalOrders: Number(metrics.total_orders),
+        verifiedCustomers: Number(metrics.verified_customers),
+      },
+      totalCount: Number(metrics.total_customers),
+    };
+  }
+
+  public async findCustomer(
+    customerId: string,
+  ): Promise<AdminCustomerSummary | null> {
+    const result = await this.database.query<{
+      readonly id: string;
+      readonly email_normalized: string;
+      readonly email_verification_state: AdminCustomerSummary["verificationState"];
+      readonly order_count: string;
+      readonly last_order_at: Date | null;
+      readonly last_order_reference: string | null;
+      readonly last_order_status: string | null;
+      readonly created_at: Date;
+    }>(
+      `
+      SELECT customer.id::text, customer.email_normalized, customer.email_verification_state,
+        count(orders.id)::text AS order_count,
+        latest_order.created_at AS last_order_at,
+        latest_order.operator_reference AS last_order_reference,
+        latest_order.status AS last_order_status,
+        customer.created_at
+      FROM keycore_customers customer
+      LEFT JOIN keycore_orders orders ON orders.customer_id = customer.id
+      LEFT JOIN LATERAL (
+        SELECT recent_order.operator_reference, recent_order.status, recent_order.created_at
+        FROM keycore_orders recent_order
+        WHERE recent_order.customer_id = customer.id
+        ORDER BY recent_order.created_at DESC, recent_order.id DESC
+        LIMIT 1
+      ) latest_order ON true
+      WHERE customer.id = $1::uuid
+      GROUP BY customer.id, latest_order.operator_reference, latest_order.status, latest_order.created_at
+      `,
+      [customerId],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          createdAt: row.created_at,
+          customerId: row.id,
+          email: row.email_normalized,
+          lastOrderAt: row.last_order_at,
+          lastOrderReference: row.last_order_reference,
+          lastOrderStatus: row.last_order_status,
+          orderCount: Number(row.order_count),
+          verificationState: row.email_verification_state,
+        }
+      : null;
   }
 
   public async listProducts(
@@ -370,6 +499,49 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
 
 const where = (predicates: readonly string[]): string =>
   predicates.length > 0 ? `WHERE ${predicates.join(" AND ")}` : "";
+
+const customerSort = (
+  sort: AdminCustomerSort,
+): {
+  readonly cast: (parameter: string) => string;
+  readonly comparator: "<" | ">";
+  readonly direction: "ASC" | "DESC";
+  readonly expression: string;
+} => {
+  if (sort === "OLDEST")
+    return {
+      cast: (parameter) => `${parameter}::timestamptz`,
+      comparator: ">",
+      direction: "ASC",
+      expression: "customer.created_at",
+    };
+  if (sort === "EMAIL_ASC")
+    return {
+      cast: (parameter) => parameter,
+      comparator: ">",
+      direction: "ASC",
+      expression: "lower(customer.email_normalized)",
+    };
+  if (sort === "EMAIL_DESC")
+    return {
+      cast: (parameter) => parameter,
+      comparator: "<",
+      direction: "DESC",
+      expression: "lower(customer.email_normalized)",
+    };
+  return {
+    cast: (parameter) => `${parameter}::timestamptz`,
+    comparator: "<",
+    direction: "DESC",
+    expression: "customer.created_at",
+  };
+};
+
+const required = <T>(value: T | undefined): T => {
+  if (value === undefined) throw new Error("Expected database result row");
+  return value;
+};
+
 const like = (value: string): string =>
   `%${value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
 

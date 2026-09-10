@@ -289,10 +289,15 @@ describePostgres("secure admin PostgreSQL persistence", () => {
     const database = await initDatabase();
     try {
       const customerId = randomUUID();
+      const customerWithoutOrdersId = randomUUID();
       const productId = await insertProduct(database);
       await database.query(
         `INSERT INTO keycore_customers(id, email_normalized, email_verification_state, record_version, created_at, updated_at) VALUES ($1, 'operations-customer@example.test', 'VERIFIED', 1, $2, $2)`,
         [customerId, now],
+      );
+      await database.query(
+        `INSERT INTO keycore_customers(id, email_normalized, email_verification_state, record_version, created_at, updated_at) VALUES ($1, 'customer-without-orders@example.test', 'UNVERIFIED', 1, $2, $2)`,
+        [customerWithoutOrdersId, new Date("2026-08-15T09:00:00.000Z")],
       );
       const createdOrderId = await insertOrder(database, productId, customerId);
       const supportId = randomUUID();
@@ -303,9 +308,55 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       const repository = new PostgresAdminOperationsRepository(database);
 
       await expect(
-        repository.listCustomers({ limit: 25, search: "operations-customer" }),
+        repository.listCustomers({
+          limit: 25,
+          search: "operations-customer",
+          sort: "NEWEST",
+        }),
       ).resolves.toMatchObject({
-        items: [{ customerId, orderCount: 1, verificationState: "VERIFIED" }],
+        items: [
+          {
+            customerId,
+            lastOrderReference: expect.stringMatching(/^KR/u),
+            orderCount: 1,
+            verificationState: "VERIFIED",
+          },
+        ],
+        metrics: {
+          customersWithOrders: 1,
+          totalCustomers: 1,
+          totalOrders: 1,
+          verifiedCustomers: 1,
+        },
+        totalCount: 1,
+      });
+      await expect(
+        repository.listCustomers({
+          limit: 25,
+          orderPresence: "WITHOUT_ORDERS",
+          sort: "EMAIL_ASC",
+          status: "UNVERIFIED",
+        }),
+      ).resolves.toMatchObject({
+        items: [
+          {
+            customerId: customerWithoutOrdersId,
+            lastOrderAt: null,
+            lastOrderReference: null,
+            orderCount: 0,
+          },
+        ],
+        metrics: {
+          customersWithOrders: 0,
+          totalCustomers: 1,
+          totalOrders: 0,
+          verifiedCustomers: 0,
+        },
+      });
+      await expect(repository.findCustomer(customerId)).resolves.toMatchObject({
+        customerId,
+        email: "operations-customer@example.test",
+        orderCount: 1,
       });
       await expect(
         repository.listProducts({ limit: 25, search: "Admin Persistence" }),
@@ -343,7 +394,10 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       );
       expect(
         JSON.stringify({
-          customers: await repository.listCustomers({ limit: 25 }),
+          customers: await repository.listCustomers({
+            limit: 25,
+            sort: "NEWEST",
+          }),
           products: await repository.listProducts({ limit: 25 }),
           support: await repository.listSupportCases({ limit: 25 }),
         }),

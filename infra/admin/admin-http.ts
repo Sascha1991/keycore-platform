@@ -19,6 +19,7 @@ import type {
   AdminOperationsControlSummary,
   AdminFinanceCurrencySummary,
   AdminOperationsListResult,
+  AdminCustomerListResult,
   AdminNotificationItem,
   OperationsControlReasonCode,
   OperatorSupportCaseDetail,
@@ -474,7 +475,7 @@ export class AdminHttpController {
     const operations = this.requireOperations();
     const result = await operations.listCustomers(
       principal,
-      listQuery(request.query),
+      customerListQuery(request.query),
       newAdminCorrelationId(),
     );
     return this.render(
@@ -505,18 +506,15 @@ export class AdminHttpController {
     principal: AdminPrincipal,
     customerId: string,
   ): Promise<AdminHttpResponse> {
-    const customers = await this.requireOperations().listCustomers(
+    const customer = await this.requireOperations().customerDetail(
       principal,
-      { limit: 1, search: customerId },
+      customerId,
       newAdminCorrelationId(),
-    );
-    const customer = customers.items.find(
-      (candidate) => candidate.customerId === customerId,
     );
     if (!customer) throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
     const orders = await this.orders.list(
       principal,
-      { limit: 25, search: customer.email },
+      { customerEmail: customer.email, limit: 10 },
       newAdminCorrelationId(),
     );
     return this.render(200, customerDetailContent(customer, orders), principal);
@@ -1048,7 +1046,7 @@ const page = (
   additionalHeaders: Readonly<Record<string, string>> = {},
   csrfSecret?: string,
 ): AdminHttpResponse => ({
-  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.4"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
+  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.5"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
   headers: securityHeaders(additionalHeaders),
   statusCode,
 });
@@ -1303,6 +1301,37 @@ const listQuery = (query: URLSearchParams) => {
   };
 };
 
+const customerListQuery = (query: URLSearchParams) => {
+  rejectDuplicateParameters(query, [
+    "search",
+    "status",
+    "orders",
+    "registered_from",
+    "registered_to",
+    "sort",
+    "limit",
+    "cursor",
+  ]);
+  const cursor = optional(query, "cursor");
+  const limit = optional(query, "limit");
+  const orderPresence = optional(query, "orders");
+  const registeredFrom = optional(query, "registered_from");
+  const registeredTo = optional(query, "registered_to");
+  const search = optional(query, "search");
+  const sort = optional(query, "sort");
+  const status = optional(query, "status");
+  return {
+    ...(cursor ? { cursor } : {}),
+    ...(limit ? { limit: Number(limit) } : {}),
+    ...(orderPresence ? { orderPresence } : {}),
+    ...(registeredFrom ? { registeredFrom } : {}),
+    ...(registeredTo ? { registeredTo } : {}),
+    ...(search ? { search } : {}),
+    ...(sort ? { sort } : {}),
+    ...(status ? { status } : {}),
+  };
+};
+
 const escapeHtml = (value: string): string =>
   value
     .replaceAll("&", "&amp;")
@@ -1324,6 +1353,13 @@ const formatDate = (date: Date): string =>
     timeStyle: "short",
     timeZone: "Europe/Berlin",
   }).format(date);
+const formatDateOnly = (date: Date): string =>
+  new Intl.DateTimeFormat("de-DE", {
+    dateStyle: "medium",
+    timeZone: "Europe/Berlin",
+  }).format(date);
+const shortIdentifier = (value: string): string =>
+  value.length > 13 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
 const metric = (
   label: string,
   value: string | number,
@@ -1648,20 +1684,91 @@ const listActionBar = (
   );
 
 const customerListContent = (
-  result: AdminOperationsListResult<AdminCustomerSummary>,
+  result: AdminCustomerListResult,
   query: URLSearchParams,
+): string => {
+  const hasFilters = [
+    "status",
+    "orders",
+    "registered_from",
+    "registered_to",
+  ].some((name) => query.has(name));
+  const search = escapeHtml(query.get("search") ?? "");
+  const actions = `<form class="page-search customer-search" method="get" action="/admin/customers">${customerHiddenQuery(query, ["search", "cursor"])}<label for="customer-search">Kunden durchsuchen</label><span class="search-field">${icon("search")}<input id="customer-search" type="search" name="search" maxlength="254" placeholder="E-Mail oder Kunden-ID" value="${search}"></span><button class="button" type="submit">Suchen</button>${query.has("search") ? '<a class="button-quiet search-clear" href="/admin/customers">Löschen</a>' : ""}</form><span class="button-disabled" aria-disabled="true" title="Für Kundenkonten besteht noch kein freigegebener sicherer Schreibpfad">Kunde hinzufügen</span>`;
+  return `${pageActionBar("Kunden", "Kundenkonten, Verifizierung und Bestellbeziehungen auf einen Blick.", actions)}<section class="metric-grid customer-metrics" aria-label="Kundenkennzahlen">${metric("Kunden", result.metrics.totalCustomers, { detail: "Aktuelle Auswahl", href: "/admin/customers", iconName: "users", selected: !hasFilters && !query.has("search") })}${metric("Verifiziert", result.metrics.verifiedCustomers, { detail: "E-Mail bestätigt", href: "/admin/customers?status=VERIFIED", iconName: "shield", selected: query.get("status") === "VERIFIED" })}${metric("Mit Bestellungen", result.metrics.customersWithOrders, { detail: "Mindestens eine Bestellung", href: "/admin/customers?orders=WITH_ORDERS", iconName: "cart", selected: query.get("orders") === "WITH_ORDERS" })}${metric("Bestellungen", result.metrics.totalOrders, { detail: "Zugeordnete Bestellungen", iconName: "package" })}</section>${customerFilterPanel(query, hasFilters)}${customerActiveFilters(query)}<section class="content-section operations-section customers-section flush"><div class="section-heading"><div><h2>Kundenkonten</h2><span>${result.items.length} von ${result.totalCount} in dieser Ansicht</span></div>${customerResultControls(query, result)}</div>${result.items.length === 0 ? `<div class="empty-state customer-empty-state">${icon("users")}<div><strong>Keine Kunden gefunden</strong><p>Die aktuelle Suche oder Filterauswahl liefert keine Ergebnisse.</p><a href="/admin/customers">Alle Kunden anzeigen</a></div></div>` : customerTable(result.items)}${customerPagination(result, query)}</section>`;
+};
+
+const customerFilterPanel = (query: URLSearchParams, open: boolean): string =>
+  `<details class="filter-panel customer-filter-panel" id="list-filter"${open ? " open" : ""}><summary>${icon("filter")} Filter${open ? '<span class="filter-count">Aktiv</span>' : ""}</summary><form class="customer-filter-grid" method="get" action="/admin/customers">${customerHiddenQuery(query, ["status", "orders", "registered_from", "registered_to", "cursor"])}<label>Verifizierung<select name="status"><option value="">Alle</option><option value="VERIFIED"${query.get("status") === "VERIFIED" ? " selected" : ""}>Verifiziert</option><option value="UNVERIFIED"${query.get("status") === "UNVERIFIED" ? " selected" : ""}>Nicht verifiziert</option></select></label><label>Bestellungen<select name="orders"><option value="">Alle</option><option value="WITH_ORDERS"${query.get("orders") === "WITH_ORDERS" ? " selected" : ""}>Mit Bestellungen</option><option value="WITHOUT_ORDERS"${query.get("orders") === "WITHOUT_ORDERS" ? " selected" : ""}>Ohne Bestellungen</option></select></label><label>Registriert von<input type="date" name="registered_from" value="${escapeHtml(query.get("registered_from") ?? "")}"></label><label>Registriert bis<input type="date" name="registered_to" value="${escapeHtml(query.get("registered_to") ?? "")}"></label><div class="filter-actions"><button type="submit">Anwenden</button><a class="reset-link" href="/admin/customers">Zurücksetzen</a></div></form></details>`;
+
+const customerActiveFilters = (query: URLSearchParams): string => {
+  const labels: Readonly<Record<string, string>> = {
+    orders: "Bestellungen",
+    registered_from: "Registriert von",
+    registered_to: "Registriert bis",
+    status: "Verifizierung",
+  };
+  const values = Object.entries(labels)
+    .filter(([name]) => optional(query, name))
+    .map(([name, label]) => {
+      const raw = query.get(name) ?? "";
+      const shown =
+        raw === "WITH_ORDERS"
+          ? "Mit Bestellungen"
+          : raw === "WITHOUT_ORDERS"
+            ? "Ohne Bestellungen"
+            : operationalLabel(raw);
+      return `<span><strong>${label}:</strong> ${escapeHtml(shown)}</span>`;
+    });
+  if (values.length === 0) return "";
+  return `<div class="active-filters" aria-label="Aktive Kundenfilter">${values.join("")}<a href="/admin/customers">Alle zurücksetzen</a></div>`;
+};
+
+const customerResultControls = (
+  query: URLSearchParams,
+  result: AdminCustomerListResult,
 ): string =>
-  `${listActionBar("Kunden", "Kundenkonten, Verifizierung und Bestellbeziehungen auf einen Blick.", "/admin/customers", query, "E-Mail oder Kunden-ID", "Kunde hinzufügen")}<section class="metric-grid" aria-label="Kundenkennzahlen">${metric("Gefundene Kunden", result.items.length, { icon: "KU", detail: "Aktuelle Ergebnisse" })}${metric("Verifiziert", result.items.filter((item) => item.verificationState === "VERIFIED").length, { icon: "VE", detail: "In dieser Auswahl" })}${metric("Mit Bestellungen", result.items.filter((item) => item.orderCount > 0).length, { icon: "BE", detail: "In dieser Auswahl" })}${metric(
-    "Bestellungen",
-    result.items.reduce((sum, item) => sum + item.orderCount, 0),
-    { icon: "BS", detail: "Über gefundene Kunden" },
-  )}</section><details class="filter-panel" id="list-filter"${query.has("status") ? " open" : ""}><summary>Detailfilter</summary>${operationalFilter("/admin/customers", query, "E-Mail oder Kunden-ID", ["VERIFIED", "UNVERIFIED"])}</details><section class="content-section operations-section flush"><div class="section-heading"><h2>Kundenkonten</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Kunden gefunden", "Die gewählten Filter liefern keine Ergebnisse.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Kunden-ID</th><th>E-Mail</th><th>Verifizierung</th><th>Bestellungen</th><th>Letzte Bestellung</th><th>Registriert</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Kunden-ID" class="table-reference"><a href="/admin/customers/${encodeURIComponent(item.customerId)}">${escapeHtml(item.customerId)}</a></td><td data-label="E-Mail"><span class="cell-stack"><strong>${escapeHtml(item.email)}</strong><small>Kundenkonto</small></span></td><td data-label="Verifizierung"><span class="status status-${item.verificationState.toLowerCase()}">${escapeHtml(operationalLabel(item.verificationState))}</span></td><td data-label="Bestellungen">${item.orderCount}</td><td data-label="Letzte Bestellung">${item.lastOrderAt ? escapeHtml(formatDate(item.lastOrderAt)) : "Keine"}</td><td data-label="Registriert">${escapeHtml(formatDate(item.createdAt))}</td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/customers")}</section>`;
+  `<form class="result-controls" method="get" action="/admin/customers">${customerHiddenQuery(query, ["sort", "limit", "cursor"])}<label>Sortierung<select name="sort"><option value="NEWEST"${result.sort === "NEWEST" ? " selected" : ""}>Neueste zuerst</option><option value="OLDEST"${result.sort === "OLDEST" ? " selected" : ""}>Älteste zuerst</option><option value="EMAIL_ASC"${result.sort === "EMAIL_ASC" ? " selected" : ""}>E-Mail A–Z</option><option value="EMAIL_DESC"${result.sort === "EMAIL_DESC" ? " selected" : ""}>E-Mail Z–A</option></select></label><label>Pro Seite<select name="limit">${[10, 25, 50].map((value) => `<option value="${value}"${result.limit === value ? " selected" : ""}>${value}</option>`).join("")}</select></label><button class="button-quiet" type="submit">Übernehmen</button></form>`;
+
+const customerHiddenQuery = (
+  query: URLSearchParams,
+  excluded: readonly string[],
+): string =>
+  [
+    "search",
+    "status",
+    "orders",
+    "registered_from",
+    "registered_to",
+    "sort",
+    "limit",
+    "cursor",
+  ]
+    .filter((name) => !excluded.includes(name) && optional(query, name))
+    .map(
+      (name) =>
+        `<input type="hidden" name="${name}" value="${escapeHtml(query.get(name) ?? "")}">`,
+    )
+    .join("");
+
+const customerTable = (items: readonly AdminCustomerSummary[]): string =>
+  `<div class="table-wrap customers-table-wrap"><table class="operations-table customers-table"><thead><tr><th scope="col">Kunde</th><th scope="col">Verifizierung</th><th scope="col">Bestellungen</th><th scope="col">Letzte Bestellung</th><th scope="col">Registriert</th><th scope="col"><span class="sr-only">Aktion</span></th></tr></thead><tbody>${items.map((item) => `<tr><td data-label="Kunde"><span class="customer-identity"><span class="avatar">${icon("user")}</span><span class="cell-stack"><strong>${escapeHtml(item.email)}</strong><small title="Kunden-ID: ${escapeHtml(item.customerId)}">ID ${escapeHtml(shortIdentifier(item.customerId))}</small></span></span></td><td data-label="Verifizierung"><span class="status status-${item.verificationState.toLowerCase()}">${escapeHtml(operationalLabel(item.verificationState))}</span></td><td data-label="Bestellungen"><a class="customer-order-count" href="/admin/orders?customer=${encodeURIComponent(item.email)}">${item.orderCount}</a></td><td data-label="Letzte Bestellung">${item.lastOrderReference && item.lastOrderAt ? `<span class="cell-stack"><a class="order-reference" href="/admin/orders?reference=${encodeURIComponent(item.lastOrderReference)}">${escapeHtml(item.lastOrderReference)}</a><small>${escapeHtml(formatDate(item.lastOrderAt))}${item.lastOrderStatus ? ` · ${escapeHtml(adminStatusLabel(item.lastOrderStatus))}` : ""}</small></span>` : '<span class="muted-value">Keine Bestellung</span>'}</td><td data-label="Registriert" class="date-cell">${escapeHtml(formatDateOnly(item.createdAt))}</td><td data-label="Aktion"><a class="row-action" href="/admin/customers/${encodeURIComponent(item.customerId)}" aria-label="Kunde ${escapeHtml(item.email)} öffnen">Öffnen ${icon("arrow")}</a></td></tr>`).join("")}</tbody></table></div>`;
+
+const customerPagination = (
+  result: AdminCustomerListResult,
+  query: URLSearchParams,
+): string => {
+  if (!result.nextCursorValue) return "";
+  const next = new URLSearchParams(query);
+  next.set("cursor", result.nextCursorValue);
+  return `<nav class="customer-pagination" aria-label="Kundenseiten"><span>${result.items.length} von ${result.totalCount} geladen</span><a class="pagination" href="/admin/customers?${escapeHtml(next.toString())}">Weitere Kunden</a></nav>`;
+};
 
 const customerDetailContent = (
   customer: AdminCustomerSummary,
   orders: AdminOrderListResult,
 ): string =>
-  `${pageActionBar(customer.email, "Kundendetail und zugeordnete Bestellhistorie.", '<a class="button-quiet" href="/admin/customers">Zurück zu Kunden</a>')}<section class="state-strip" aria-label="Kundenstatus"><div><span>Verifizierung</span><strong>${escapeHtml(operationalLabel(customer.verificationState))}</strong></div><div><span>Bestellungen</span><strong>${customer.orderCount}</strong></div><div><span>Registriert</span><strong>${escapeHtml(formatDate(customer.createdAt))}</strong></div><div><span>Letzte Bestellung</span><strong>${customer.lastOrderAt ? escapeHtml(formatDate(customer.lastOrderAt)) : "Keine"}</strong></div></section><section class="content-section"><div class="section-heading"><h2>Bestellverlauf</h2><span>Maximal 25 aktuelle Einträge</span></div>${ordersTable(orders.orders, new URLSearchParams())}</section><p class="page-note">Authentifizierungsdaten, Sitzungen und Verifizierungsnachweise werden in dieser Ansicht nicht ausgegeben.</p>`;
+  `${pageActionBar("Kundendetail", "Kundenkonto und zugeordnete Bestellhistorie.", `<a class="button-quiet" href="/admin/customers">Zurück zu Kunden</a><a class="button" href="/admin/orders?customer=${encodeURIComponent(customer.email)}">Alle Bestellungen</a>`)}<section class="customer-detail-identity"><span class="customer-detail-avatar">${icon("user")}</span><div><span class="eyebrow">Kundenkonto</span><h2>${escapeHtml(customer.email)}</h2><p title="Technische Kunden-ID: ${escapeHtml(customer.customerId)}">Kunden-ID ${escapeHtml(customer.customerId)}</p></div><span class="status status-${customer.verificationState.toLowerCase()}">${escapeHtml(operationalLabel(customer.verificationState))}</span></section><section class="state-strip customer-state-strip" aria-label="Kundenstatus"><div><span>Verifizierung</span><strong>${escapeHtml(operationalLabel(customer.verificationState))}</strong></div><div><span>Bestellungen</span><strong>${customer.orderCount}</strong></div><div><span>Registriert</span><strong>${escapeHtml(formatDateOnly(customer.createdAt))}</strong></div><div><span>Letzte Bestellung</span><strong>${customer.lastOrderReference ? escapeHtml(customer.lastOrderReference) : "Keine"}</strong>${customer.lastOrderAt ? `<small>${escapeHtml(formatDate(customer.lastOrderAt))}</small>` : ""}</div></section><section class="content-section customer-orders-section"><div class="section-heading"><div><h2>Letzte Bestellungen</h2><span>Maximal 10 aktuelle Einträge</span></div>${customer.orderCount > 0 ? `<a href="/admin/orders?customer=${encodeURIComponent(customer.email)}">Vollständigen Bestellverlauf öffnen</a>` : ""}</div>${recentOrdersTable(orders.orders)}</section><p class="page-note">Authentifizierungsdaten, Sitzungen und Verifizierungsnachweise werden in dieser Ansicht nicht ausgegeben.</p>`;
 
 const productListContent = (
   result: AdminOperationsListResult<AdminProductSummary>,
