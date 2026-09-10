@@ -40,7 +40,7 @@ import { PostgresOperationsControlRepository } from "../postgres/operations-cont
 import { PostgresOrderRepository } from "../postgres/order-repositories.js";
 
 const expectedMigrationBaseline = "031";
-const expectedMigrationCount = 30;
+const expectedMigrationCount = 31;
 const requiredTables = [
   "admin_identities",
   "admin_permission_grants",
