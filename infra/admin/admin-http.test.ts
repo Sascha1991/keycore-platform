@@ -372,7 +372,7 @@ describe("AdminHttpController", () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.5");
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.6");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
     expect(response.body).toContain('id="icon-home"');
@@ -500,6 +500,14 @@ describe("AdminHttpController", () => {
 
     expect(list.statusCode).toBe(200);
     expect(list.body).toContain('class="metric-grid customer-metrics"');
+    expect(list.body).toContain("Gesamtkunden");
+    expect(list.body).toContain("Kunden mit Bestellungen");
+    expect(list.body).toContain("Zahlungsvolumen (Kunden)");
+    expect(list.body).toContain("21,99 EUR");
+    expect(list.body).toContain("Neukunden (30 Tage)");
+    expect(list.body).toContain("1 E-Mail bestätigt");
+    expect(list.body).toContain('href="#icon-user-plus"');
+    expect(list.body).not.toContain("Kunde hinzufügen");
     expect(list.body).toContain('id="customer-search"');
     expect(list.body).toContain('class="filter-panel customer-filter-panel"');
     expect(list.body).toContain('name="orders"');
@@ -1113,9 +1121,15 @@ const fixture = (
         },
       ],
       metrics: {
+        capturedPaymentVolumes: [
+          {
+            amountMinor: "2199",
+            currency: "EUR",
+          },
+        ],
         customersWithOrders: 1,
+        newCustomersLast30Days: 1,
         totalCustomers: 1,
-        totalOrders: 1,
         verifiedCustomers: 1,
       },
       totalCount: 1,

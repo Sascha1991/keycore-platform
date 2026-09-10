@@ -237,9 +237,10 @@ class MemoryRepository implements AdminOperationsRepository {
     return {
       items: [customer],
       metrics: {
+        capturedPaymentVolumes: [],
         customersWithOrders: 0,
+        newCustomersLast30Days: 1,
         totalCustomers: 1,
-        totalOrders: 0,
         verifiedCustomers: 1,
       },
       totalCount: 1,

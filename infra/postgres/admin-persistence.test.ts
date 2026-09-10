@@ -291,15 +291,17 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       const customerId = randomUUID();
       const customerWithoutOrdersId = randomUUID();
       const productId = await insertProduct(database);
+      const recentRegistration = new Date(Date.now() - 24 * 60 * 60 * 1000);
       await database.query(
         `INSERT INTO keycore_customers(id, email_normalized, email_verification_state, record_version, created_at, updated_at) VALUES ($1, 'operations-customer@example.test', 'VERIFIED', 1, $2, $2)`,
-        [customerId, now],
+        [customerId, recentRegistration],
       );
       await database.query(
         `INSERT INTO keycore_customers(id, email_normalized, email_verification_state, record_version, created_at, updated_at) VALUES ($1, 'customer-without-orders@example.test', 'UNVERIFIED', 1, $2, $2)`,
-        [customerWithoutOrdersId, new Date("2026-08-15T09:00:00.000Z")],
+        [customerWithoutOrdersId, new Date("2025-08-15T09:00:00.000Z")],
       );
       const createdOrderId = await insertOrder(database, productId, customerId);
+      await insertOrder(database, productId, null, { amountMinor: 999 });
       const supportId = randomUUID();
       await database.query(
         `INSERT INTO support_cases(id, customer_id, order_id, category, status, priority, source, resolution_code, record_version, correlation_id, created_at, updated_at, resolved_at, closed_at) VALUES ($1, $2, $3, 'ORDER_STATUS', 'OPEN', 'NORMAL', 'CUSTOMER', NULL, 1, 'admin-operations-pg', $4, $4, NULL, NULL)`,
@@ -323,9 +325,15 @@ describePostgres("secure admin PostgreSQL persistence", () => {
           },
         ],
         metrics: {
+          capturedPaymentVolumes: [
+            {
+              amountMinor: "2199",
+              currency: "EUR",
+            },
+          ],
           customersWithOrders: 1,
-          totalCustomers: 1,
-          totalOrders: 1,
+          newCustomersLast30Days: 1,
+          totalCustomers: 2,
           verifiedCustomers: 1,
         },
         totalCount: 1,
@@ -347,11 +355,18 @@ describePostgres("secure admin PostgreSQL persistence", () => {
           },
         ],
         metrics: {
-          customersWithOrders: 0,
-          totalCustomers: 1,
-          totalOrders: 0,
-          verifiedCustomers: 0,
+          capturedPaymentVolumes: [
+            {
+              amountMinor: "2199",
+              currency: "EUR",
+            },
+          ],
+          customersWithOrders: 1,
+          newCustomersLast30Days: 1,
+          totalCustomers: 2,
+          verifiedCustomers: 1,
         },
+        totalCount: 1,
       });
       await expect(repository.findCustomer(customerId)).resolves.toMatchObject({
         customerId,
@@ -380,7 +395,7 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         ],
       });
       await expect(repository.financeSummary()).resolves.toMatchObject([
-        { capturedAmountMinor: "2199", capturedOrders: 1, currency: "EUR" },
+        { capturedAmountMinor: "3198", capturedOrders: 2, currency: "EUR" },
       ]);
       const controls = await repository.listOperationsControls();
       expect(controls).toEqual(
@@ -620,7 +635,7 @@ const insertProduct = async (
 const insertOrder = async (
   database: PostgresTestDatabase,
   productId: string,
-  customerId: string,
+  customerId: string | null,
   options: {
     readonly amountMinor?: number;
     readonly paymentStatus?:

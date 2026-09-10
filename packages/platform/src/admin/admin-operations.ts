@@ -60,9 +60,13 @@ export interface AdminCustomerSummary {
 }
 
 export interface AdminCustomerMetrics {
+  readonly capturedPaymentVolumes: readonly {
+    readonly amountMinor: string;
+    readonly currency: string;
+  }[];
   readonly customersWithOrders: number;
+  readonly newCustomersLast30Days: number;
   readonly totalCustomers: number;
-  readonly totalOrders: number;
   readonly verifiedCustomers: number;
 }
 

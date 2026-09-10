@@ -50,7 +50,7 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
         `customer.created_at <= ${parameter(input.registeredTo)}`,
       );
 
-    const metricsValues = [...values];
+    const countValues = [...values];
     const baseWhere = where(basePredicates);
     const predicates = [...basePredicates];
     const sort = customerSort(input.sort);
@@ -61,18 +61,19 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
         `(${sort.expression}, customer.id) ${sort.comparator} (${sort.cast(sortParameter)}, ${idParameter}::uuid)`,
       );
     }
-    const [result, metricResult] = await Promise.all([
-      this.database.query<{
-        readonly id: string;
-        readonly email_normalized: string;
-        readonly email_verification_state: AdminCustomerSummary["verificationState"];
-        readonly order_count: string;
-        readonly last_order_at: Date | null;
-        readonly last_order_reference: string | null;
-        readonly last_order_status: string | null;
-        readonly created_at: Date;
-      }>(
-        `
+    const [result, countResult, metricResult, paymentVolumeResult] =
+      await Promise.all([
+        this.database.query<{
+          readonly id: string;
+          readonly email_normalized: string;
+          readonly email_verification_state: AdminCustomerSummary["verificationState"];
+          readonly order_count: string;
+          readonly last_order_at: Date | null;
+          readonly last_order_reference: string | null;
+          readonly last_order_status: string | null;
+          readonly created_at: Date;
+        }>(
+          `
       SELECT customer.id::text, customer.email_normalized, customer.email_verification_state,
         count(orders.id)::text AS order_count,
         latest_order.created_at AS last_order_at,
@@ -93,31 +94,47 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       ORDER BY ${sort.expression} ${sort.direction}, customer.id ${sort.direction}
       LIMIT ${parameter(input.limit + 1)}
     `,
-        values,
-      ),
-      this.database.query<{
-        readonly customers_with_orders: string;
-        readonly total_customers: string;
-        readonly total_orders: string;
-        readonly verified_customers: string;
-      }>(
-        `
-        SELECT
-          count(*)::text AS total_customers,
-          count(*) FILTER (WHERE scoped.email_verification_state = 'VERIFIED')::text AS verified_customers,
-          count(*) FILTER (WHERE scoped.order_count > 0)::text AS customers_with_orders,
-          COALESCE(sum(scoped.order_count), 0)::text AS total_orders
-        FROM (
-          SELECT customer.id, customer.email_verification_state, count(orders.id) AS order_count
+          values,
+        ),
+        this.database.query<{ readonly total_customers: string }>(
+          `SELECT count(*)::text AS total_customers FROM keycore_customers customer ${baseWhere}`,
+          countValues,
+        ),
+        this.database.query<{
+          readonly customers_with_orders: string;
+          readonly new_customers_last_30_days: string;
+          readonly total_customers: string;
+          readonly verified_customers: string;
+        }>(`
+          SELECT
+            count(*)::text AS total_customers,
+            count(*) FILTER (WHERE customer.email_verification_state = 'VERIFIED')::text AS verified_customers,
+            count(*) FILTER (WHERE EXISTS (
+              SELECT 1 FROM keycore_orders owned_order
+              WHERE owned_order.customer_id = customer.id
+            ))::text AS customers_with_orders,
+            count(*) FILTER (
+              WHERE customer.created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+                AND customer.created_at <= CURRENT_TIMESTAMP
+            )::text AS new_customers_last_30_days
           FROM keycore_customers customer
-          LEFT JOIN keycore_orders orders ON orders.customer_id = customer.id
-          ${baseWhere}
-          GROUP BY customer.id
-        ) scoped
+        `),
+        this.database.query<{
+          readonly amount_minor: string;
+          readonly currency: string;
+        }>(
+          `
+          SELECT owned_order.currency,
+            COALESCE(sum(owned_order.customer_amount_minor), 0)::text AS amount_minor
+          FROM keycore_orders owned_order
+          WHERE owned_order.customer_id IS NOT NULL
+            AND owned_order.payment_status = ANY($1::text[])
+          GROUP BY owned_order.currency
+          ORDER BY owned_order.currency ASC
         `,
-        metricsValues,
-      ),
-    ]);
+          [adminCapturedPaymentVolumeStates],
+        ),
+      ]);
     const paged = page(
       input.limit,
       result.rows,
@@ -139,16 +156,21 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
             : row.created_at.toISOString(),
       }),
     );
+    const count = required(countResult.rows[0]);
     const metrics = required(metricResult.rows[0]);
     return {
       ...paged,
       metrics: {
+        capturedPaymentVolumes: paymentVolumeResult.rows.map((row) => ({
+          amountMinor: row.amount_minor,
+          currency: row.currency,
+        })),
         customersWithOrders: Number(metrics.customers_with_orders),
+        newCustomersLast30Days: Number(metrics.new_customers_last_30_days),
         totalCustomers: Number(metrics.total_customers),
-        totalOrders: Number(metrics.total_orders),
         verifiedCustomers: Number(metrics.verified_customers),
       },
-      totalCount: Number(metrics.total_customers),
+      totalCount: Number(count.total_customers),
     };
   }
 

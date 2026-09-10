@@ -1046,7 +1046,7 @@ const page = (
   additionalHeaders: Readonly<Record<string, string>> = {},
   csrfSecret?: string,
 ): AdminHttpResponse => ({
-  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.5"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
+  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.6"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
   headers: securityHeaders(additionalHeaders),
   statusCode,
 });
@@ -1104,6 +1104,7 @@ type AdminIconName =
   | "tag"
   | "truck"
   | "user"
+  | "user-plus"
   | "users";
 
 const icon = (name: AdminIconName): string =>
@@ -1115,6 +1116,7 @@ const iconSprite = (): string => `<svg class="icon-sprite" aria-hidden="true">
   <symbol id="icon-cart" viewBox="0 0 24 24"><path d="M3 4h2l2.2 10h10.9l2-7H6"/><circle cx="9" cy="19" r="1.5"/><circle cx="18" cy="19" r="1.5"/></symbol>
   <symbol id="icon-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2M16 5a3 3 0 0 1 0 6M17 13a5 5 0 0 1 4 5v2"/></symbol>
   <symbol id="icon-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+  <symbol id="icon-user-plus" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2M17 8v6M14 11h6"/></symbol>
   <symbol id="icon-package" viewBox="0 0 24 24"><path d="m4 7 8-4 8 4-8 4-8-4Z"/><path d="M4 7v10l8 4 8-4V7M12 11v10"/></symbol>
   <symbol id="icon-truck" viewBox="0 0 24 24"><path d="M3 6h11v11H3zM14 10h4l3 3v4h-7z"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></symbol>
   <symbol id="icon-tag" viewBox="0 0 24 24"><path d="M3 12V4h8l10 10-7 7L3 12Z"/><circle cx="8" cy="8" r="1.5"/></symbol>
@@ -1694,8 +1696,33 @@ const customerListContent = (
     "registered_to",
   ].some((name) => query.has(name));
   const search = escapeHtml(query.get("search") ?? "");
-  const actions = `<form class="page-search customer-search" method="get" action="/admin/customers">${customerHiddenQuery(query, ["search", "cursor"])}<label for="customer-search">Kunden durchsuchen</label><span class="search-field">${icon("search")}<input id="customer-search" type="search" name="search" maxlength="254" placeholder="E-Mail oder Kunden-ID" value="${search}"></span><button class="button" type="submit">Suchen</button>${query.has("search") ? '<a class="button-quiet search-clear" href="/admin/customers">Löschen</a>' : ""}</form><span class="button-disabled" aria-disabled="true" title="Für Kundenkonten besteht noch kein freigegebener sicherer Schreibpfad">Kunde hinzufügen</span>`;
-  return `${pageActionBar("Kunden", "Kundenkonten, Verifizierung und Bestellbeziehungen auf einen Blick.", actions)}<section class="metric-grid customer-metrics" aria-label="Kundenkennzahlen">${metric("Kunden", result.metrics.totalCustomers, { detail: "Aktuelle Auswahl", href: "/admin/customers", iconName: "users", selected: !hasFilters && !query.has("search") })}${metric("Verifiziert", result.metrics.verifiedCustomers, { detail: "E-Mail bestätigt", href: "/admin/customers?status=VERIFIED", iconName: "shield", selected: query.get("status") === "VERIFIED" })}${metric("Mit Bestellungen", result.metrics.customersWithOrders, { detail: "Mindestens eine Bestellung", href: "/admin/customers?orders=WITH_ORDERS", iconName: "cart", selected: query.get("orders") === "WITH_ORDERS" })}${metric("Bestellungen", result.metrics.totalOrders, { detail: "Zugeordnete Bestellungen", iconName: "package" })}</section>${customerFilterPanel(query, hasFilters)}${customerActiveFilters(query)}<section class="content-section operations-section customers-section flush"><div class="section-heading"><div><h2>Kundenkonten</h2><span>${result.items.length} von ${result.totalCount} in dieser Ansicht</span></div>${customerResultControls(query, result)}</div>${result.items.length === 0 ? `<div class="empty-state customer-empty-state">${icon("users")}<div><strong>Keine Kunden gefunden</strong><p>Die aktuelle Suche oder Filterauswahl liefert keine Ergebnisse.</p><a href="/admin/customers">Alle Kunden anzeigen</a></div></div>` : customerTable(result.items)}${customerPagination(result, query)}</section>`;
+  const actions = `<form class="page-search customer-search" method="get" action="/admin/customers">${customerHiddenQuery(query, ["search", "cursor"])}<label for="customer-search">Kunden durchsuchen</label><span class="search-field">${icon("search")}<input id="customer-search" type="search" name="search" maxlength="254" placeholder="E-Mail oder Kunden-ID" value="${search}"></span><button class="button" type="submit">Suchen</button>${query.has("search") ? '<a class="button-quiet search-clear" href="/admin/customers">Löschen</a>' : ""}</form>`;
+  const paymentVolume = formatCustomerPaymentVolumes(
+    result.metrics.capturedPaymentVolumes,
+  );
+  return `${pageActionBar("Kunden", "Kundenkonten, Verifizierung und Bestellbeziehungen auf einen Blick.", actions)}<section class="metric-grid customer-metrics" aria-label="Globale Kundenkennzahlen">${metric("Gesamtkunden", result.metrics.totalCustomers, { detail: "Alle registrierten Konten", href: "/admin/customers", iconName: "users", selected: !hasFilters && !query.has("search") })}${metric("Kunden mit Bestellungen", result.metrics.customersWithOrders, { detail: "Direkt zugeordnete Bestellungen", href: "/admin/customers?orders=WITH_ORDERS", iconName: "cart", selected: query.get("orders") === "WITH_ORDERS" })}${metric("Zahlungsvolumen (Kunden)", paymentVolume.value, { detail: paymentVolume.detail, iconName: "euro" })}${metric("Neukunden (30 Tage)", result.metrics.newCustomersLast30Days, { detail: "Nach Registrierungszeitpunkt", iconName: "user-plus" })}</section><div class="customer-verification-summary">${icon("shield")}<span><strong>${result.metrics.verifiedCustomers} E-Mail bestätigt</strong><small>Globaler Kontostand · in der Tabelle und im Filter weiterhin sichtbar</small></span><a href="/admin/customers?status=VERIFIED"${query.get("status") === "VERIFIED" ? ' aria-current="true"' : ""}>Verifizierte Kunden anzeigen</a></div>${customerFilterPanel(query, hasFilters)}${customerActiveFilters(query)}<section class="content-section operations-section customers-section flush"><div class="section-heading"><div><h2>Kundenkonten</h2><span>${result.items.length} von ${result.totalCount} in dieser Ansicht</span></div>${customerResultControls(query, result)}</div>${result.items.length === 0 ? `<div class="empty-state customer-empty-state">${icon("users")}<div><strong>Keine Kunden gefunden</strong><p>Die aktuelle Suche oder Filterauswahl liefert keine Ergebnisse.</p><a href="/admin/customers">Alle Kunden anzeigen</a></div></div>` : customerTable(result.items)}${customerPagination(result, query)}</section>`;
+};
+
+const formatCustomerPaymentVolumes = (
+  volumes: AdminCustomerListResult["metrics"]["capturedPaymentVolumes"],
+): { readonly value: string; readonly detail: string } => {
+  if (volumes.length === 0)
+    return { detail: "Direkt zugeordnet · erfasste Zahlungen", value: "0" };
+  if (volumes.length === 1) {
+    const volume = volumes[0];
+    if (!volume)
+      return { detail: "Direkt zugeordnet · erfasste Zahlungen", value: "0" };
+    return {
+      detail: "Direkt zugeordnet · erfasste Zahlungen",
+      value: formatMinor(volume.amountMinor, volume.currency),
+    };
+  }
+  return {
+    detail: volumes
+      .map((volume) => formatMinor(volume.amountMinor, volume.currency))
+      .join(" · "),
+    value: `${volumes.length} Währungen`,
+  };
 };
 
 const customerFilterPanel = (query: URLSearchParams, open: boolean): string =>
