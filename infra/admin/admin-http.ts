@@ -1,5 +1,6 @@
 import type {
   AdminAuthenticationService,
+  AdminPasswordLoginPort,
   AdminOrderDetail,
   AdminOrderListResult,
   AdminOrderService,
@@ -78,6 +79,7 @@ const sessionCookieName = "keyrano_admin_session";
 export class AdminHttpController {
   public constructor(
     private readonly authentication: AdminAuthenticationService,
+    private readonly passwordAuthentication: AdminPasswordLoginPort,
     private readonly orders: AdminOrderService,
     private readonly staff: AdminStaffService,
     private readonly config: AdminHttpConfig,
@@ -89,6 +91,8 @@ export class AdminHttpController {
     try {
       if (request.path === "/admin/login")
         return await this.handleLogin(request);
+      if (request.path === "/admin/recovery")
+        return await this.handleRecovery(request);
       const rawSession = readCookie(request.headers.cookie, sessionCookieName);
       if (!rawSession)
         return redirect(
@@ -273,6 +277,35 @@ export class AdminHttpController {
     request: AdminHttpRequest,
   ): Promise<AdminHttpResponse> {
     if (request.method === "GET") return loginPage();
+    if (request.method !== "POST")
+      return this.render(
+        405,
+        errorContent("Anfrage nicht verfügbar."),
+        undefined,
+        { Allow: "GET, POST" },
+      );
+    if (
+      !this.validOrigin(request) ||
+      !hasExactFields(request.form, ["email", "password"])
+    )
+      return this.render(400, errorContent("Anmeldung nicht möglich."));
+    const result = await this.passwordAuthentication.login(
+      request.form.get("email") ?? "",
+      request.form.get("password") ?? "",
+      newAdminCorrelationId(),
+    );
+    if (!result.authenticated || !result.rawSession)
+      return this.render(401, errorContent("Anmeldung nicht möglich."));
+    return redirect(
+      "/admin/",
+      sessionCookie(result.rawSession, this.config.secureCookies),
+    );
+  }
+
+  private async handleRecovery(
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    if (request.method === "GET") return recoveryPage();
     if (request.method !== "POST")
       return this.render(
         405,
@@ -1046,7 +1079,7 @@ const page = (
   additionalHeaders: Readonly<Record<string, string>> = {},
   csrfSecret?: string,
 ): AdminHttpResponse => ({
-  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.6"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
+  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.7"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
   headers: securityHeaders(additionalHeaders),
   statusCode,
 });
@@ -1055,7 +1088,15 @@ const loginPage = (): AdminHttpResponse =>
   page(
     200,
     `
-  ${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Interne Anmeldung</h1><p>Nur für autorisierte Mitarbeitende.</p><form method="post" action="/admin/login"><label for="session_code">Sicherer Zugangscode</label><input id="session_code" name="session_code" type="password" autocomplete="off" required minlength="32" maxlength="512"><button type="submit">Anmelden</button></form></section>
+  ${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Interne Anmeldung</h1><p>Nur für autorisierte Mitarbeitende.</p><form method="post" action="/admin/login"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" autocomplete="username" required maxlength="254"><label for="password">Passwort</label><input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="256"><button type="submit">Anmelden</button></form></section>
+`,
+  );
+
+const recoveryPage = (): AdminHttpResponse =>
+  page(
+    200,
+    `
+  ${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Wiederherstellungszugang</h1><p>Nur für kontrollierte Initialisierung und Wiederherstellung.</p><form method="post" action="/admin/recovery"><label for="session_code">Sicherer Zugangscode</label><input id="session_code" name="session_code" type="password" autocomplete="off" required minlength="32" maxlength="512"><button type="submit">Wiederherstellen</button></form><a class="login-back-link" href="/admin/login">Zur normalen Anmeldung</a></section>
 `,
   );
 

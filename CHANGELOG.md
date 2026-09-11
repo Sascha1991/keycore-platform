@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added normal staging Admin sign-in with an email address and a persistent
+  scrypt password credential. Successful credential verification issues the
+  existing eight-hour, server-side, HttpOnly Admin session and preserves RBAC,
+  logout and direct-route protection. The opaque bootstrap session code remains
+  available only through the separate recovery route; no plaintext password or
+  production authentication approval was introduced.
+
 - Aligned the Admin Panel V1.1 global shell and Übersicht with the Human browser
   reference: semantic SVG navigation/KPI icons, integrated KeyRaNo branding,
   active navigation, truthful request-backed service status, a bounded real

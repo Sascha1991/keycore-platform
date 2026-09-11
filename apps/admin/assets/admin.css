@@ -134,6 +134,7 @@ td:first-child { font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 .login-panel h1 { margin-bottom: .35rem; }
 .login-panel p { color: var(--muted); }
 .login-panel form { display: grid; gap: .75rem; margin-top: 1.5rem; }
+.login-back-link { display: inline-block; margin-top: 1rem; color: var(--blue-bright); }
 .notice { max-width: 760px; padding: 1.2rem; border-left: 4px solid var(--blue); }
 .notice-error { border-left-color: var(--red); }
 .notice-warning { border-left-color: var(--orange); }

@@ -183,3 +183,25 @@ and any remaining role-denial/pagination scenarios not covered by the completed
 Human-UAT. Production IdP/MFA and the future real-reveal design require separate
 explicit security approval. KS-11-07 remains incomplete and
 `SECURITY-READINESS` remains `NOT_APPROVED`.
+
+## Development Admin login improvement
+
+The staging Admin now uses `E-Mail-Adresse` and `Passwort` at `/admin/login` for
+ordinary access. The bootstrap reads `KEYRANO_STAGING_ADMIN_LOGIN_EMAIL` and
+`KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD` from the local staging environment,
+normalizes the email, hashes the password with Node.js scrypt and persists only
+the resulting one-way credential. Valid credentials issue a new opaque
+eight-hour session through the existing `admin_sessions` authority, preserving
+the HttpOnly cookie, strict same-origin validation, RBAC and logout behavior.
+
+The existing `KEYRANO_STAGING_ADMIN_SESSION_CODE` remains a bootstrap and
+break-glass credential. It is no longer displayed on the normal login page and
+is accepted only at `/admin/recovery`. Neither login credential belongs in
+repository files, command output, screenshots, tickets or audit metadata.
+
+For hosted staging, add both login variables to `.env.staging.server` before
+running the existing migration and Admin bootstrap procedure. For local staging,
+keep them only in the ignored `infra/docker/staging.local.env`. This change does
+not approve a production identity provider or MFA design; Human Acceptance
+remains `IN_REVIEW / NOT_APPROVED`, KS-11-07 remains incomplete and
+`SECURITY-READINESS` remains `NOT_APPROVED`.

@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   AdminAuthenticationService,
+  AdminPasswordAuthenticationService,
   correlationId,
+  hashAdminPassword,
   hashAdminSession,
 } from "../../packages/platform/src/contracts.js";
 import {
@@ -15,6 +17,7 @@ import {
 import { issueStagingAdminUatSession } from "../../scripts/staging-admin-uat-session-service.js";
 import {
   PostgresAdminSessionRepository,
+  PostgresAdminPasswordCredentialRepository,
   PostgresAdminStaffRepository,
 } from "./admin-repositories.js";
 import { PostgresAuditEventRepository } from "./repositories.js";
@@ -40,6 +43,74 @@ const uatEnvironment = {
 } as const;
 
 describePostgres("staging Admin role bootstrap persistence", () => {
+  it("persists only a scrypt credential and issues a reusable normal Admin session", async () => {
+    const database = await PostgresTestDatabase.initialize({
+      connectionString,
+      schemaName: `staging_admin_password_${randomUUID().replaceAll("-", "_")}`,
+    });
+    const password = ["local", "development", "admin", "password"].join("-");
+    const now = new Date("2026-09-11T10:00:00.000Z");
+
+    try {
+      await bootstrapStagingAdmin(database, {
+        credential: {
+          emailNormalized: "admin@example.test",
+          passwordHash: await hashAdminPassword(password),
+        },
+        hashSecret,
+        now,
+        rawSession: ownerSession,
+        role: "PROJECT_OWNER",
+      });
+      const persisted = await database.query<{
+        readonly email_normalized: string;
+        readonly password_hash: string;
+      }>(
+        `SELECT identity.email_normalized, credential.password_hash
+         FROM admin_identities identity
+         JOIN admin_password_credentials credential ON credential.admin_id = identity.id
+         WHERE identity.id = $1`,
+        [stagingAdminId],
+      );
+      expect(persisted.rows[0]?.email_normalized).toBe("admin@example.test");
+      expect(persisted.rows[0]?.password_hash).toMatch(/^scrypt\$/u);
+      expect(persisted.rows[0]?.password_hash).not.toContain(password);
+
+      const audit = new PostgresAuditEventRepository(database);
+      const passwordAuthentication = new AdminPasswordAuthenticationService(
+        new PostgresAdminPasswordCredentialRepository(database),
+        audit,
+        hashSecret,
+        "STAGING",
+        () => now,
+      );
+      const login = await passwordAuthentication.login(
+        "admin@example.test",
+        password,
+        correlationId("postgres-password-login"),
+      );
+      expect(login.authenticated).toBe(true);
+      const authentication = new AdminAuthenticationService(
+        new PostgresAdminSessionRepository(database),
+        audit,
+        hashSecret,
+        "STAGING",
+        () => new Date("2026-09-11T10:01:00.000Z"),
+      );
+      await expect(
+        authentication.authenticate(
+          login.rawSession ?? "",
+          correlationId("postgres-password-session"),
+        ),
+      ).resolves.toMatchObject({
+        authenticated: true,
+        principal: { roles: ["PROJECT_OWNER"] },
+      });
+    } finally {
+      await database.cleanup();
+    }
+  }, 30_000);
+
   it("switches one synthetic identity without role accumulation or surviving old sessions", async () => {
     const database = await PostgresTestDatabase.initialize({
       connectionString,

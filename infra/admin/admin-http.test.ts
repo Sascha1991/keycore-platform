@@ -10,6 +10,7 @@ import {
   hashAdminSession,
   orderId,
   type AdminOrderReadRepository,
+  type AdminPasswordLoginPort,
   type AdminOperationsRepository,
   type AdminOperationsControlMutationPort,
   type AdminSupportOperationsPort,
@@ -27,6 +28,8 @@ const hmacMaterial = [
 ].join("-");
 const rawSession = "http-admin-opaque-session-1234567890abcdef";
 const staffRawSession = "http-staff-opaque-session-1234567890abcdef";
+const adminEmail = "admin@example.test";
+const adminPassword = ["correct", "admin", "password"].join("-");
 const origin = "https://admin.staging.keyrano.de";
 const adminId = "a1000000-0000-4000-8000-000000000001";
 const staffAdminId = "a1000000-0000-4000-8000-000000000002";
@@ -53,10 +56,15 @@ describe("AdminHttpController", () => {
     });
   });
 
-  it("logs in only by exact-origin POST and returns hardened cookies and headers", async () => {
+  it("logs in by email and password and returns hardened cookies and headers", async () => {
     const controller = fixture();
     const response = await controller.handle(
-      request("POST", "/admin/login", { origin }, { session_code: rawSession }),
+      request(
+        "POST",
+        "/admin/login",
+        { origin },
+        { email: adminEmail, password: adminPassword },
+      ),
     );
     expect(response).toMatchObject({
       statusCode: 303,
@@ -68,6 +76,13 @@ describe("AdminHttpController", () => {
     expect(response.headers["Content-Security-Policy"]).toContain(
       "frame-ancestors 'none'",
     );
+    await expect(
+      controller.handle(
+        request("GET", "/admin/", {
+          cookie: cookiePair(required(response.headers["Set-Cookie"])),
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 200 });
   });
 
   it("keeps owner and synthetic staff sessions independent across separate cookie jars", async () => {
@@ -79,12 +94,17 @@ describe("AdminHttpController", () => {
       },
     });
     const ownerLogin = await controller.handle(
-      request("POST", "/admin/login", { origin }, { session_code: rawSession }),
+      request(
+        "POST",
+        "/admin/recovery",
+        { origin },
+        { session_code: rawSession },
+      ),
     );
     const staffLogin = await controller.handle(
       request(
         "POST",
-        "/admin/login",
+        "/admin/recovery",
         { origin },
         { session_code: staffRawSession },
       ),
@@ -134,7 +154,9 @@ describe("AdminHttpController", () => {
     expect(login.headers["X-Content-Type-Options"]).toBe("nosniff");
     expect(login.headers["X-Frame-Options"]).toBe("DENY");
     expect(login.headers["Cross-Origin-Opener-Policy"]).toBe("same-origin");
-    expect(login.body.match(/name="session_code"/gu)).toHaveLength(1);
+    expect(login.body.match(/name="email"/gu)).toHaveLength(1);
+    expect(login.body.match(/name="password"/gu)).toHaveLength(1);
+    expect(login.body).not.toContain('name="session_code"');
     expect(login.body).not.toMatch(/name="csrf"|name="origin"/u);
 
     await expect(
@@ -143,7 +165,10 @@ describe("AdminHttpController", () => {
           "POST",
           "/admin/login",
           { origin },
-          { session_code: "invalid-session-code-longer-than-32-bytes" },
+          {
+            email: adminEmail,
+            password: ["invalid", "admin", "password"].join("-"),
+          },
         ),
       ),
     ).resolves.toMatchObject({ statusCode: 401 });
@@ -156,6 +181,77 @@ describe("AdminHttpController", () => {
       await expect(
         controller.handle(
           request("POST", "/admin/login", headers, {
+            email: adminEmail,
+            password: adminPassword,
+          }),
+        ),
+      ).resolves.toMatchObject({ statusCode: 400 });
+    }
+  });
+
+  it("preserves logout and permits a fresh password login afterward", async () => {
+    const controller = fixture();
+    const dashboard = await controller.handle(authenticated("GET", "/admin/"));
+    const csrf =
+      /action="\/admin\/logout"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"/u.exec(
+        dashboard.body,
+      )?.[1];
+    expect(csrf).toBeTruthy();
+
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          "/admin/logout",
+          { origin },
+          { csrf: required(csrf) },
+        ),
+      ),
+    ).resolves.toMatchObject({
+      statusCode: 303,
+      headers: { Location: "/admin/login" },
+    });
+    await expect(
+      controller.handle(
+        request(
+          "POST",
+          "/admin/login",
+          { origin },
+          { email: adminEmail, password: adminPassword },
+        ),
+      ),
+    ).resolves.toMatchObject({
+      statusCode: 303,
+      headers: { Location: "/admin/" },
+    });
+  });
+
+  it("keeps the opaque session code on a separate recovery-only form", async () => {
+    const controller = fixture();
+    const login = await controller.handle(request("GET", "/admin/login"));
+    const recovery = await controller.handle(request("GET", "/admin/recovery"));
+
+    expect(login.body).not.toContain("Sicherer Zugangscode");
+    expect(recovery.body).toContain("Wiederherstellungszugang");
+    expect(recovery.body).toContain('name="session_code"');
+    await expect(
+      controller.handle(
+        request(
+          "POST",
+          "/admin/login",
+          { origin },
+          { session_code: rawSession },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 400 });
+    for (const headers of [
+      {},
+      { origin: "null" },
+      { origin: "https://attacker.invalid" },
+    ]) {
+      await expect(
+        controller.handle(
+          request("POST", "/admin/recovery", headers, {
             session_code: rawSession,
           }),
         ),
@@ -372,7 +468,7 @@ describe("AdminHttpController", () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.6");
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.7");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
     expect(response.body).toContain('id="icon-home"');
@@ -967,6 +1063,12 @@ const fixture = (
     revoke: async () => undefined,
     touch: async () => undefined,
   };
+  const passwordAuthentication: AdminPasswordLoginPort = {
+    login: async (email, password) =>
+      email === adminEmail && password === adminPassword
+        ? { authenticated: true, rawSession }
+        : { authenticated: false },
+  };
   const orders: AdminOrderReadRepository = {
     dashboard: async () => {
       if (options.backendUnavailable)
@@ -1214,6 +1316,7 @@ const fixture = (
       "STAGING",
       () => new Date("2026-09-02T10:00:00.000Z"),
     ),
+    passwordAuthentication,
     new AdminOrderService(orders, audit, hmacMaterial, "STAGING"),
     new AdminStaffService(staff, audit, hmacMaterial, "STAGING"),
     { allowedOrigin: origin, csrfSecret: hmacMaterial, secureCookies: true },

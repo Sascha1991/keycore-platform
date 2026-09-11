@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type {
   AdminDashboard,
   AdminAuditEntry,
@@ -13,6 +15,8 @@ import type {
   AdminStaffSummary,
   AdminMutationContext,
   AdminSessionRepository,
+  AdminPasswordCredentialRepository,
+  StoredAdminPasswordCredential,
   OrderId,
   StoredAdminSession,
 } from "../../packages/platform/src/contracts.js";
@@ -113,6 +117,56 @@ export class PostgresAdminSessionRepository implements AdminSessionRepository {
     await this.database.query(
       `UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, $2) WHERE session_hash = $1`,
       [sessionHash, at],
+    );
+  }
+}
+
+export class PostgresAdminPasswordCredentialRepository implements AdminPasswordCredentialRepository {
+  public constructor(private readonly database: Queryable) {}
+
+  public async findByEmail(
+    emailNormalized: string,
+  ): Promise<StoredAdminPasswordCredential | null> {
+    const result = await this.database.query<{
+      readonly admin_id: string;
+      readonly identity_status: StoredAdminPasswordCredential["identityStatus"];
+      readonly password_hash: string;
+    }>(
+      `SELECT identity.id::text AS admin_id,
+              identity.status AS identity_status,
+              credential.password_hash
+       FROM admin_identities identity
+       JOIN admin_password_credentials credential ON credential.admin_id = identity.id
+       WHERE identity.email_normalized = $1`,
+      [emailNormalized],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          adminId: row.admin_id,
+          identityStatus: row.identity_status,
+          passwordHash: row.password_hash,
+        }
+      : null;
+  }
+
+  public async issueSession(input: {
+    readonly adminId: string;
+    readonly expiresAt: Date;
+    readonly issuedAt: Date;
+    readonly sessionHash: string;
+  }): Promise<void> {
+    await this.database.query(
+      `INSERT INTO admin_sessions(
+         id, admin_id, session_hash, assurance, issued_at, expires_at
+       ) VALUES ($1, $2, $3, 'STAGING_SYNTHETIC', $4, $5)`,
+      [
+        randomUUID(),
+        input.adminId,
+        input.sessionHash,
+        input.issuedAt,
+        input.expiresAt,
+      ],
     );
   }
 }

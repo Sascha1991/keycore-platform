@@ -33,6 +33,10 @@ export const bootstrapStagingAdmin = async (
     readonly hashSecret: string;
     readonly rawSession: string;
     readonly role: AdminRole;
+    readonly credential?: {
+      readonly emailNormalized: string;
+      readonly passwordHash: string;
+    };
     readonly now?: Date;
   },
 ): Promise<{
@@ -48,15 +52,21 @@ export const bootstrapStagingAdmin = async (
     await client.query(
       `
         INSERT INTO admin_identities(
-          id, provider, provider_subject, display_name, status, created_at, updated_at
+          id, provider, provider_subject, display_name, status, email_normalized, created_at, updated_at
         )
-        VALUES ($1, 'STAGING_SYNTHETIC', 'keyrano-staging-project-owner', $3, 'ACTIVE', $2, $2)
+        VALUES ($1, 'STAGING_SYNTHETIC', 'keyrano-staging-project-owner', $3, 'ACTIVE', $4, $2, $2)
         ON CONFLICT (id) DO UPDATE SET
           display_name = EXCLUDED.display_name,
           status = 'ACTIVE',
+          email_normalized = COALESCE(EXCLUDED.email_normalized, admin_identities.email_normalized),
           updated_at = EXCLUDED.updated_at
       `,
-      [stagingAdminId, now, displayNames[input.role]],
+      [
+        stagingAdminId,
+        now,
+        displayNames[input.role],
+        input.credential?.emailNormalized ?? null,
+      ],
     );
     await client.query(
       "SELECT id FROM admin_identities WHERE id = $1 FOR UPDATE",
@@ -142,6 +152,17 @@ export const bootstrapStagingAdmin = async (
     );
     if (persistedSession.rows[0]?.admin_id !== stagingAdminId) {
       throw new Error("STAGING_ADMIN_SESSION_HASH_CONFLICT");
+    }
+    if (input.credential) {
+      await client.query(
+        `INSERT INTO admin_password_credentials(
+           admin_id, password_hash, created_at, updated_at
+         ) VALUES ($1, $2, $3, $3)
+         ON CONFLICT (admin_id) DO UPDATE SET
+           password_hash = EXCLUDED.password_hash,
+           updated_at = EXCLUDED.updated_at`,
+        [stagingAdminId, input.credential.passwordHash, now],
+      );
     }
   });
 

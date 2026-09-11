@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage } from "node:http";
 
 import {
   AdminAuthenticationService,
+  AdminPasswordAuthenticationService,
   AdminOperationsService,
   AdminOrderService,
   AdminStaffService,
@@ -16,6 +17,7 @@ import {
 } from "../infra/postgres/client.js";
 import {
   PostgresAdminOrderReadRepository,
+  PostgresAdminPasswordCredentialRepository,
   PostgresAdminSessionRepository,
   PostgresAdminStaffRepository,
 } from "../infra/postgres/admin-repositories.js";
@@ -81,6 +83,12 @@ const delayedFulfillment =
 const controller = new AdminHttpController(
   new AdminAuthenticationService(
     new PostgresAdminSessionRepository(database),
+    audit,
+    required("KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET"),
+    "STAGING",
+  ),
+  new AdminPasswordAuthenticationService(
+    new PostgresAdminPasswordCredentialRepository(database),
     audit,
     required("KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET"),
     "STAGING",
