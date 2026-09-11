@@ -284,6 +284,7 @@ describe("secure admin authentication and orders", () => {
     await service.list(
       owner,
       {
+        customerId: targetOrderId,
         customerEmail: "ADMIN@EXAMPLE.TEST",
         fulfillmentStatus: "SUCCEEDED",
         limit: 10,
@@ -298,6 +299,7 @@ describe("secure admin authentication and orders", () => {
     expect(repository.list).toHaveBeenLastCalledWith({
       cursorDirection: "NEXT",
       filters: {
+        exactCustomerId: targetOrderId,
         exactCustomerEmail: "admin@example.test",
         exactOperatorReference: "KR0000001",
         fulfillmentStatus: "SUCCEEDED",
@@ -308,6 +310,13 @@ describe("secure admin authentication and orders", () => {
       limit: 10,
       sort: "OLDEST",
     });
+    await expect(
+      service.list(
+        owner,
+        { customerId: "not-a-customer-id" },
+        correlationId("admin-customer-id-invalid"),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
     await expect(
       service.list(
         owner,

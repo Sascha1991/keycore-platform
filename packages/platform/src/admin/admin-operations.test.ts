@@ -113,6 +113,19 @@ describe("AdminOperationsService", () => {
     await service.listCustomers(
       owner(),
       {
+        orderPresence: "WITH_CAPTURED_PAYMENT",
+        registrationWindow: "LAST_30_DAYS",
+      },
+      requestId,
+    );
+    expect(repository.customerInput).toMatchObject({
+      orderPresence: "WITH_CAPTURED_PAYMENT",
+      registrationWindow: "LAST_30_DAYS",
+    });
+
+    await service.listCustomers(
+      owner(),
+      {
         cursor: required(first.nextCursorValue),
         limit: 10,
         orderPresence: "WITH_ORDERS",
@@ -132,6 +145,13 @@ describe("AdminOperationsService", () => {
       service.listCustomers(
         owner(),
         { orderPresence: "ANY", sort: "EMAIL_ASC" },
+        requestId,
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await expect(
+      service.listCustomers(
+        owner(),
+        { registrationWindow: "RECENT" },
         requestId,
       ),
     ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });

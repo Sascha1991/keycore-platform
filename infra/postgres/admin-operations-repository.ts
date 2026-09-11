@@ -41,6 +41,14 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       basePredicates.push(
         "NOT EXISTS (SELECT 1 FROM keycore_orders owned_order WHERE owned_order.customer_id = customer.id)",
       );
+    if (input.orderPresence === "WITH_CAPTURED_PAYMENT")
+      basePredicates.push(
+        `EXISTS (SELECT 1 FROM keycore_orders owned_order WHERE owned_order.customer_id = customer.id AND owned_order.payment_status = ANY(${parameter(adminCapturedPaymentVolumeStates)}::text[]))`,
+      );
+    if (input.registrationWindow === "LAST_30_DAYS")
+      basePredicates.push(
+        "customer.created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days' AND customer.created_at <= CURRENT_TIMESTAMP",
+      );
     if (input.registeredFrom)
       basePredicates.push(
         `customer.created_at >= ${parameter(input.registeredFrom)}`,

@@ -601,6 +601,12 @@ describe("AdminHttpController", () => {
     expect(list.body).toContain("Zahlungsvolumen (Kunden)");
     expect(list.body).toContain("21,99 EUR");
     expect(list.body).toContain("Neukunden (30 Tage)");
+    expect(list.body).toContain(
+      'href="/admin/customers?registered=LAST_30_DAYS"',
+    );
+    expect(list.body).toContain(
+      'href="/admin/customers?orders=WITH_CAPTURED_PAYMENT"',
+    );
     expect(list.body).toContain("1 E-Mail bestätigt");
     expect(list.body).toContain('href="#icon-user-plus"');
     expect(list.body).not.toContain("Kunde hinzufügen");
@@ -613,14 +619,35 @@ describe("AdminHttpController", () => {
     expect(list.body).toContain('type="hidden" name="status" value="VERIFIED"');
     expect(list.body).toContain("customer-a@example.test");
     expect(list.body).toContain("KR-100001");
-    expect(list.body).toContain(
-      "/admin/orders?customer=customer-a%40example.test",
-    );
+    expect(list.body).toContain(`/admin/orders?customer_id=${targetOrderId}`);
     expect(list.body).toContain(`/admin/customers/${targetOrderId}`);
     expect(list.body).not.toContain("Max Mustermann");
     expect(list.body).not.toMatch(
       /password|session_hash|verification_token|claim_code/iu,
     );
+
+    const allCustomers = await controller.handle(
+      authenticated("GET", "/admin/customers"),
+    );
+    expect(allCustomers.body).toContain(
+      '<a class="metric-card" href="/admin/customers" aria-current="true">',
+    );
+    const recentRequest = authenticated("GET", "/admin/customers");
+    recentRequest.query.set("registered", "LAST_30_DAYS");
+    const recentCustomers = await controller.handle(recentRequest);
+    expect(recentCustomers.body).toContain(
+      'href="/admin/customers?registered=LAST_30_DAYS" aria-current="true"',
+    );
+    expect(recentCustomers.body).toContain(
+      'name="registered" value="LAST_30_DAYS"',
+    );
+    const paymentRequest = authenticated("GET", "/admin/customers");
+    paymentRequest.query.set("orders", "WITH_CAPTURED_PAYMENT");
+    const paymentCustomers = await controller.handle(paymentRequest);
+    expect(paymentCustomers.body).toContain(
+      'href="/admin/customers?orders=WITH_CAPTURED_PAYMENT" aria-current="true"',
+    );
+    expect(paymentCustomers.body).toContain("Mit erfasstem Zahlungsvolumen");
 
     const detail = await controller.handle(
       authenticated("GET", `/admin/customers/${targetOrderId}`),
@@ -629,9 +656,7 @@ describe("AdminHttpController", () => {
     expect(detail.body).toContain("Kundendetail");
     expect(detail.body).toContain(`Kunden-ID ${targetOrderId}`);
     expect(detail.body).toContain("Maximal 10 aktuelle Einträge");
-    expect(detail.body).toContain(
-      "/admin/orders?customer=customer-a%40example.test",
-    );
+    expect(detail.body).toContain(`/admin/orders?customer_id=${targetOrderId}`);
     expect(detail.body).not.toMatch(
       /password|session_hash|verification_token|claim_code|provider_subject/iu,
     );

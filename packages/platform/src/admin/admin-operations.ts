@@ -38,6 +38,7 @@ export interface AdminListQuery {
 
 export interface AdminCustomerQuery extends AdminListQuery {
   readonly orderPresence?: string;
+  readonly registrationWindow?: string;
   readonly registeredFrom?: string;
   readonly registeredTo?: string;
   readonly sort?: string;
@@ -87,7 +88,9 @@ export type AdminCustomerSort =
 export interface AdminCustomerRepositoryListInput {
   readonly search?: string;
   readonly status?: string;
-  readonly orderPresence?: "WITH_ORDERS" | "WITHOUT_ORDERS";
+  readonly orderPresence?:
+    "WITH_ORDERS" | "WITHOUT_ORDERS" | "WITH_CAPTURED_PAYMENT";
+  readonly registrationWindow?: "LAST_30_DAYS";
   readonly registeredFrom?: Date;
   readonly registeredTo?: Date;
   readonly sort: AdminCustomerSort;
@@ -281,6 +284,9 @@ export class AdminOperationsService {
     const search = parseSearch(query.search);
     const status = parseCustomerStatus(query.status);
     const orderPresence = parseOrderPresence(query.orderPresence);
+    const registrationWindow = parseRegistrationWindow(
+      query.registrationWindow,
+    );
     const registeredFrom = parseCustomerDate(query.registeredFrom, false);
     const registeredTo = parseCustomerDate(query.registeredTo, true);
     if (
@@ -295,6 +301,7 @@ export class AdminOperationsService {
       .update(
         JSON.stringify({
           orderPresence,
+          registrationWindow,
           registeredFrom: registeredFrom?.toISOString(),
           registeredTo: registeredTo?.toISOString(),
           search,
@@ -311,6 +318,7 @@ export class AdminOperationsService {
     const page = await this.repository.listCustomers({
       ...(after ? { after } : {}),
       ...(orderPresence ? { orderPresence } : {}),
+      ...(registrationWindow ? { registrationWindow } : {}),
       ...(registeredFrom ? { registeredFrom } : {}),
       ...(registeredTo ? { registeredTo } : {}),
       ...(search ? { search } : {}),
@@ -691,9 +699,22 @@ const parseCustomerStatus = (
 
 const parseOrderPresence = (
   value: string | undefined,
-): "WITH_ORDERS" | "WITHOUT_ORDERS" | undefined => {
+): "WITH_ORDERS" | "WITHOUT_ORDERS" | "WITH_CAPTURED_PAYMENT" | undefined => {
   if (!value) return undefined;
-  if (value !== "WITH_ORDERS" && value !== "WITHOUT_ORDERS")
+  if (
+    value !== "WITH_ORDERS" &&
+    value !== "WITHOUT_ORDERS" &&
+    value !== "WITH_CAPTURED_PAYMENT"
+  )
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value;
+};
+
+const parseRegistrationWindow = (
+  value: string | undefined,
+): "LAST_30_DAYS" | undefined => {
+  if (!value) return undefined;
+  if (value !== "LAST_30_DAYS")
     throw new AdminAccessError("ADMIN_INPUT_INVALID");
   return value;
 };

@@ -299,6 +299,7 @@ export interface AdminDashboard {
 export interface AdminOrderFilters {
   readonly exactOrderId?: OrderId;
   readonly exactOperatorReference?: string;
+  readonly exactCustomerId?: string;
   readonly exactCustomerEmail?: string;
   readonly status?: string;
   readonly paymentStatus?: string;
@@ -345,6 +346,7 @@ export interface AdminOrderReadRepository {
 export interface AdminOrderQuery {
   readonly search?: string;
   readonly operatorReference?: string;
+  readonly customerId?: string;
   readonly customerEmail?: string;
   readonly status?: string;
   readonly paymentStatus?: string;
@@ -653,6 +655,7 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
   const filters: {
     exactOrderId?: OrderId;
     exactOperatorReference?: string;
+    exactCustomerId?: string;
     exactCustomerEmail?: string;
     status?: string;
     paymentStatus?: string;
@@ -663,6 +666,13 @@ const parseAdminOrderFilters = (query: AdminOrderQuery): AdminOrderFilters => {
     fromDate?: string;
     toDate?: string;
   } = {};
+  if (query.customerId !== undefined && query.customerId.trim() !== "") {
+    const customerId = query.customerId.trim().toLowerCase();
+    if (!uuidPattern.test(customerId)) {
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    }
+    filters.exactCustomerId = customerId;
+  }
   if (
     query.operatorReference !== undefined &&
     query.operatorReference.trim() !== ""

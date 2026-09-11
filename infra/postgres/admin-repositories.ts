@@ -989,6 +989,10 @@ const orderFilterSql = (
     predicates.push(
       `orders.operator_reference = ${parameter(filters.exactOperatorReference)}`,
     );
+  if (filters.exactCustomerId)
+    predicates.push(
+      `orders.customer_id = ${parameter(filters.exactCustomerId)}::uuid`,
+    );
   if (filters.exactCustomerEmail)
     predicates.push(
       `COALESCE(customer.email_normalized, orders.checkout_email_normalized) = ${parameter(filters.exactCustomerEmail)}`,

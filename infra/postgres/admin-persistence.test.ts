@@ -301,7 +301,15 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         [customerWithoutOrdersId, new Date("2025-08-15T09:00:00.000Z")],
       );
       const createdOrderId = await insertOrder(database, productId, customerId);
-      await insertOrder(database, productId, null, { amountMinor: 999 });
+      const sameEmailGuestOrderId = await insertOrder(
+        database,
+        productId,
+        null,
+        {
+          amountMinor: 999,
+          checkoutEmail: "customer-without-orders@example.test",
+        },
+      );
       const supportId = randomUUID();
       await database.query(
         `INSERT INTO support_cases(id, customer_id, order_id, category, status, priority, source, resolution_code, record_version, correlation_id, created_at, updated_at, resolved_at, closed_at) VALUES ($1, $2, $3, 'ORDER_STATUS', 'OPEN', 'NORMAL', 'CUSTOMER', NULL, 1, 'admin-operations-pg', $4, $4, NULL, NULL)`,
@@ -368,10 +376,71 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         },
         totalCount: 1,
       });
+      await expect(
+        repository.listCustomers({
+          limit: 25,
+          registrationWindow: "LAST_30_DAYS",
+          sort: "NEWEST",
+        }),
+      ).resolves.toMatchObject({
+        items: [{ customerId, orderCount: 1 }],
+        totalCount: 1,
+      });
+      await expect(
+        repository.listCustomers({
+          limit: 25,
+          orderPresence: "WITH_CAPTURED_PAYMENT",
+          sort: "NEWEST",
+        }),
+      ).resolves.toMatchObject({
+        items: [{ customerId, orderCount: 1 }],
+        totalCount: 1,
+      });
       await expect(repository.findCustomer(customerId)).resolves.toMatchObject({
         customerId,
         email: "operations-customer@example.test",
         orderCount: 1,
+      });
+      await expect(
+        repository.findCustomer(customerWithoutOrdersId),
+      ).resolves.toMatchObject({
+        customerId: customerWithoutOrdersId,
+        lastOrderAt: null,
+        lastOrderReference: null,
+        orderCount: 0,
+      });
+      const orderRepository = new PostgresAdminOrderReadRepository(database);
+      await expect(
+        orderRepository.list({
+          cursorDirection: "NEXT",
+          filters: { exactCustomerId: customerWithoutOrdersId },
+          limit: 10,
+          sort: "NEWEST",
+        }),
+      ).resolves.toMatchObject({ orders: [], totalCount: 0 });
+      await expect(
+        orderRepository.list({
+          cursorDirection: "NEXT",
+          filters: {
+            exactCustomerEmail: "customer-without-orders@example.test",
+          },
+          limit: 10,
+          sort: "NEWEST",
+        }),
+      ).resolves.toMatchObject({
+        orders: [{ orderId: sameEmailGuestOrderId }],
+        totalCount: 1,
+      });
+      await expect(
+        orderRepository.list({
+          cursorDirection: "NEXT",
+          filters: { exactCustomerId: customerId },
+          limit: 10,
+          sort: "NEWEST",
+        }),
+      ).resolves.toMatchObject({
+        orders: [{ orderId: createdOrderId }],
+        totalCount: 1,
       });
       await expect(
         repository.listProducts({ limit: 25, search: "Admin Persistence" }),
@@ -638,6 +707,7 @@ const insertOrder = async (
   customerId: string | null,
   options: {
     readonly amountMinor?: number;
+    readonly checkoutEmail?: string;
     readonly paymentStatus?:
       "CAPTURED" | "FAILED" | "REFUNDED" | "PARTIALLY_REFUNDED";
   } = {},
@@ -662,12 +732,13 @@ const insertOrder = async (
   );
   const id = randomUUID();
   await database.query(
-    `INSERT INTO keycore_orders(id, product_id, price_lock_id, customer_id, customer_amount_minor, currency, quantity, status, payment_status, procurement_status, fulfillment_status, risk_status, refund_status, record_version, idempotency_key, idempotency_fingerprint, correlation_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, 'EUR', 1, $6, $7, 'SUCCEEDED', 'PENDING', 'APPROVED', $8, 1, $9, $10, 'corr-admin-pg', $11, $11)`,
+    `INSERT INTO keycore_orders(id, product_id, price_lock_id, customer_id, checkout_email_normalized, customer_amount_minor, currency, quantity, status, payment_status, procurement_status, fulfillment_status, risk_status, refund_status, record_version, idempotency_key, idempotency_fingerprint, correlation_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, 'EUR', 1, $7, $8, 'SUCCEEDED', 'PENDING', 'APPROVED', $9, 1, $10, $11, 'corr-admin-pg', $12, $12)`,
     [
       id,
       productId,
       priceLockId,
       customerId,
+      options.checkoutEmail ?? null,
       amountMinor,
       refunded
         ? "REFUNDED"
