@@ -135,6 +135,7 @@ td:first-child { font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 .login-panel p { color: var(--muted); }
 .login-panel form { display: grid; gap: .75rem; margin-top: 1.5rem; }
 .login-back-link { display: inline-block; margin-top: 1rem; color: var(--blue-bright); }
+.form-error { margin-top: 1rem; border: 1px solid #873a43; border-radius: 6px; background: #35171d; color: #ffb2b7; padding: .75rem; }
 .notice { max-width: 760px; padding: 1.2rem; border-left: 4px solid var(--blue); }
 .notice-error { border-left-color: var(--red); }
 .notice-warning { border-left-color: var(--orange); }

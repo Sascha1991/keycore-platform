@@ -3,9 +3,11 @@
 ## Unreleased
 
 - Added normal staging Admin sign-in with an email address and a persistent
-  scrypt password credential. Successful credential verification issues the
-  existing eight-hour, server-side, HttpOnly Admin session and preserves RBAC,
-  logout and direct-route protection. The opaque bootstrap session code remains
+  scrypt password credential. Ordinary bootstrap runs now preserve existing
+  credentials unless explicit rotation is requested. Admin staff can request a
+  Mailpit-delivered, rate-limited password reset using a hashed, one-time
+  45-minute token; completion changes only the target credential and revokes
+  that Admin's active sessions. The opaque bootstrap session code remains
   available only through the separate recovery route; no plaintext password or
   production authentication approval was introduced.
 

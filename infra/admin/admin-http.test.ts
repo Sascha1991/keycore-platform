@@ -11,6 +11,7 @@ import {
   orderId,
   type AdminOrderReadRepository,
   type AdminPasswordLoginPort,
+  type AdminPasswordResetPort,
   type AdminOperationsRepository,
   type AdminOperationsControlMutationPort,
   type AdminSupportOperationsPort,
@@ -259,6 +260,92 @@ describe("AdminHttpController", () => {
     }
   });
 
+  it("provides a generic exact-origin password-reset request flow", async () => {
+    const controller = fixture();
+    const login = await controller.handle(request("GET", "/admin/login"));
+    expect(login.body).toContain('href="/admin/password-reset"');
+    expect(login.body).not.toContain('name="session_code"');
+
+    const page = await controller.handle(
+      request("GET", "/admin/password-reset"),
+    );
+    expect(page.body).toContain("Link zum Zurücksetzen senden");
+    expect(page.body).toContain('name="email"');
+
+    for (const email of [adminEmail, "unknown@example.test", "invalid"]) {
+      const response = await controller.handle(
+        request("POST", "/admin/password-reset", { origin }, { email }),
+      );
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain(
+        "Falls für diese E-Mail-Adresse ein aktives Admin-Konto existiert",
+      );
+    }
+    for (const headers of [
+      {},
+      { origin: "null" },
+      { origin: "https://other.example.test" },
+    ]) {
+      await expect(
+        controller.handle(
+          request("POST", "/admin/password-reset", headers, {
+            email: adminEmail,
+          }),
+        ),
+      ).resolves.toMatchObject({ statusCode: 400 });
+    }
+  });
+
+  it("validates and completes one-time password-reset forms without weakening field checks", async () => {
+    const controller = fixture();
+    const token = "a".repeat(43);
+    const page = await controller.handle(
+      request("GET", `/admin/password-reset/${token}`),
+    );
+    expect(page.body).toContain("Neues Passwort");
+    expect(page.body).toContain("Passwort bestätigen");
+
+    const mismatch = await controller.handle(
+      request(
+        "POST",
+        `/admin/password-reset/${token}`,
+        { origin },
+        {
+          password: adminPassword,
+          password_confirmation: "different-password",
+        },
+      ),
+    );
+    expect(mismatch.statusCode).toBe(400);
+    expect(mismatch.body).toContain("stimmen nicht überein");
+
+    const completed = await controller.handle(
+      request(
+        "POST",
+        `/admin/password-reset/${token}`,
+        { origin },
+        { password: adminPassword, password_confirmation: adminPassword },
+      ),
+    );
+    expect(completed.statusCode).toBe(200);
+    expect(completed.body).toContain("Passwort erfolgreich geändert");
+    expect(completed.body).toContain('href="/admin/login"');
+
+    const invalid = await fixture({
+      passwordResetResult: "INVALID_OR_EXPIRED",
+    }).handle(
+      request(
+        "POST",
+        `/admin/password-reset/${token}`,
+        { origin },
+        { password: adminPassword, password_confirmation: adminPassword },
+      ),
+    );
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.body).toContain("Dieser Link ist nicht mehr gültig");
+    expect(invalid.body).toContain('href="/admin/password-reset"');
+  });
+
   it("renders safe order data and never includes key material", async () => {
     const response = await fixture().handle(
       authenticated("GET", `/admin/orders/${targetOrderId}`),
@@ -468,7 +555,7 @@ describe("AdminHttpController", () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.7");
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.8");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
     expect(response.body).toContain('id="icon-home"');
@@ -1055,6 +1142,8 @@ const fixture = (
     readonly delayed?: StagingDelayedFulfillmentPort;
     readonly delayedEligible?: boolean;
     readonly role?: "PROJECT_OWNER" | "SUPPORT";
+    readonly passwordResetResult?:
+      "COMPLETED" | "INVALID_OR_EXPIRED" | "PASSWORD_INVALID";
   } = {},
 ): AdminHttpController => {
   const audit = new MemoryAudit();
@@ -1093,6 +1182,13 @@ const fixture = (
       email === adminEmail && password === adminPassword
         ? { authenticated: true, rawSession }
         : { authenticated: false },
+  };
+  const passwordReset: AdminPasswordResetPort = {
+    request: async () => ({ accepted: true }),
+    reset: async (_token, password, confirmation) =>
+      password !== confirmation
+        ? { status: "PASSWORD_MISMATCH" }
+        : { status: options.passwordResetResult ?? "COMPLETED" },
   };
   const orders: AdminOrderReadRepository = {
     dashboard: async () => {
@@ -1342,6 +1438,7 @@ const fixture = (
       () => new Date("2026-09-02T10:00:00.000Z"),
     ),
     passwordAuthentication,
+    passwordReset,
     new AdminOrderService(orders, audit, hmacMaterial, "STAGING"),
     new AdminStaffService(staff, audit, hmacMaterial, "STAGING"),
     { allowedOrigin: origin, csrfSecret: hmacMaterial, secureCookies: true },

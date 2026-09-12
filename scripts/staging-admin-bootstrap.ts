@@ -35,6 +35,16 @@ if (!emailNormalized) throw new Error("STAGING_ADMIN_LOGIN_EMAIL_INVALID");
 const passwordHash = await hashAdminPassword(
   required("KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD"),
 );
+const rotateExisting =
+  process.env.KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE === "true";
+if (
+  process.env.KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE !== undefined &&
+  !["true", "false"].includes(
+    process.env.KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE,
+  )
+) {
+  throw new Error("STAGING_ADMIN_LOGIN_PASSWORD_ROTATE_INVALID");
+}
 const databaseUrl = internalDatabaseUrl(
   required("KEYCORE_STAGING_POSTGRES_PASSWORD"),
 );
@@ -46,7 +56,7 @@ try {
     hashSecret,
     rawSession,
     role,
-    credential: { emailNormalized, passwordHash },
+    credential: { emailNormalized, passwordHash, rotateExisting },
   });
   process.stdout.write(
     `${JSON.stringify({ adminId: result.adminId, expiresAt: result.expiresAt.toISOString(), role: result.role, status: "READY", bootstrapRunId: randomUUID() })}\n`,

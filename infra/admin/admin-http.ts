@@ -1,6 +1,7 @@
 import type {
   AdminAuthenticationService,
   AdminPasswordLoginPort,
+  AdminPasswordResetPort,
   AdminOrderDetail,
   AdminOrderListResult,
   AdminOrderService,
@@ -80,6 +81,7 @@ export class AdminHttpController {
   public constructor(
     private readonly authentication: AdminAuthenticationService,
     private readonly passwordAuthentication: AdminPasswordLoginPort,
+    private readonly passwordReset: AdminPasswordResetPort,
     private readonly orders: AdminOrderService,
     private readonly staff: AdminStaffService,
     private readonly config: AdminHttpConfig,
@@ -91,6 +93,12 @@ export class AdminHttpController {
     try {
       if (request.path === "/admin/login")
         return await this.handleLogin(request);
+      if (request.path === "/admin/password-reset")
+        return await this.handlePasswordResetRequest(request);
+      const passwordResetMatch =
+        /^\/admin\/password-reset\/([A-Za-z0-9_-]{1,128})$/u.exec(request.path);
+      if (passwordResetMatch?.[1])
+        return await this.handlePasswordReset(request, passwordResetMatch[1]);
       if (request.path === "/admin/recovery")
         return await this.handleRecovery(request);
       const rawSession = readCookie(request.headers.cookie, sessionCookieName);
@@ -329,6 +337,70 @@ export class AdminHttpController {
       "/admin/",
       sessionCookie(rawSession, this.config.secureCookies),
     );
+  }
+
+  private async handlePasswordResetRequest(
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    if (request.method === "GET") return passwordResetRequestPage();
+    if (request.method !== "POST")
+      return this.render(
+        405,
+        errorContent("Anfrage nicht verfügbar."),
+        undefined,
+        {
+          Allow: "GET, POST",
+        },
+      );
+    if (!this.validOrigin(request) || !hasExactFields(request.form, ["email"]))
+      return this.render(400, errorContent("Anfrage nicht möglich."));
+    await this.passwordReset.request(
+      request.form.get("email") ?? "",
+      newAdminCorrelationId(),
+    );
+    return passwordResetRequestedPage();
+  }
+
+  private async handlePasswordReset(
+    request: AdminHttpRequest,
+    rawToken: string,
+  ): Promise<AdminHttpResponse> {
+    if (request.method === "GET") return passwordResetFormPage(rawToken);
+    if (request.method !== "POST")
+      return this.render(
+        405,
+        errorContent("Anfrage nicht verfügbar."),
+        undefined,
+        {
+          Allow: "GET, POST",
+        },
+      );
+    if (
+      !this.validOrigin(request) ||
+      !hasExactFields(request.form, ["password", "password_confirmation"])
+    )
+      return this.render(400, errorContent("Anfrage nicht möglich."));
+    const result = await this.passwordReset.reset(
+      rawToken,
+      request.form.get("password") ?? "",
+      request.form.get("password_confirmation") ?? "",
+      newAdminCorrelationId(),
+    );
+    if (result.status === "PASSWORD_MISMATCH")
+      return passwordResetFormPage(
+        rawToken,
+        "Die Passwörter stimmen nicht überein.",
+        400,
+      );
+    if (result.status === "PASSWORD_INVALID")
+      return passwordResetFormPage(
+        rawToken,
+        "Das Passwort muss zwischen 12 und 256 Zeichen lang sein.",
+        400,
+      );
+    if (result.status === "INVALID_OR_EXPIRED")
+      return passwordResetInvalidPage();
+    return passwordResetCompletedPage();
   }
 
   private async handleLogout(
@@ -1080,7 +1152,7 @@ const page = (
   additionalHeaders: Readonly<Record<string, string>> = {},
   csrfSecret?: string,
 ): AdminHttpResponse => ({
-  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.7"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
+  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.8"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
   headers: securityHeaders(additionalHeaders),
   statusCode,
 });
@@ -1089,8 +1161,42 @@ const loginPage = (): AdminHttpResponse =>
   page(
     200,
     `
-  ${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Interne Anmeldung</h1><p>Nur für autorisierte Mitarbeitende.</p><form method="post" action="/admin/login"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" autocomplete="username" required maxlength="254"><label for="password">Passwort</label><input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="256"><button type="submit">Anmelden</button></form></section>
+  ${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Interne Anmeldung</h1><p>Nur für autorisierte Mitarbeitende.</p><form method="post" action="/admin/login"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" autocomplete="username" required maxlength="254"><label for="password">Passwort</label><input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="256"><button type="submit">Anmelden</button></form><a class="login-back-link" href="/admin/password-reset">Passwort zurücksetzen</a></section>
 `,
+  );
+
+const passwordResetRequestPage = (): AdminHttpResponse =>
+  page(
+    200,
+    `${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Passwort zurücksetzen</h1><p>Fordern Sie einen einmaligen Link für Ihr Admin-Konto an.</p><form method="post" action="/admin/password-reset"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" autocomplete="username" required maxlength="254"><button type="submit">Link zum Zurücksetzen senden</button></form><a class="login-back-link" href="/admin/login">Zur Anmeldung</a></section>`,
+  );
+
+const passwordResetRequestedPage = (): AdminHttpResponse =>
+  page(
+    200,
+    `${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Anfrage erhalten</h1><p>Falls für diese E-Mail-Adresse ein aktives Admin-Konto existiert, wurde eine E-Mail zum Zurücksetzen des Passworts versendet.</p><a class="login-back-link" href="/admin/login">Zur Anmeldung</a></section>`,
+  );
+
+const passwordResetFormPage = (
+  rawToken: string,
+  error?: string,
+  statusCode = 200,
+): AdminHttpResponse =>
+  page(
+    statusCode,
+    `${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Neues Passwort</h1><p>Das neue Passwort muss mindestens 12 Zeichen lang sein.</p>${error ? `<div class="form-error" role="alert">${escapeHtml(error)}</div>` : ""}<form method="post" action="/admin/password-reset/${encodeURIComponent(rawToken)}"><label for="password">Neues Passwort</label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="256"><label for="password_confirmation">Passwort bestätigen</label><input id="password_confirmation" name="password_confirmation" type="password" autocomplete="new-password" required minlength="12" maxlength="256"><button type="submit">Passwort ändern</button></form></section>`,
+  );
+
+const passwordResetInvalidPage = (): AdminHttpResponse =>
+  page(
+    400,
+    `${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Link nicht gültig</h1><p>Dieser Link ist nicht mehr gültig. Bitte fordern Sie einen neuen Link zum Zurücksetzen an.</p><a class="login-back-link" href="/admin/password-reset">Neuen Link anfordern</a></section>`,
+  );
+
+const passwordResetCompletedPage = (): AdminHttpResponse =>
+  page(
+    200,
+    `${iconSprite()}<section class="login-panel"><div class="brand">${brandContent()}</div><h1>Passwort erfolgreich geändert</h1><p>Sie können sich jetzt mit Ihrem neuen Passwort anmelden.</p><a class="login-back-link" href="/admin/login">Zur Anmeldung</a></section>`,
   );
 
 const recoveryPage = (): AdminHttpResponse =>

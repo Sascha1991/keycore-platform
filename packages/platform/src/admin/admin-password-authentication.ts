@@ -70,7 +70,7 @@ export class AdminPasswordAuthenticationService implements AdminPasswordLoginPor
     const credential = emailNormalized
       ? await this.credentials.findByEmail(emailNormalized)
       : null;
-    const passwordCandidate = validPasswordInput(password) ? password : "";
+    const passwordCandidate = validAdminPasswordInput(password) ? password : "";
     const passwordValid = await verifyAdminPassword(
       passwordCandidate,
       credential?.passwordHash ?? dummyPasswordHash,
@@ -135,7 +135,8 @@ export class AdminPasswordAuthenticationService implements AdminPasswordLoginPor
 }
 
 export const hashAdminPassword = async (password: string): Promise<string> => {
-  if (!validPasswordInput(password)) throw new Error("ADMIN_PASSWORD_INVALID");
+  if (!validAdminPasswordInput(password))
+    throw new Error("ADMIN_PASSWORD_INVALID");
   const salt = randomBytes(saltBytes);
   const derived = await scrypt(password, salt, {
     N: scryptCost,
@@ -179,7 +180,7 @@ export const normalizeAdminEmail = (email: string): string | null => {
     : null;
 };
 
-const validPasswordInput = (password: string): boolean =>
+export const validAdminPasswordInput = (password: string): boolean =>
   password.length >= 12 && password.length <= 256;
 
 const scrypt = (

@@ -49,6 +49,9 @@ describePostgres("staging Admin role bootstrap persistence", () => {
       schemaName: `staging_admin_password_${randomUUID().replaceAll("-", "_")}`,
     });
     const password = ["local", "development", "admin", "password"].join("-");
+    const replacementPassword = ["replacement", "development", "password"].join(
+      "-",
+    );
     const now = new Date("2026-09-11T10:00:00.000Z");
 
     try {
@@ -106,6 +109,57 @@ describePostgres("staging Admin role bootstrap persistence", () => {
         authenticated: true,
         principal: { roles: ["PROJECT_OWNER"] },
       });
+
+      await bootstrapStagingAdmin(database, {
+        credential: {
+          emailNormalized: "admin@example.test",
+          passwordHash: await hashAdminPassword(replacementPassword),
+        },
+        hashSecret,
+        now: new Date("2026-09-11T10:02:00.000Z"),
+        rawSession: ownerSession,
+        role: "PROJECT_OWNER",
+      });
+      await expect(
+        passwordAuthentication.login(
+          "admin@example.test",
+          password,
+          correlationId("bootstrap-preserved-password"),
+        ),
+      ).resolves.toMatchObject({ authenticated: true });
+      await expect(
+        passwordAuthentication.login(
+          "admin@example.test",
+          replacementPassword,
+          correlationId("bootstrap-did-not-rotate-password"),
+        ),
+      ).resolves.toEqual({ authenticated: false });
+
+      await bootstrapStagingAdmin(database, {
+        credential: {
+          emailNormalized: "admin@example.test",
+          passwordHash: await hashAdminPassword(replacementPassword),
+          rotateExisting: true,
+        },
+        hashSecret,
+        now: new Date("2026-09-11T10:03:00.000Z"),
+        rawSession: ownerSession,
+        role: "PROJECT_OWNER",
+      });
+      await expect(
+        passwordAuthentication.login(
+          "admin@example.test",
+          replacementPassword,
+          correlationId("bootstrap-explicit-password-rotation"),
+        ),
+      ).resolves.toMatchObject({ authenticated: true });
+      await expect(
+        passwordAuthentication.login(
+          "admin@example.test",
+          password,
+          correlationId("bootstrap-old-password-rejected"),
+        ),
+      ).resolves.toEqual({ authenticated: false });
     } finally {
       await database.cleanup();
     }

@@ -36,6 +36,7 @@ export const bootstrapStagingAdmin = async (
     readonly credential?: {
       readonly emailNormalized: string;
       readonly passwordHash: string;
+      readonly rotateExisting?: boolean;
     };
     readonly now?: Date;
   },
@@ -159,9 +160,14 @@ export const bootstrapStagingAdmin = async (
            admin_id, password_hash, created_at, updated_at
          ) VALUES ($1, $2, $3, $3)
          ON CONFLICT (admin_id) DO UPDATE SET
-           password_hash = EXCLUDED.password_hash,
-           updated_at = EXCLUDED.updated_at`,
-        [stagingAdminId, input.credential.passwordHash, now],
+           password_hash = CASE WHEN $4 THEN EXCLUDED.password_hash ELSE admin_password_credentials.password_hash END,
+           updated_at = CASE WHEN $4 THEN EXCLUDED.updated_at ELSE admin_password_credentials.updated_at END`,
+        [
+          stagingAdminId,
+          input.credential.passwordHash,
+          now,
+          input.credential.rotateExisting === true,
+        ],
       );
     }
   });

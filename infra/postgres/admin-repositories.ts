@@ -16,6 +16,7 @@ import type {
   AdminMutationContext,
   AdminSessionRepository,
   AdminPasswordCredentialRepository,
+  AdminPasswordResetRepository,
   StoredAdminPasswordCredential,
   OrderId,
   StoredAdminSession,
@@ -168,6 +169,104 @@ export class PostgresAdminPasswordCredentialRepository implements AdminPasswordC
         input.expiresAt,
       ],
     );
+  }
+}
+
+export class PostgresAdminPasswordResetRepository implements AdminPasswordResetRepository {
+  public constructor(private readonly database: TransactionalQueryable) {}
+
+  public async begin(
+    input: Parameters<AdminPasswordResetRepository["begin"]>[0],
+  ): ReturnType<AdminPasswordResetRepository["begin"]> {
+    return this.database.transaction(async (client) => {
+      const identity = await client.query<{
+        readonly admin_id: string;
+        readonly email_normalized: string;
+      }>(
+        `SELECT identity.id::text AS admin_id, identity.email_normalized
+         FROM admin_identities identity
+         JOIN admin_password_credentials credential ON credential.admin_id = identity.id
+         WHERE identity.email_normalized = $1 AND identity.status = 'ACTIVE'
+         FOR UPDATE OF identity`,
+        [input.emailNormalized],
+      );
+      const row = identity.rows[0];
+      if (!row) return { status: "IGNORED" };
+
+      const recent = await client.query(
+        `SELECT 1 FROM admin_password_reset_requests
+         WHERE admin_id = $1 AND issued_at >= $2
+         LIMIT 1`,
+        [row.admin_id, input.throttleSince],
+      );
+      if (recent.rowCount !== 0) return { status: "THROTTLED" };
+
+      await client.query(
+        `UPDATE admin_password_reset_requests
+         SET invalidated_at = $2
+         WHERE admin_id = $1 AND consumed_at IS NULL AND invalidated_at IS NULL`,
+        [row.admin_id, input.issuedAt],
+      );
+      await client.query(
+        `INSERT INTO admin_password_reset_requests(
+           id, admin_id, token_hash, issued_at, expires_at
+         ) VALUES ($1, $2, $3, $4, $5)`,
+        [
+          input.resetId,
+          row.admin_id,
+          input.tokenHash,
+          input.issuedAt,
+          input.expiresAt,
+        ],
+      );
+      return {
+        adminId: row.admin_id,
+        emailNormalized: row.email_normalized,
+        status: "ISSUED",
+      };
+    });
+  }
+
+  public async complete(
+    input: Parameters<AdminPasswordResetRepository["complete"]>[0],
+  ): ReturnType<AdminPasswordResetRepository["complete"]> {
+    return this.database.transaction(async (client) => {
+      const reset = await client.query<{ readonly admin_id: string }>(
+        `SELECT request.admin_id::text
+         FROM admin_password_reset_requests request
+         JOIN admin_identities identity ON identity.id = request.admin_id
+         JOIN admin_password_credentials credential ON credential.admin_id = request.admin_id
+         WHERE request.token_hash = $1
+           AND request.consumed_at IS NULL
+           AND request.invalidated_at IS NULL
+           AND request.expires_at > $2
+           AND identity.status = 'ACTIVE'
+         FOR UPDATE OF request, credential`,
+        [input.tokenHash, input.completedAt],
+      );
+      const row = reset.rows[0];
+      if (!row) return null;
+
+      await client.query(
+        `UPDATE admin_password_credentials
+         SET password_hash = $2, updated_at = $3
+         WHERE admin_id = $1`,
+        [row.admin_id, input.passwordHash, input.completedAt],
+      );
+      await client.query(
+        `UPDATE admin_password_reset_requests
+         SET consumed_at = $2
+         WHERE token_hash = $1`,
+        [input.tokenHash, input.completedAt],
+      );
+      await client.query(
+        `UPDATE admin_sessions
+         SET revoked_at = COALESCE(revoked_at, $2)
+         WHERE admin_id = $1 AND revoked_at IS NULL`,
+        [row.admin_id, input.completedAt],
+      );
+      return { adminId: row.admin_id };
+    });
   }
 }
 

@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import {
   AdminAuthenticationService,
   AdminPasswordAuthenticationService,
+  AdminPasswordResetService,
   AdminOperationsService,
   AdminOrderService,
   AdminStaffService,
@@ -18,6 +19,7 @@ import {
 import {
   PostgresAdminOrderReadRepository,
   PostgresAdminPasswordCredentialRepository,
+  PostgresAdminPasswordResetRepository,
   PostgresAdminSessionRepository,
   PostgresAdminStaffRepository,
 } from "../infra/postgres/admin-repositories.js";
@@ -68,15 +70,17 @@ const preflight = new StagingPreflightService().verify(
     preflightEnvironment.KEYCORE_DATABASE_URL,
   ),
 );
+const mailpit = new MailpitStagingTransport(
+  required("KEYCORE_STAGING_MAILPIT_URL"),
+  allowedOrigin,
+);
 const delayedFulfillment =
   preflight.status === "READY"
     ? new PostgresStagingDelayedFulfillment({
         database,
         masterKeyMaterialBase64: required("KEYCORE_FULFILLMENT_MASTER_KEY"),
         masterKeyVersion: required("KEYCORE_FULFILLMENT_MASTER_KEY_ID"),
-        notification: new MailpitStagingTransport(
-          required("KEYCORE_STAGING_MAILPIT_URL"),
-        ),
+        notification: mailpit,
         syntheticKey: required("KEYRANO_STAGING_SYNTHETIC_KEY"),
       })
     : undefined;
@@ -91,6 +95,12 @@ const controller = new AdminHttpController(
     new PostgresAdminPasswordCredentialRepository(database),
     audit,
     required("KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET"),
+    "STAGING",
+  ),
+  new AdminPasswordResetService(
+    new PostgresAdminPasswordResetRepository(database),
+    mailpit,
+    audit,
     "STAGING",
   ),
   new AdminOrderService(
