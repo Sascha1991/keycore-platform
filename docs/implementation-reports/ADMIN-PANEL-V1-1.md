@@ -25,6 +25,12 @@ platform and Product-type labels, removes duplicate fallback options and makes
 platform filtering capitalization-insensitive for existing `PC`, `Xbox` and
 `PlayStation` data without rewriting stored Product values.
 
+Category 05/13 extends the Human-reviewed Supplier workspace with authoritative
+Supplier creation and display-name editing. Both operations use the capability,
+service and PostgreSQL boundaries rather than browser-local rows. The existing
+synthetic Supplier, its Products, mappings, offers and synchronization evidence
+remain unchanged.
+
 ## Functional changes
 
 - Dashboard KPI cards are accessible links. `Aufmerksamkeit`, `In Bearbeitung`
@@ -40,6 +46,17 @@ platform filtering capitalization-insensitive for existing `PC`, `Xbox` and
 - Customer, supplier, support and fraud lists retain their established search,
   filter, KPI and table presentation. The Product workspace now uses global
   Product aggregates independently from its bounded filtered result page.
+- Authorized `PROJECT_OWNER` users can create a Supplier with a normalized
+  display name and an allowlisted provider. The only current provider choice is
+  `SYNTHETIC`, exposed only in `STAGING`; the canonical UUID and idempotent
+  integration code are generated server-side.
+- A new Supplier starts registered with empty capabilities and no fabricated
+  synchronization, Product, mapping, offer, health or publication state. The
+  existing list, global KPI, search, filters and sorting reflect the persisted
+  record directly.
+- Authorized users can rename only the Supplier display name from its detail.
+  Supplier ID, provider, integration code, derived states, timestamps and
+  aggregates remain immutable in that workflow.
 - Product search covers title, Product UUID and verified canonical identifiers.
   Lifecycle, platform, type, current-offer, deliverability and publication
   filters are applied server-side and bound to signed cursor fingerprints.
@@ -72,7 +89,16 @@ platform filtering capitalization-insensitive for existing `PC`, `Xbox` and
   predicates.
 - Lists remain server-bounded and the existing independent supplier aggregates
   remain unchanged.
-- No migration, dependency or production configuration change is required.
+- Supplier viewing does not imply mutation authority. `SUPPLIER_MANAGE` is
+  checked independently, and denied attempts are safely audited.
+- Supplier create/edit POSTs require exact fields, exact Origin and path-bound
+  CSRF. Creation is idempotent by the server-generated operation identity;
+  renames use optimistic record versions. Successful persistence and its safe
+  audit event share one PostgreSQL transaction.
+- Migration `034_supplier_admin_version` adds only the positive,
+  default-initialized `suppliers.record_version` column and preserves all
+  existing Supplier, catalog and offer data. No dependency or production
+  configuration change is required.
 
 ## Reference review
 
@@ -83,7 +109,7 @@ platform filtering capitalization-insensitive for existing `PC`, `Xbox` and
 | Einstellungen                | `PARTIALLY_ALIGNED`: tabbed hierarchy and real Operations Controls; unsupported settings remain unavailable                                   |
 | Bestellungen                 | `ALIGNED`: action bar, real filters, state-rich bounded table and detail path                                                                 |
 | Finanzen                     | `PARTIALLY_ALIGNED`: authoritative payment/refund metrics; no invented net profit, tax or margin                                              |
-| Lieferanten                  | `ALIGNED_WITH_EMPTY_STATE`: full workspace around real bounded supplier data and secret-free presentation                                     |
+| Lieferanten                  | `READY_FOR_HUMAN_BROWSER_REVIEW`: real bounded workspace plus audited Supplier creation and display-name editing                              |
 | Kunden                       | `ALIGNED_WITH_DOMAIN_LIMIT`: account/order summaries; no invented names, onboarding or authentication mutation                                |
 | Mitarbeiter & Rollen         | `ALIGNED`: real staff lifecycle and permission actions retained in the denser layout                                                          |
 | Produkte / Katalog           | `READY_FOR_HUMAN_BROWSER_REVIEW`: global KPIs, real filters, bounded detail and semantic fallback media; no unsafe write or invented price    |
@@ -126,6 +152,19 @@ platform filtering capitalization-insensitive for existing `PC`, `Xbox` and
   unknown labels, the `Verfügbares Lieferantenangebot` KPI text and consistent
   `PC`, `Xbox` and `PlayStation` presentation. An `XBOX` filter matched the
   existing mixed-case `Xbox` row, and its detail retained the same label.
+- Credential management, connection testing and manual synchronization remain
+  deployment-controlled because no safe existing Admin operation supports
+  them. Basic Supplier creation truthfully leaves the integration unconfigured
+  and does not depend on any of those operations.
+- Local browser validation of Supplier Create and Edit covered approximately
+  1600 x 950, 1280 x 720 and 1025 x 826. It exercised a harmless validation
+  error, creation of a second synthetic Supplier, PRG detail redirect, both
+  name sort directions, search, versioned rename and search by the new name.
+  No page-wide horizontal overflow or browser console warning was observed.
+- After an Admin service restart, normal email/password login still succeeded
+  and both the existing and newly created Suppliers remained visible. The
+  existing `Staging Synthetic Mock` retained four Supplier Products and four
+  current and available offers.
 
 ## UAT and approval
 
@@ -136,6 +175,26 @@ identity boundaries. Human Acceptance remains `IN_REVIEW`, Human Approval
 remains `NOT_APPROVED`, and `SECURITY-READINESS` remains `NOT_APPROVED`.
 
 ## Validation
+
+Category 05 Supplier Extension validation:
+
+- Focused Supplier service, Admin HTTP and PostgreSQL query contracts: 37 tests
+  passed.
+- Real PostgreSQL Admin persistence and staging migration/seed validation: 9
+  tests passed against isolated schemas, including migration `034`, create,
+  idempotency, rename, stale-write denial, list/Search/KPI reflection and audit.
+- `npm run check`: 856 passed, 145 service-gated tests skipped; format, lint,
+  typecheck and secret scan passed. One unrelated random-token substring flake
+  in the existing Kinguin suite passed on focused rerun and the complete rerun.
+- Security assessment: 60 passed with 345 focused exclusions.
+- E2E acceptance: 16/16 passed with PostgreSQL enabled.
+- UAT structure: 18 scenarios and five omission-first evidence artifacts valid.
+- Development and staging Compose rendering passed.
+- Composer validation, PHP 8.3 syntax and the WordPress adapter test passed.
+- `npm audit --audit-level=high`: zero vulnerabilities.
+- `git diff --check`: passed.
+
+Earlier V1.1 validation before this extension:
 
 - Focused Admin/Product presentation: 38 tests passed.
 - Product-related PostgreSQL persistence: 7 tests passed against an isolated
@@ -155,15 +214,21 @@ remains `NOT_APPROVED`, and `SECURITY-READINESS` remains `NOT_APPROVED`.
 
 ## Deployment classification
 
-The change is `MIGRATION_FREE`. After merge, hosted staging can preserve all
-existing volumes and data. Rebuild and restart only the Admin application with
-the hosted environment file and compose definition, then verify its health:
+The Category 05 extension is `MIGRATION_REQUIRED` because it adds reversible
+migration `034_supplier_admin_version`. Existing volumes and Supplier data must
+be preserved; no reset or reseed is required. After merge, apply the supported
+staging migration with the ignored hosted environment loaded, then rebuild only
+the Admin application and verify its health:
 
 ```bash
 cd ~/keyrano/keycore-platform
 git fetch origin
 git switch main
 git pull --ff-only origin main
+set -a
+. ./.env.staging.server
+set +a
+npm run staging:migrate
 docker compose --env-file .env.staging.server -f infra/docker/compose.staging.yaml up -d --build keycore-admin
 docker compose --env-file .env.staging.server -f infra/docker/compose.staging.yaml ps keycore-admin
 ```

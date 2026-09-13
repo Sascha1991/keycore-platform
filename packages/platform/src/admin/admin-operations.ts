@@ -201,6 +201,7 @@ export interface AdminSupplierSummary {
   readonly supplierId: string;
   readonly supplierCode: string;
   readonly displayName: string;
+  readonly recordVersion: number;
   readonly productCount: number;
   readonly mappedProductCount: number;
   readonly reviewRequiredCount: number;

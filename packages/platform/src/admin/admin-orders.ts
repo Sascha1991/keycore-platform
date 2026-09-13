@@ -35,6 +35,7 @@ export const adminCapabilities = [
   "CUSTOMER_VIEW",
   "CATALOG_VIEW",
   "SUPPLIER_VIEW",
+  "SUPPLIER_MANAGE",
   "SUPPORT_VIEW",
   "SUPPORT_MANAGE",
   "FINANCE_VIEW",

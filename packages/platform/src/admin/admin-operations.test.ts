@@ -481,6 +481,7 @@ const supplier = {
   latestSyncStatus: null,
   mappedProductCount: 0,
   productCount: 0,
+  recordVersion: 1,
   recentOffers: [],
   recentSyncRuns: [],
   reviewRequiredCount: 0,

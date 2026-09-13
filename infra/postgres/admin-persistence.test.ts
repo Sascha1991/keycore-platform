@@ -13,6 +13,7 @@ import {
   PostgresAdminStaffRepository,
 } from "./admin-repositories.js";
 import { PostgresAdminOperationsRepository } from "./admin-operations-repository.js";
+import { PostgresAdminSupplierMutationRepository } from "./admin-supplier-repository.js";
 import { PostgresTestDatabase } from "./test-database.js";
 
 const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
@@ -559,6 +560,123 @@ describePostgres("secure admin PostgreSQL persistence", () => {
           totalCount: 1,
         });
       });
+    } finally {
+      await database.cleanup();
+    }
+  }, 30_000);
+
+  it("creates and renames an inert supplier with idempotency, versioning and audit", async () => {
+    const database = await initDatabase();
+    try {
+      const repository = new PostgresAdminSupplierMutationRepository(database);
+      const supplierId = randomUUID();
+      const operationId = randomUUID();
+      const context = {
+        actorId: randomUUID(),
+        at: now,
+        correlationId: correlationId("corr-admin-supplier-pg"),
+        environment: "STAGING" as const,
+      };
+      const createInput = {
+        displayName: "Zweiter Testlieferant",
+        operationId,
+        providerType: "SYNTHETIC" as const,
+        supplierCode: `synthetic-admin-${operationId}`,
+        supplierId,
+      };
+
+      await expect(repository.create(createInput, context)).resolves.toEqual({
+        status: "CREATED",
+        supplierId,
+      });
+      await expect(
+        repository.create(
+          { ...createInput, supplierId: randomUUID() },
+          context,
+        ),
+      ).resolves.toEqual({ status: "IDEMPOTENT", supplierId });
+      await expect(
+        repository.rename(
+          {
+            displayName: "Umbenannter Testlieferant",
+            expectedVersion: 1,
+            supplierId,
+          },
+          context,
+        ),
+      ).resolves.toBe("UPDATED");
+      await expect(
+        repository.rename(
+          {
+            displayName: "Veralteter Schreibversuch",
+            expectedVersion: 1,
+            supplierId,
+          },
+          context,
+        ),
+      ).resolves.toBe("STALE");
+
+      const operations = new PostgresAdminOperationsRepository(database);
+      await expect(
+        operations.listSuppliers({
+          limit: 25,
+          search: "Umbenannter Testlieferant",
+          sort: "NAME_ASC",
+        }),
+      ).resolves.toMatchObject({
+        items: [
+          {
+            displayName: "Umbenannter Testlieferant",
+            productCount: 0,
+            recordVersion: 2,
+            supplierId,
+          },
+        ],
+        metrics: {
+          suppliersWithOffers: 0,
+          suppliersWithProducts: 0,
+          totalSuppliers: 1,
+        },
+        totalCount: 1,
+      });
+
+      await expect(
+        database.query<{
+          readonly capabilities: Record<string, unknown>;
+          readonly display_name: string;
+          readonly record_version: number;
+        }>(
+          `SELECT capabilities, display_name, record_version FROM suppliers WHERE id = $1`,
+          [supplierId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            capabilities: {},
+            display_name: "Umbenannter Testlieferant",
+            record_version: 2,
+          },
+        ],
+      });
+      await expect(
+        database.query<{ readonly reason_code: string }>(
+          `SELECT reason_code FROM audit_events WHERE entity->>'id' = $1 ORDER BY timestamp_utc, reason_code`,
+          [supplierId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          { reason_code: "ADMIN_SUPPLIER_CREATED" },
+          { reason_code: "ADMIN_SUPPLIER_RENAMED" },
+        ],
+      });
+      expect(
+        JSON.stringify(
+          await database.query(
+            `SELECT supplier_code, display_name, capabilities FROM suppliers WHERE id = $1`,
+            [supplierId],
+          ),
+        ),
+      ).not.toMatch(/credential|secret|token|password/iu);
     } finally {
       await database.cleanup();
     }

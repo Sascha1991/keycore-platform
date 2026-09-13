@@ -47,6 +47,7 @@ export const adminCapabilityLabels = {
   STAFF_MANAGE: "Mitarbeiter verwalten",
   STAFF_VIEW: "Mitarbeiter anzeigen",
   SUPPLIER_VIEW: "Lieferanten anzeigen",
+  SUPPLIER_MANAGE: "Lieferanten verwalten",
   SUPPORT_MANAGE: "Supportfälle bearbeiten",
   SUPPORT_VIEW: "Supportfälle anzeigen",
 } as const satisfies Readonly<Record<AdminCapability, string>>;

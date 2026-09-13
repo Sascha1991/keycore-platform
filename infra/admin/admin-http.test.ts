@@ -7,6 +7,7 @@ import {
   AdminOperationsService,
   AdminOrderService,
   AdminStaffService,
+  AdminSupplierService,
   hashAdminSession,
   orderId,
   type AdminOrderReadRepository,
@@ -15,6 +16,7 @@ import {
   type AdminOperationsRepository,
   type AdminOperationsControlMutationPort,
   type AdminSupportOperationsPort,
+  type AdminSupplierMutationRepository,
   type AdminSessionRepository,
   type AdminStaffRepository,
   type AuditEvent,
@@ -555,7 +557,7 @@ describe("AdminHttpController", () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.10");
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.11");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
     expect(response.body).toContain('id="icon-home"');
@@ -671,7 +673,7 @@ describe("AdminHttpController", () => {
     ).resolves.toMatchObject({ statusCode: 403 });
   });
 
-  it("renders the supplier workspace and bounded detail without unsupported mutations", async () => {
+  it("renders the supplier workspace and bounded detail with authorized management actions", async () => {
     const controller = fixture();
     const listRequest = authenticated("GET", "/admin/suppliers");
     listRequest.query.set("panel", "filters");
@@ -684,8 +686,9 @@ describe("AdminHttpController", () => {
     expect(list.body).toContain('name="sync"');
     expect(list.body).toContain("Keine aktuellen Daten");
     expect(list.body).toContain(`/admin/suppliers/${targetOrderId}`);
+    expect(list.body).toContain("Lieferant hinzufügen");
     expect(list.body).not.toMatch(
-      /Lieferant hinzufügen|Verbindung testen|Jetzt synchronisieren|Zugangsdaten bearbeiten/u,
+      /Verbindung testen|Jetzt synchronisieren|Zugangsdaten bearbeiten/u,
     );
 
     const detail = await controller.handle(
@@ -699,9 +702,132 @@ describe("AdminHttpController", () => {
     expect(detail.body).not.toContain("Unbekannter Status");
     expect(detail.body).toContain("Maximal 10 aktuelle Läufe");
     expect(detail.body).toContain("Maximal 25 aktuelle Datensätze");
+    expect(detail.body).toContain("Bearbeiten");
     expect(detail.body).not.toMatch(
       /ciphertext|raw_payload|claim_code|session_hash/iu,
     );
+  });
+
+  it("protects real supplier create and edit forms with RBAC, exact fields, Origin and CSRF", async () => {
+    const mutations = new CapturingSupplierMutations();
+    const controller = fixture({ supplierMutations: mutations });
+    const createPage = await controller.handle(
+      authenticated("GET", "/admin/suppliers/new"),
+    );
+    expect(createPage.statusCode).toBe(200);
+    expect(createPage.body).toContain("Synthetischer Testanbieter");
+    expect(createPage.body).not.toMatch(/api.?key|credential|password/iu);
+    const createCsrf = required(
+      /action="\/admin\/suppliers\/new"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"/u.exec(
+        createPage.body,
+      )?.[1],
+    );
+    const operationId = required(
+      /name="operation_id" value="([0-9a-f-]{36})"/u.exec(createPage.body)?.[1],
+    );
+    const createForm = {
+      csrf: createCsrf,
+      display_name: "  Prüflieferant  ",
+      operation_id: operationId,
+      provider_type: "SYNTHETIC",
+    };
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          "/admin/suppliers/new",
+          { origin },
+          { ...createForm, csrf: "0".repeat(64) },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          "/admin/suppliers/new",
+          { origin: "https://attacker.invalid" },
+          createForm,
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          "/admin/suppliers/new",
+          { origin },
+          { ...createForm, supplier_id: targetOrderId },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    const created = await controller.handle(
+      authenticated("POST", "/admin/suppliers/new", { origin }, createForm),
+    );
+    expect(created.statusCode).toBe(303);
+    expect(created.headers.Location).toMatch(
+      /^\/admin\/suppliers\/[0-9a-f-]{36}\?created=1$/u,
+    );
+    expect(mutations.creates).toHaveLength(1);
+    expect(mutations.creates[0]).toMatchObject({
+      displayName: "Prüflieferant",
+      operationId,
+      providerType: "SYNTHETIC",
+    });
+
+    const editPage = await controller.handle(
+      authenticated("GET", `/admin/suppliers/${targetOrderId}/edit`),
+    );
+    expect(editPage.statusCode).toBe(200);
+    expect(editPage.body).toContain('name="expected_version" value="1"');
+    expect(editPage.body).not.toContain('name="provider_type"');
+    const editCsrf = required(
+      /action="\/admin\/suppliers\/20000000-0000-4000-8000-000000000001\/edit"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"/u.exec(
+        editPage.body,
+      )?.[1],
+    );
+    const edited = await controller.handle(
+      authenticated(
+        "POST",
+        `/admin/suppliers/${targetOrderId}/edit`,
+        { origin },
+        {
+          csrf: editCsrf,
+          display_name: "Neuer Anzeigename",
+          expected_version: "1",
+        },
+      ),
+    );
+    expect(edited).toMatchObject({
+      statusCode: 303,
+      headers: { Location: `/admin/suppliers/${targetOrderId}?updated=1` },
+    });
+    expect(mutations.renames).toEqual([
+      {
+        displayName: "Neuer Anzeigename",
+        expectedVersion: 1,
+        supplierId: targetOrderId,
+      },
+    ]);
+
+    const support = fixture({ role: "SUPPORT" });
+    await expect(
+      support.handle(authenticated("GET", "/admin/suppliers/new")),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      support.handle(
+        authenticated(
+          "POST",
+          `/admin/suppliers/${targetOrderId}/edit`,
+          { origin },
+          {
+            csrf: editCsrf,
+            display_name: "Nicht erlaubt",
+            expected_version: "1",
+          },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
   });
 
   it("renders the authoritative customer workspace and privacy-bounded detail", async () => {
@@ -1237,6 +1363,7 @@ const fixture = (
     readonly controlMutation?: AdminOperationsControlMutationPort;
     readonly customerAccessConfirmed?: boolean;
     readonly supportOperations?: AdminSupportOperationsPort;
+    readonly supplierMutations?: AdminSupplierMutationRepository;
     readonly delayed?: StagingDelayedFulfillmentPort;
     readonly delayedEligible?: boolean;
     readonly role?: "PROJECT_OWNER" | "SUPPORT";
@@ -1547,6 +1674,7 @@ const fixture = (
           latestSyncStatus: null,
           mappedProductCount: 1,
           productCount: 1,
+          recordVersion: 1,
           reviewRequiredCount: 0,
           supplierCode: "synthetic",
           supplierId: targetOrderId,
@@ -1572,6 +1700,7 @@ const fixture = (
       latestSyncStatus: null,
       mappedProductCount: 1,
       productCount: 1,
+      recordVersion: 1,
       recentOffers: [],
       recentSyncRuns: [],
       reviewRequiredCount: 0,
@@ -1616,8 +1745,37 @@ const fixture = (
       options.controlMutation,
       options.supportOperations ?? new CapturingSupportOperations(),
     ),
+    new AdminSupplierService(
+      options.supplierMutations ?? new CapturingSupplierMutations(),
+      audit,
+      "STAGING",
+      () => new Date("2026-09-02T10:00:00.000Z"),
+    ),
   );
 };
+
+class CapturingSupplierMutations implements AdminSupplierMutationRepository {
+  public readonly creates: Parameters<
+    AdminSupplierMutationRepository["create"]
+  >[0][] = [];
+  public readonly renames: Parameters<
+    AdminSupplierMutationRepository["rename"]
+  >[0][] = [];
+
+  public async create(
+    input: Parameters<AdminSupplierMutationRepository["create"]>[0],
+  ) {
+    this.creates.push(input);
+    return { status: "CREATED" as const, supplierId: input.supplierId };
+  }
+
+  public async rename(
+    input: Parameters<AdminSupplierMutationRepository["rename"]>[0],
+  ) {
+    this.renames.push(input);
+    return "UPDATED" as const;
+  }
+}
 
 class CapturingControlMutation implements AdminOperationsControlMutationPort {
   public readonly inputs: Parameters<

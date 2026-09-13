@@ -550,6 +550,7 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       readonly id: string;
       readonly supplier_code: string;
       readonly display_name: string;
+      readonly record_version: number;
       readonly product_count: string;
       readonly mapped_product_count: string;
       readonly review_required_count: string;
@@ -562,13 +563,13 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
     }>(
       `
       WITH selected_suppliers AS (
-        SELECT supplier.id, supplier.supplier_code, supplier.display_name, supplier.updated_at
+        SELECT supplier.id, supplier.supplier_code, supplier.display_name, supplier.record_version, supplier.updated_at
         FROM suppliers supplier
         ${where(predicates)}
         ORDER BY ${sort.expression} ${sort.direction}, supplier.id ${sort.direction}
         LIMIT ${parameter(input.limit + 1)}
       )
-      SELECT supplier.id::text, supplier.supplier_code, supplier.display_name, supplier.updated_at,
+      SELECT supplier.id::text, supplier.supplier_code, supplier.display_name, supplier.record_version, supplier.updated_at,
         product_stats.product_count,
         mapping_stats.mapped_product_count, mapping_stats.review_required_count,
         offer_stats.current_offer_count, offer_stats.available_offer_count,
@@ -637,6 +638,7 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
         latestSyncStatus: row.latest_sync_status,
         mappedProductCount: Number(row.mapped_product_count),
         productCount: Number(row.product_count),
+        recordVersion: row.record_version,
         reviewRequiredCount: Number(row.review_required_count),
         supplierCode: row.supplier_code,
         supplierId: row.id,
@@ -672,6 +674,7 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       readonly id: string;
       readonly supplier_code: string;
       readonly display_name: string;
+      readonly record_version: number;
       readonly capabilities: Record<string, unknown>;
       readonly created_at: Date;
       readonly updated_at: Date;
@@ -685,7 +688,7 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       readonly last_successful_sync_at: Date | null;
     }>(
       `
-      SELECT supplier.id::text, supplier.supplier_code, supplier.display_name,
+      SELECT supplier.id::text, supplier.supplier_code, supplier.display_name, supplier.record_version,
         supplier.capabilities, supplier.created_at, supplier.updated_at,
         (SELECT count(*)::text FROM supplier_products product WHERE product.supplier_id = supplier.id) AS product_count,
         (SELECT count(*)::text FROM supplier_product_canonical_mappings mapping WHERE mapping.supplier_id = supplier.id AND mapping.product_id IS NOT NULL AND mapping.state IN ('AUTO_MATCHED', 'MANUAL_MATCHED')) AS mapped_product_count,
@@ -749,6 +752,7 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       latestSyncStatus: supplier.latest_sync_status,
       mappedProductCount: Number(supplier.mapped_product_count),
       productCount: Number(supplier.product_count),
+      recordVersion: supplier.record_version,
       recentOffers: offers.rows.map((row) => ({
         active: row.active,
         availability: row.availability,

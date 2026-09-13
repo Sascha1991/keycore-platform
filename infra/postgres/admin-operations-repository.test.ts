@@ -133,6 +133,7 @@ describe("PostgresAdminOperationsRepository query contracts", () => {
                 latest_sync_status: null,
                 mapped_product_count: "0",
                 product_count: "0",
+                record_version: 1,
                 review_required_count: "0",
                 supplier_code: "synthetic",
                 updated_at: new Date("2026-09-01T00:00:00.000Z"),

@@ -16,6 +16,8 @@ import type {
   AdminCustomerSummary,
   AdminSupplierDetail,
   AdminSupplierListResult,
+  AdminSupplierProviderOption,
+  AdminSupplierService,
   AdminSupportCaseSummary,
   AdminFraudReviewSummary,
   AdminOperationsControlSummary,
@@ -34,6 +36,7 @@ import type {
 } from "../../packages/platform/src/contracts.js";
 import {
   AdminAccessError,
+  AdminSupplierConflictError,
   adminCapabilities,
   adminProductLifecycleValues,
   adminProductPlatformValues,
@@ -95,6 +98,7 @@ export class AdminHttpController {
     private readonly config: AdminHttpConfig,
     private readonly delayedFulfillment?: StagingDelayedFulfillmentPort,
     private readonly operations?: AdminOperationsService,
+    private readonly supplierManagement?: AdminSupplierService,
   ) {}
 
   public async handle(request: AdminHttpRequest): Promise<AdminHttpResponse> {
@@ -138,6 +142,18 @@ export class AdminHttpController {
         return await this.productList(principal, request);
       if (request.method === "GET" && request.path === "/admin/suppliers")
         return await this.supplierList(principal, request);
+      if (request.path === "/admin/suppliers/new") {
+        if (request.method === "GET")
+          return await this.supplierCreateForm(principal);
+        if (request.method === "POST")
+          return await this.supplierCreate(principal, request);
+        return this.render(
+          405,
+          errorContent("Anfrage nicht verfügbar."),
+          principal,
+          { Allow: "GET, POST" },
+        );
+      }
       if (request.method === "GET" && request.path === "/admin/discounts")
         return this.discounts(principal);
       if (request.method === "GET" && request.path === "/admin/support")
@@ -173,6 +189,24 @@ export class AdminHttpController {
           supplierDetailMatch[1],
           request.query,
         );
+      const supplierEditMatch =
+        /^\/admin\/suppliers\/([0-9a-f-]{36})\/edit$/iu.exec(request.path);
+      if (supplierEditMatch?.[1]) {
+        if (request.method === "GET")
+          return await this.supplierEditForm(principal, supplierEditMatch[1]);
+        if (request.method === "POST")
+          return await this.supplierEdit(
+            principal,
+            supplierEditMatch[1],
+            request,
+          );
+        return this.render(
+          405,
+          errorContent("Anfrage nicht verfügbar."),
+          principal,
+          { Allow: "GET, POST" },
+        );
+      }
       const controlMatch = /^\/admin\/settings\/controls\/([A-Z_]+)$/u.exec(
         request.path,
       );
@@ -682,7 +716,7 @@ export class AdminHttpController {
     );
     return this.render(
       200,
-      supplierListContent(result, request.query),
+      supplierListContent(result, request.query, principal),
       principal,
     );
   }
@@ -692,7 +726,7 @@ export class AdminHttpController {
     supplierId: string,
     query: URLSearchParams,
   ): Promise<AdminHttpResponse> {
-    rejectDuplicateParameters(query, ["return"]);
+    rejectDuplicateParameters(query, ["return", "created", "updated"]);
     const supplier = await this.requireOperations().supplierDetail(
       principal,
       supplierId,
@@ -704,9 +738,173 @@ export class AdminHttpController {
       supplierDetailContent(
         supplier,
         safeSupplierReturnPath(query.get("return")),
+        principal,
+        query.has("created")
+          ? "Lieferant angelegt."
+          : query.has("updated")
+            ? "Lieferant aktualisiert."
+            : undefined,
       ),
       principal,
     );
+  }
+
+  private async supplierCreateForm(
+    principal: AdminPrincipal,
+  ): Promise<AdminHttpResponse> {
+    const management = this.requireSupplierManagement();
+    const options = await management.options(
+      principal,
+      newAdminCorrelationId(),
+    );
+    return this.render(
+      200,
+      supplierCreateContent(
+        options,
+        createAdminCsrf(
+          principal,
+          "POST",
+          "/admin/suppliers/new",
+          this.config.csrfSecret,
+        ),
+        String(newAdminCorrelationId()),
+      ),
+      principal,
+    );
+  }
+
+  private async supplierCreate(
+    principal: AdminPrincipal,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const path = "/admin/suppliers/new";
+    const fields = ["csrf", "display_name", "operation_id", "provider_type"];
+    if (!this.validSensitivePost(request, principal, path, fields))
+      return this.render(
+        403,
+        errorContent("Anfrage nicht verfügbar."),
+        principal,
+      );
+    const management = this.requireSupplierManagement();
+    const options = await management.options(
+      principal,
+      newAdminCorrelationId(),
+    );
+    try {
+      const supplierId = await management.create(
+        principal,
+        {
+          displayName: request.form.get("display_name") ?? "",
+          operationId: request.form.get("operation_id") ?? "",
+          providerType: request.form.get("provider_type") ?? "",
+        },
+        newAdminCorrelationId(),
+      );
+      return locationRedirect(`/admin/suppliers/${supplierId}?created=1`);
+    } catch (error) {
+      if (
+        error instanceof AdminAccessError &&
+        error.reasonCode === "ADMIN_INPUT_INVALID"
+      )
+        return this.render(
+          400,
+          supplierCreateContent(
+            options,
+            request.form.get("csrf") ?? "",
+            request.form.get("operation_id") ?? "",
+            request.form.get("display_name") ?? "",
+            request.form.get("provider_type") ?? "",
+            "Bitte prüfen Sie Name und Anbieter.",
+          ),
+          principal,
+        );
+      throw error;
+    }
+  }
+
+  private async supplierEditForm(
+    principal: AdminPrincipal,
+    supplierId: string,
+  ): Promise<AdminHttpResponse> {
+    await this.requireSupplierManagement().options(
+      principal,
+      newAdminCorrelationId(),
+    );
+    const supplier = await this.requireOperations().supplierDetail(
+      principal,
+      supplierId,
+      newAdminCorrelationId(),
+    );
+    if (!supplier) throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    const path = `/admin/suppliers/${supplierId}/edit`;
+    return this.render(
+      200,
+      supplierEditContent(
+        supplier,
+        createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
+      ),
+      principal,
+    );
+  }
+
+  private async supplierEdit(
+    principal: AdminPrincipal,
+    supplierId: string,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const path = `/admin/suppliers/${supplierId}/edit`;
+    const fields = ["csrf", "display_name", "expected_version"];
+    if (!this.validSensitivePost(request, principal, path, fields))
+      return this.render(
+        403,
+        errorContent("Anfrage nicht verfügbar."),
+        principal,
+      );
+    try {
+      await this.requireSupplierManagement().rename(
+        principal,
+        supplierId,
+        {
+          displayName: request.form.get("display_name") ?? "",
+          expectedVersion: request.form.get("expected_version") ?? "",
+        },
+        newAdminCorrelationId(),
+      );
+      return locationRedirect(`/admin/suppliers/${supplierId}?updated=1`);
+    } catch (error) {
+      const supplier = await this.requireOperations().supplierDetail(
+        principal,
+        supplierId,
+        newAdminCorrelationId(),
+      );
+      if (!supplier) throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+      if (error instanceof AdminSupplierConflictError)
+        return this.render(
+          409,
+          supplierEditContent(
+            supplier,
+            createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
+            request.form.get("display_name") ?? "",
+            "Der Lieferant wurde zwischenzeitlich geändert. Prüfen Sie den aktuellen Stand und speichern Sie erneut.",
+          ),
+          principal,
+        );
+      if (
+        error instanceof AdminAccessError &&
+        error.reasonCode === "ADMIN_INPUT_INVALID"
+      )
+        return this.render(
+          400,
+          supplierEditContent(
+            supplier,
+            createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
+            request.form.get("display_name") ?? "",
+            "Bitte geben Sie einen gültigen Lieferantennamen ein.",
+          ),
+          principal,
+        );
+      throw error;
+    }
   }
 
   private discounts(principal: AdminPrincipal): AdminHttpResponse {
@@ -1195,6 +1393,12 @@ export class AdminHttpController {
     return this.operations;
   }
 
+  private requireSupplierManagement(): AdminSupplierService {
+    if (!this.supplierManagement)
+      throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    return this.supplierManagement;
+  }
+
   private render(
     statusCode: number,
     content: string,
@@ -1218,7 +1422,7 @@ const page = (
   additionalHeaders: Readonly<Record<string, string>> = {},
   csrfSecret?: string,
 ): AdminHttpResponse => ({
-  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.10"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
+  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.11"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
   headers: securityHeaders(additionalHeaders),
   statusCode,
 });
@@ -2259,6 +2463,7 @@ const productDetailContent = (
 const supplierListContent = (
   result: AdminSupplierListResult,
   query: URLSearchParams,
+  principal: AdminPrincipal,
 ): string => {
   const hasFilters = ["sync", "catalog", "offers"].some((name) =>
     optional(query, name),
@@ -2277,7 +2482,7 @@ const supplierListContent = (
     view
       ? `/admin/suppliers?view=${encodeURIComponent(view)}`
       : "/admin/suppliers";
-  const actions = `<form class="page-search supplier-search" method="get" action="/admin/suppliers">${hidden(["search"])}<label for="supplier-search">Lieferanten durchsuchen</label><span class="search-field">${icon("search")}<input id="supplier-search" type="search" name="search" maxlength="254" placeholder="Lieferant oder Lieferanten-ID" value="${escapeHtml(query.get("search") ?? "")}"></span><button class="button" type="submit">Suchen</button>${query.has("search") ? '<a class="button-quiet search-clear" href="/admin/suppliers">Löschen</a>' : ""}</form><a class="button-quiet filter-trigger${hasFilters ? " is-active" : ""}" href="/admin/suppliers?${escapeHtml(new URLSearchParams([...normalized.entries()].filter(([name]) => name !== "panel").concat([["panel", query.get("panel") === "filters" ? "closed" : "filters"]])).toString())}#supplier-filter">${icon("filter")} Filter${hasFilters ? " <span>aktiv</span>" : ""}</a>`;
+  const actions = `<form class="page-search supplier-search" method="get" action="/admin/suppliers">${hidden(["search"])}<label for="supplier-search">Lieferanten durchsuchen</label><span class="search-field">${icon("search")}<input id="supplier-search" type="search" name="search" maxlength="254" placeholder="Lieferant oder Lieferanten-ID" value="${escapeHtml(query.get("search") ?? "")}"></span><button class="button" type="submit">Suchen</button>${query.has("search") ? '<a class="button-quiet search-clear" href="/admin/suppliers">Löschen</a>' : ""}</form><a class="button-quiet filter-trigger${hasFilters ? " is-active" : ""}" href="/admin/suppliers?${escapeHtml(new URLSearchParams([...normalized.entries()].filter(([name]) => name !== "panel").concat([["panel", query.get("panel") === "filters" ? "closed" : "filters"]])).toString())}#supplier-filter">${icon("filter")} Filter${hasFilters ? " <span>aktiv</span>" : ""}</a>${hasAdminCapability(principal, "SUPPLIER_MANAGE") ? `<a class="button" href="/admin/suppliers/new">${icon("user-plus")} Lieferant hinzufügen</a>` : ""}`;
   const rows =
     result.items.length === 0
       ? `<div class="empty-state supplier-empty-state">${icon("truck")}<div><strong>${hasFilters || query.has("search") || query.has("view") ? "Keine Lieferanten gefunden" : "Noch keine Lieferanten eingerichtet"}</strong><p>${hasFilters || query.has("search") || query.has("view") ? "Die aktuelle Suche oder Filterauswahl liefert keine Ergebnisse." : "Es sind keine autoritativen Lieferantenintegrationen vorhanden."}</p>${hasFilters || query.has("search") || query.has("view") ? '<a href="/admin/suppliers">Alle Lieferanten anzeigen</a>' : ""}</div></div>`
@@ -2289,8 +2494,33 @@ const supplierListContent = (
             return `<tr><td data-label="Lieferant"><span class="supplier-identity"><span class="supplier-media">${icon("truck")}</span><span class="cell-stack"><strong>${escapeHtml(item.displayName)}</strong><small>${escapeHtml(item.supplierCode)} · ID ${escapeHtml(shortIdentifier(item.supplierId))}</small></span></span></td><td data-label="Betriebszustand"><span class="status status-${attention ? "warning" : item.latestSyncStatus === "SUCCEEDED" ? "active" : "unknown"}">${escapeHtml(attention ?? (item.latestSyncStatus === "SUCCEEDED" ? "Betriebsbereit" : "Keine aktuellen Daten"))}</span></td><td data-label="Synchronisierung">${supplierSyncSummary(item.latestSyncStatus, item.latestSyncAt)}</td><td data-label="Katalog / Zuordnungen"><span class="cell-stack"><strong>${formatCount(item.productCount)} Lieferantenprodukte</strong><small>${formatCount(item.mappedProductCount)} zugeordnet${item.reviewRequiredCount > 0 ? ` · ${formatCount(item.reviewRequiredCount)} zu prüfen` : ""}</small></span></td><td data-label="Angebote"><span class="cell-stack"><strong>${formatCount(item.currentOfferCount)} aktuell</strong><small>${formatCount(item.availableOfferCount)} verfügbar</small></span></td><td data-label="Aktualisiert">${escapeHtml(formatDate(item.updatedAt))}</td><td data-label="Aktion"><a class="row-action" href="${escapeHtml(detail)}" aria-label="Lieferant ${escapeHtml(item.displayName)} öffnen">Öffnen ${icon("arrow")}</a></td></tr>`;
           })
           .join("")}</tbody></table></div>`;
-  return `${pageActionBar("Lieferanten", "Lieferanten, Integrationen und Katalogstatus verwalten.", actions)}<section class="metric-grid supplier-metrics" aria-label="Globale Lieferantenkennzahlen">${metric("Lieferanten", result.metrics.totalSuppliers, { href: viewHref(), iconName: "truck", detail: "Alle Integrationen", selected: !query.get("view") })}${metric("Mit Katalogdaten", result.metrics.suppliersWithProducts, { href: viewHref("WITH_PRODUCTS"), iconName: "package", detail: "Lieferantenprodukte vorhanden", selected: query.get("view") === "WITH_PRODUCTS" })}${metric("Mit Angeboten", result.metrics.suppliersWithOffers, { href: viewHref("WITH_OFFERS"), iconName: "tag", detail: "Aktuelle Angebote vorhanden", selected: query.get("view") === "WITH_OFFERS" })}${metric("Handlungsbedarf", result.metrics.suppliersRequiringAttention, { href: viewHref("ATTENTION"), iconName: "alert", detail: "Sync-Fehler oder Zuordnungsprüfung", selected: query.get("view") === "ATTENTION" })}</section>${supplierFilterPanel(query, hidden)}<section class="content-section operations-section suppliers-section flush"><div class="section-heading"><div><h2>Lieferantenintegrationen</h2><span>${result.items.length} von ${result.totalCount} in dieser Ansicht</span></div>${supplierResultControls(result, hidden)}</div>${rows}${operationalPagination(result, query, "/admin/suppliers")}</section><p class="page-note">Zugangsdaten, Provider-Rohdaten, Produktschlüssel und kundenbezogene Geheimnisse werden nicht ausgegeben. Anlage und Betriebsaktionen bleiben mangels autoritativer Verwaltungs-Domain bewusst außerhalb dieser Ansicht.</p>`;
+  return `${pageActionBar("Lieferanten", "Lieferanten, Integrationen und Katalogstatus verwalten.", actions)}<section class="metric-grid supplier-metrics" aria-label="Globale Lieferantenkennzahlen">${metric("Lieferanten", result.metrics.totalSuppliers, { href: viewHref(), iconName: "truck", detail: "Alle Integrationen", selected: !query.get("view") })}${metric("Mit Katalogdaten", result.metrics.suppliersWithProducts, { href: viewHref("WITH_PRODUCTS"), iconName: "package", detail: "Lieferantenprodukte vorhanden", selected: query.get("view") === "WITH_PRODUCTS" })}${metric("Mit Angeboten", result.metrics.suppliersWithOffers, { href: viewHref("WITH_OFFERS"), iconName: "tag", detail: "Aktuelle Angebote vorhanden", selected: query.get("view") === "WITH_OFFERS" })}${metric("Handlungsbedarf", result.metrics.suppliersRequiringAttention, { href: viewHref("ATTENTION"), iconName: "alert", detail: "Sync-Fehler oder Zuordnungsprüfung", selected: query.get("view") === "ATTENTION" })}</section>${supplierFilterPanel(query, hidden)}<section class="content-section operations-section suppliers-section flush"><div class="section-heading"><div><h2>Lieferantenintegrationen</h2><span>${result.items.length} von ${result.totalCount} in dieser Ansicht</span></div>${supplierResultControls(result, hidden)}</div>${rows}${operationalPagination(result, query, "/admin/suppliers")}</section><p class="page-note">Zugangsdaten, Provider-Rohdaten, Produktschlüssel und kundenbezogene Geheimnisse werden nicht ausgegeben. Onboarding und Namenspflege sind revisionssicher; Credential-, Verbindungs- und Synchronisationsaktionen bleiben deployment-gesteuert.</p>`;
 };
+
+const supplierCreateContent = (
+  options: readonly AdminSupplierProviderOption[],
+  csrf: string,
+  operationId: string,
+  displayName = "",
+  providerType = "",
+  error?: string,
+): string =>
+  `${pageActionBar("Lieferant hinzufügen", "Neue Lieferantenintegration sicher registrieren.", '<a class="button-quiet" href="/admin/suppliers">Abbrechen</a>')}<section class="content-section supplier-form-section"><div class="section-heading"><div><h2>Lieferant</h2><span>Stammdaten und Integration</span></div></div>${error ? `<div id="supplier-form-error" class="form-error" role="alert">${escapeHtml(error)}</div>` : ""}<form class="admin-form supplier-form" method="post" action="/admin/suppliers/new"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="operation_id" value="${escapeHtml(operationId)}"><label for="supplier-display-name">Name<input id="supplier-display-name" name="display_name" maxlength="120" required value="${escapeHtml(displayName)}" placeholder="z. B. Staging Testanbieter"${error ? ' aria-describedby="supplier-form-error"' : ""}></label><label for="supplier-provider-type">Anbieter<select id="supplier-provider-type" name="provider_type" required><option value="">Bitte auswählen</option>${options.map((option) => `<option value="${escapeHtml(option.type)}"${providerType === option.type ? " selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select><small>Der Anbieter ist nach dem Anlegen nicht frei änderbar.</small></label><div class="supplier-form-boundary"><strong>Sicherer Anfangszustand</strong><p>Der Lieferant wird registriert, aber nicht automatisch synchronisiert oder als betriebsbereit markiert. Katalog, Zuordnungen und Angebote beginnen leer.</p></div><div class="form-actions"><a class="button-quiet" href="/admin/suppliers">Abbrechen</a><button type="submit">Lieferant anlegen</button></div></form></section>`;
+
+const supplierEditContent = (
+  supplier: AdminSupplierDetail,
+  csrf: string,
+  submittedName = supplier.displayName,
+  error?: string,
+): string =>
+  `${pageActionBar("Lieferant bearbeiten", "Operator-geführte Lieferantenstammdaten pflegen.", `<a class="button-quiet" href="/admin/suppliers/${encodeURIComponent(supplier.supplierId)}">Abbrechen</a>`)}<section class="content-section supplier-form-section"><div class="section-heading"><div><h2>${escapeHtml(supplier.displayName)}</h2><span>Version ${supplier.recordVersion}</span></div></div>${error ? `<div id="supplier-form-error" class="form-error" role="alert">${escapeHtml(error)}</div>` : ""}<dl class="supplier-immutable-context">${detailRow("Lieferanten-ID", supplier.supplierId)}${detailRow("Anbieter", supplierProviderLabel(supplier.supplierCode))}${detailRow("Integration", "Registriert")}</dl><form class="admin-form supplier-form" method="post" action="/admin/suppliers/${encodeURIComponent(supplier.supplierId)}/edit"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="expected_version" value="${supplier.recordVersion}"><label for="supplier-display-name">Name<input id="supplier-display-name" name="display_name" maxlength="120" required value="${escapeHtml(submittedName)}"${error ? ' aria-describedby="supplier-form-error"' : ""}></label><div class="form-actions"><a class="button-quiet" href="/admin/suppliers/${encodeURIComponent(supplier.supplierId)}">Abbrechen</a><button type="submit">Änderungen speichern</button></div></form></section>`;
+
+const supplierProviderLabel = (supplierCode: string): string =>
+  supplierCode === "kinguin"
+    ? "Kinguin"
+    : supplierCode === "synthetic" || supplierCode.startsWith("synthetic-")
+      ? "Synthetischer Testanbieter"
+      : "Bestehende Integration";
 
 const supplierFilterPanel = (
   query: URLSearchParams,
@@ -2331,6 +2561,8 @@ const formatCount = (value: number): string =>
 const supplierDetailContent = (
   supplier: AdminSupplierDetail,
   returnPath: string,
+  principal: AdminPrincipal,
+  success?: string,
 ): string => {
   const attention = supplierAttention(supplier);
   const capabilities =
@@ -2356,7 +2588,8 @@ const supplierDetailContent = (
           "Für diesen Lieferanten sind keine Angebotsdatensätze hinterlegt.",
         )
       : `<div class="table-wrap"><table class="operations-table supplier-offers-table"><thead><tr><th>Lieferantenprodukt</th><th>Kanonisches Produkt</th><th>Angebot</th><th>Verfügbarkeit</th><th>Aktualisiert</th></tr></thead><tbody>${supplier.recentOffers.map((offer) => `<tr><td data-label="Lieferantenprodukt">${escapeHtml(offer.supplierProductTitle)}</td><td data-label="Kanonisches Produkt">${escapeHtml(offer.canonicalProductTitle ?? "Nicht zugeordnet")}</td><td data-label="Angebot"><span class="cell-stack"><strong>${escapeHtml(offer.supplierOfferReference)}</strong><small>${offer.active ? "Aktuell" : "Inaktiv"}</small></span></td><td data-label="Verfügbarkeit"><span class="status status-${offer.availability.toLowerCase()}">${escapeHtml(adminProductLifecycleLabel(offer.availability))}</span></td><td data-label="Aktualisiert">${escapeHtml(formatDate(offer.updatedAt))}</td></tr>`).join("")}</tbody></table></div>`;
-  return `${pageActionBar("Lieferantendetail", "Integration, Synchronisierung und Katalogbeziehungen.", `<a class="button-quiet" href="${escapeHtml(returnPath)}">Zurück zu Lieferanten</a>`)}<section class="supplier-detail-identity"><span class="supplier-detail-media">${icon("truck")}</span><div><span class="eyebrow">Lieferantenintegration</span><h2>${escapeHtml(supplier.displayName)}</h2><p>${escapeHtml(supplier.supplierCode)} · ID ${escapeHtml(supplier.supplierId)}</p></div><span class="status status-${attention ? "warning" : supplier.latestSyncStatus === "SUCCEEDED" ? "active" : "unknown"}">${escapeHtml(attention ?? (supplier.latestSyncStatus === "SUCCEEDED" ? "Betriebsbereit" : "Keine aktuellen Daten"))}</span></section><section class="state-strip supplier-state-strip" aria-label="Lieferantenzustand"><div><span>Integration</span><strong>Registriert</strong><small>Keine Browser-Konfiguration</small></div><div><span>Synchronisierung</span><strong>${escapeHtml(supplier.latestSyncStatus ? operationalLabel(supplier.latestSyncStatus) : "Nie synchronisiert")}</strong>${supplier.latestSyncAt ? `<small>${escapeHtml(formatDate(supplier.latestSyncAt))}</small>` : ""}</div><div><span>Letzter Erfolg</span><strong>${supplier.lastSuccessfulSyncAt ? escapeHtml(formatDate(supplier.lastSuccessfulSyncAt)) : "Keiner"}</strong></div><div><span>Handlungsbedarf</span><strong>${escapeHtml(attention ?? "Keiner erkannt")}</strong></div></section><section class="detail-grid supplier-detail-grid"><article><h2>Lieferantendaten</h2>${detailRow("Lieferanten-ID", supplier.supplierId)}${detailRow("Interner Code", supplier.supplierCode)}${detailRow("Erstellt", formatDate(supplier.createdAt))}${detailRow("Aktualisiert", formatDate(supplier.updatedAt))}</article><article><h2>Integration</h2>${detailRow("Konfigurationsgrenze", "Deployment-gesteuert")}${detailRow("Zugangsdaten", "Nicht im Browser verfügbar")}<div class="detail-capabilities"><span>Capabilities</span><div>${capabilities}</div></div></article></section><section class="content-section supplier-catalog-section"><div class="section-heading"><div><h2>Katalog & Zuordnungen</h2><span>Autoritative aktuelle Bestände</span></div></div><div class="supplier-summary-grid"><div><span>Lieferantenprodukte</span><strong>${formatCount(supplier.productCount)}</strong></div><div><span>Zugeordnet</span><strong>${formatCount(supplier.mappedProductCount)}</strong></div><div><span>Prüfung erforderlich</span><strong>${formatCount(supplier.reviewRequiredCount)}</strong></div><div><span>Aktuelle Angebote</span><strong>${formatCount(supplier.currentOfferCount)}</strong></div><div><span>Verfügbare Angebote</span><strong>${formatCount(supplier.availableOfferCount)}</strong></div></div></section><section class="content-section supplier-detail-section"><div class="section-heading"><div><h2>Synchronisierung</h2><span>Maximal 10 aktuelle Läufe</span></div></div>${syncRows}</section><section class="content-section supplier-detail-section"><div class="section-heading"><div><h2>Angebote</h2><span>Maximal 25 aktuelle Datensätze</span></div></div>${offerRows}</section><p class="page-note">Die Ansicht ist bewusst lesend: Es existiert derzeit keine autoritative Admin-Domain für Onboarding, Metadatenänderungen, Credential-Verwaltung, Verbindungstests oder manuelle Synchronisation. Provider-Geheimnisse, Rohantworten, Produktschlüssel und Kundendaten werden nicht ausgegeben.</p>`;
+  const actions = `<a class="button-quiet" href="${escapeHtml(returnPath)}">Zurück zu Lieferanten</a>${hasAdminCapability(principal, "SUPPLIER_MANAGE") ? `<a class="button" href="/admin/suppliers/${encodeURIComponent(supplier.supplierId)}/edit">Bearbeiten</a>` : ""}`;
+  return `${pageActionBar("Lieferantendetail", "Integration, Synchronisierung und Katalogbeziehungen.", actions)}${success ? `<div class="notice notice-success"><strong>${escapeHtml(success)}</strong><p>Die autoritativen Lieferantenstammdaten wurden gespeichert.</p></div>` : ""}<section class="supplier-detail-identity"><span class="supplier-detail-media">${icon("truck")}</span><div><span class="eyebrow">Lieferantenintegration</span><h2>${escapeHtml(supplier.displayName)}</h2><p>${escapeHtml(supplier.supplierCode)} · ID ${escapeHtml(supplier.supplierId)}</p></div><span class="status status-${attention ? "warning" : supplier.latestSyncStatus === "SUCCEEDED" ? "active" : "unknown"}">${escapeHtml(attention ?? (supplier.latestSyncStatus === "SUCCEEDED" ? "Betriebsbereit" : "Keine aktuellen Daten"))}</span></section><section class="state-strip supplier-state-strip" aria-label="Lieferantenzustand"><div><span>Integration</span><strong>Registriert</strong><small>Keine Browser-Konfiguration</small></div><div><span>Synchronisierung</span><strong>${escapeHtml(supplier.latestSyncStatus ? operationalLabel(supplier.latestSyncStatus) : "Nie synchronisiert")}</strong>${supplier.latestSyncAt ? `<small>${escapeHtml(formatDate(supplier.latestSyncAt))}</small>` : ""}</div><div><span>Letzter Erfolg</span><strong>${supplier.lastSuccessfulSyncAt ? escapeHtml(formatDate(supplier.lastSuccessfulSyncAt)) : "Keiner"}</strong></div><div><span>Handlungsbedarf</span><strong>${escapeHtml(attention ?? "Keiner erkannt")}</strong></div></section><section class="detail-grid supplier-detail-grid"><article><h2>Lieferantendaten</h2>${detailRow("Lieferanten-ID", supplier.supplierId)}${detailRow("Anbieter", supplierProviderLabel(supplier.supplierCode))}${detailRow("Interner Code", supplier.supplierCode)}${detailRow("Erstellt", formatDate(supplier.createdAt))}${detailRow("Aktualisiert", formatDate(supplier.updatedAt))}</article><article><h2>Integration</h2>${detailRow("Konfigurationsgrenze", "Deployment-gesteuert")}${detailRow("Zugangsdaten", "Nicht im Browser verfügbar")}<div class="detail-capabilities"><span>Capabilities</span><div>${capabilities}</div></div></article></section><section class="content-section supplier-catalog-section"><div class="section-heading"><div><h2>Katalog & Zuordnungen</h2><span>Autoritative aktuelle Bestände</span></div></div><div class="supplier-summary-grid"><div><span>Lieferantenprodukte</span><strong>${formatCount(supplier.productCount)}</strong></div><div><span>Zugeordnet</span><strong>${formatCount(supplier.mappedProductCount)}</strong></div><div><span>Prüfung erforderlich</span><strong>${formatCount(supplier.reviewRequiredCount)}</strong></div><div><span>Aktuelle Angebote</span><strong>${formatCount(supplier.currentOfferCount)}</strong></div><div><span>Verfügbare Angebote</span><strong>${formatCount(supplier.availableOfferCount)}</strong></div></div></section><section class="content-section supplier-detail-section"><div class="section-heading"><div><h2>Synchronisierung</h2><span>Maximal 10 aktuelle Läufe</span></div></div>${syncRows}</section><section class="content-section supplier-detail-section"><div class="section-heading"><div><h2>Angebote</h2><span>Maximal 25 aktuelle Datensätze</span></div></div>${offerRows}</section><p class="page-note">Onboarding und Namenspflege sind revisionssicher freigegeben. Provider-Geheimnisse, Rohantworten, Produktschlüssel und Kundendaten werden nicht ausgegeben; Credential-, Verbindungs- und Synchronisationsaktionen bleiben deployment-gesteuert.</p>`;
 };
 
 const discountsContent = (): string =>

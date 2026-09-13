@@ -6,6 +6,7 @@ import {
   AdminPasswordAuthenticationService,
   AdminPasswordResetService,
   AdminOperationsService,
+  AdminSupplierService,
   AdminOrderService,
   AdminStaffService,
 } from "../packages/platform/src/contracts.js";
@@ -24,6 +25,7 @@ import {
   PostgresAdminStaffRepository,
 } from "../infra/postgres/admin-repositories.js";
 import { PostgresAdminOperationsRepository } from "../infra/postgres/admin-operations-repository.js";
+import { PostgresAdminSupplierMutationRepository } from "../infra/postgres/admin-supplier-repository.js";
 import { PostgresOperationsControlRepository } from "../infra/postgres/operations-control-repositories.js";
 import { PostgresSupportCaseRepository } from "../infra/postgres/support-case-repositories.js";
 import { PostgresAuditEventRepository } from "../infra/postgres/repositories.js";
@@ -55,6 +57,7 @@ const pool = createPostgresPool({
 });
 const database = new PostgresTransactionBoundary(pool);
 const audit = new PostgresAuditEventRepository(database);
+const supplierMutations = new PostgresAdminSupplierMutationRepository(database);
 const preflightEnvironment = {
   ...process.env,
   KEYCORE_DATABASE_URL: internalDatabaseUrl(
@@ -138,6 +141,7 @@ const controller = new AdminHttpController(
       "STAGING",
     ),
   ),
+  new AdminSupplierService(supplierMutations, audit, "STAGING"),
 );
 const css = await readFile(
   new URL("../apps/admin/assets/admin.css", import.meta.url),
