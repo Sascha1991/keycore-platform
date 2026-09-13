@@ -555,7 +555,7 @@ describe("AdminHttpController", () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.8");
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.9");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
     expect(response.body).toContain('id="icon-home"');
@@ -747,6 +747,43 @@ describe("AdminHttpController", () => {
     expect(detail.body).not.toMatch(
       /password|session_hash|verification_token|claim_code|provider_subject/iu,
     );
+  });
+
+  it("renders the authoritative product workspace and bounded read-only detail", async () => {
+    const controller = fixture();
+    const request = authenticated("GET", "/admin/catalog");
+    request.query.set("platform", "WINDOWS");
+    request.query.set("availability", "AVAILABLE");
+    request.query.set("sort", "UPDATED_DESC");
+    request.query.set("limit", "25");
+    const list = await controller.handle(request);
+
+    expect(list.statusCode).toBe(200);
+    expect(list.body).toContain('class="metric-grid product-metrics"');
+    expect(list.body).toContain("Gesamtprodukte");
+    expect(list.body).toContain("Mit Lieferantenangebot");
+    expect(list.body).toContain('href="/admin/catalog?view=ACTIVE"');
+    expect(list.body).not.toContain(
+      'href="/admin/catalog?platform=WINDOWS&amp;availability=AVAILABLE&amp;sort=UPDATED_DESC&amp;limit=25&amp;view=ACTIVE"',
+    );
+    expect(list.body).toContain('id="product-search"');
+    expect(list.body).toContain('class="filter-panel product-filter-panel"');
+    expect(list.body).toContain('name="publication"');
+    expect(list.body).toContain('value="UPDATED_DESC" selected');
+    expect(list.body).toContain("Neonpfad: Berlin");
+    expect(list.body).toContain("Veröffentlicht");
+    expect(list.body).toContain(`/admin/catalog/${targetOrderId}`);
+    expect(list.body).not.toContain("Produkt hinzufügen");
+
+    const detail = await controller.handle(
+      authenticated("GET", `/admin/catalog/${targetOrderId}`),
+    );
+    expect(detail.statusCode).toBe(200);
+    expect(detail.body).toContain("Produktdetail");
+    expect(detail.body).toContain("Kanonische Kennungen");
+    expect(detail.body).toContain("4000000000001");
+    expect(detail.body).toContain("Synthetic Supplier");
+    expect(detail.body).not.toMatch(/product.?key|raw_metadata|credential/iu);
   });
 
   it("builds the notification center from live states and filters it by capability", async () => {
@@ -1393,14 +1430,50 @@ const fixture = (
         {
           active: true,
           availableOfferCount: 1,
-          lifecycle: "ACTIVE_CANDIDATE",
+          lifecycle: "IN_STOCK",
           offerCount: 2,
           platform: "WINDOWS",
           productId: targetOrderId,
           productType: "GAME",
+          publicationState: "PUBLISHED" as const,
+          supplierCount: 1,
           title: "Neonpfad: Berlin",
+          updatedAt: new Date("2026-09-02T09:00:00.000Z"),
         },
       ],
+      metrics: {
+        activeProducts: 1,
+        availableProducts: 1,
+        productsWithOffers: 1,
+        totalProducts: 1,
+      },
+      totalCount: 1,
+    }),
+    findProduct: async () => ({
+      active: true,
+      availableOfferCount: 1,
+      createdAt: new Date("2026-09-01T09:00:00.000Z"),
+      identifiers: [{ type: "EAN", value: "4000000000001", verified: true }],
+      lifecycle: "IN_STOCK",
+      offerCount: 2,
+      offers: [
+        {
+          active: true,
+          availability: "IN_STOCK",
+          offerId: targetOrderId,
+          supplierName: "Synthetic Supplier",
+          supplierOfferReference: "SYNTHETIC-OFFER",
+          updatedAt: new Date("2026-09-02T09:00:00.000Z"),
+        },
+      ],
+      platform: "WINDOWS",
+      productId: targetOrderId,
+      productType: "GAME",
+      publicationState: "PUBLISHED" as const,
+      publicationStorefronts: ["KEYRANO"],
+      supplierCount: 1,
+      title: "Neonpfad: Berlin",
+      updatedAt: new Date("2026-09-02T09:00:00.000Z"),
     }),
     listSuppliers: async () => ({
       items: [

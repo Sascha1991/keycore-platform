@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Rebuilt the Admin `Produkte / Katalog` workspace around canonical Product,
+  active supplier-offer and Storefront publication authority, with global KPI
+  views, server-side search and filters, signed-cursor sorting, responsive
+  result presentation and a bounded read-only detail. Unsupported Product
+  writes, ambiguous prices, raw supplier metadata and Product Keys remain
+  absent; Human-UAT and security approvals are unchanged.
+
 - Added normal staging Admin sign-in with an email address and a persistent
   scrypt password credential. Ordinary bootstrap runs now preserve existing
   credentials unless explicit rotation is requested. Admin staff can request a

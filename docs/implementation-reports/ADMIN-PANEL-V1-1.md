@@ -12,7 +12,14 @@ Human Browser Review Correction Pass 01/13 refines the global shell and
 Dashboard against the supplied Übersicht reference. It adds a coherent local
 SVG icon system, integrated KeyRaNo Admin branding, active navigation states,
 balanced responsive Dashboard composition and real operational modules. The
-category is ready for Human browser review; categories 02-13 are unchanged.
+category was then ready for Human browser review; later correction passes are
+recorded below as they reach that same review boundary.
+
+Human Browser Review Correction Pass 04/13 rebuilds `Produkte / Katalog` as
+an authoritative read-only workspace. Global Product KPIs, server-side search,
+domain filters, stable sorting/pagination and a bounded Product detail use the
+canonical Product, active supplier-offer and Storefront publication records.
+No Product mutation, invented customer price or supplier-secret path was added.
 
 ## Functional changes
 
@@ -26,9 +33,15 @@ category is ready for Human browser review; categories 02-13 are unchanged.
 - Compact service status is limited to the serving Admin application and the
   PostgreSQL query that produced the page. Other services are explicitly not
   evaluated without a current authoritative health check.
-- Customer, catalog, supplier, support and fraud lists have consistent search,
-  filter, KPI and table presentation. Their figures are derived only from the
-  bounded current result set and are labelled accordingly.
+- Customer, supplier, support and fraud lists retain their established search,
+  filter, KPI and table presentation. The Product workspace now uses global
+  Product aggregates independently from its bounded filtered result page.
+- Product search covers title, Product UUID and verified canonical identifiers.
+  Lifecycle, platform, type, current-offer, deliverability and publication
+  filters are applied server-side and bound to signed cursor fingerprints.
+- Product detail exposes only canonical identity, lifecycle, publication and a
+  maximum of 25 identifiers and supplier-offer relationships. Raw supplier
+  metadata, credentials, Product Keys and ambiguous Product pricing are omitted.
 - Finance and Reports share the existing captured-payment-volume contract but
   have distinct page descriptions and honest unavailable states for missing
   historical series, margin, tax and accounting authority.
@@ -66,7 +79,7 @@ category is ready for Human browser review; categories 02-13 are unchanged.
 | Lieferanten                  | `ALIGNED_WITH_EMPTY_STATE`: full workspace around real bounded supplier data and secret-free presentation                                     |
 | Kunden                       | `ALIGNED_WITH_DOMAIN_LIMIT`: account/order summaries; no invented names, onboarding or authentication mutation                                |
 | Mitarbeiter & Rollen         | `ALIGNED`: real staff lifecycle and permission actions retained in the denser layout                                                          |
-| Produkte / Katalog           | `ALIGNED_WITH_DOMAIN_LIMIT`: real lifecycle and offer availability with fallback media; no unsafe import/create path                          |
+| Produkte / Katalog           | `READY_FOR_HUMAN_BROWSER_REVIEW`: global KPIs, real filters, bounded detail and semantic fallback media; no unsafe write or invented price    |
 | Rabatte & Kampagnen          | `BLOCKED_BY_DOMAIN`: navigable professional unavailable state; no authoritative discount domain exists                                        |
 | Support                      | `ALIGNED`: real cases, priorities, customer-visible/internal messages and transitions                                                         |
 | Admin-Panel Gesamt           | `PARTIALLY_ALIGNED`: shared visual language and operational modules; deep workflows remain constrained by existing authority                  |
@@ -87,12 +100,20 @@ category is ready for Human browser review; categories 02-13 are unchanged.
   proven by the current request; it does not infer health from configuration.
 - Product media is not present in the current Admin read model, so a stable
   platform-derived fallback is shown rather than broken or external imagery.
+- Product customer pricing is not a singular authoritative field in the current
+  Product model. The list and detail therefore omit a price instead of choosing
+  an offer or snapshot without a proven pricing contract.
 - Local Docker rendered the corrected Dashboard successfully at approximately
   1280 x 720. Direct browser review covered the full Dashboard, sparse Top
   Products and Handlungsbedarf states, refresh, notifications, sidebar active
   state, KPI quick filters, browser Back behavior and recent-order navigation.
   The first render exposed and the implementation corrected a page-level
   horizontal overflow and low-contrast Quick Access labels.
+- Local Docker rendered the Product workspace at 1600 x 950 and 390 x 844.
+  Browser review covered the global KPI links, expandable filter panel,
+  server-applied platform/availability filters, truthful filtered empty state,
+  reset, bounded Product detail and return navigation. The page remained free
+  of horizontal document overflow at both viewports.
 
 ## UAT and approval
 
@@ -104,8 +125,10 @@ remains `NOT_APPROVED`, and `SECURITY-READINESS` remains `NOT_APPROVED`.
 
 ## Validation
 
-- Focused Admin: 42 tests passed.
-- `npm run check`: 828 passed, 142 service-gated tests skipped; format, lint,
+- Focused Admin/Product presentation: 37 tests passed.
+- Product-related PostgreSQL persistence: 7 tests passed against an isolated
+  PostgreSQL 16.10 container.
+- `npm run check`: 843 passed, 144 service-gated tests skipped; format, lint,
   typecheck and secret scan passed.
 - Security assessment: 36 passed, 369 excluded or service-gated.
 - E2E acceptance: 15 passed, one PostgreSQL test service-gated.

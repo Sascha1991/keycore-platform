@@ -443,7 +443,11 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         totalCount: 1,
       });
       await expect(
-        repository.listProducts({ limit: 25, search: "Admin Persistence" }),
+        repository.listProducts({
+          limit: 25,
+          search: "Admin Persistence",
+          sort: "TITLE_ASC",
+        }),
       ).resolves.toMatchObject({
         items: [
           { active: true, productId, title: "Admin Persistence Product" },
@@ -482,7 +486,10 @@ describePostgres("secure admin PostgreSQL persistence", () => {
             limit: 25,
             sort: "NEWEST",
           }),
-          products: await repository.listProducts({ limit: 25 }),
+          products: await repository.listProducts({
+            limit: 25,
+            sort: "TITLE_ASC",
+          }),
           support: await repository.listSupportCases({ limit: 25 }),
         }),
       ).not.toMatch(/ciphertext|session_hash|claim_code|verification_token/iu);

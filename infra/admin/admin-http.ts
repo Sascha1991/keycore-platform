@@ -14,7 +14,6 @@ import type {
   AdminCapability,
   AdminOperationsService,
   AdminCustomerSummary,
-  AdminProductSummary,
   AdminSupplierSummary,
   AdminSupportCaseSummary,
   AdminFraudReviewSummary,
@@ -22,6 +21,8 @@ import type {
   AdminFinanceCurrencySummary,
   AdminOperationsListResult,
   AdminCustomerListResult,
+  AdminProductDetail,
+  AdminProductListResult,
   AdminNotificationItem,
   OperationsControlReasonCode,
   OperatorSupportCaseDetail,
@@ -148,6 +149,15 @@ export class AdminHttpController {
         /^\/admin\/customers\/([0-9a-f-]{36})$/iu.exec(request.path);
       if (request.method === "GET" && customerDetailMatch?.[1])
         return await this.customerDetail(principal, customerDetailMatch[1]);
+      const productDetailMatch = /^\/admin\/catalog\/([0-9a-f-]{36})$/iu.exec(
+        request.path,
+      );
+      if (request.method === "GET" && productDetailMatch?.[1])
+        return await this.productDetail(
+          principal,
+          productDetailMatch[1],
+          request.query,
+        );
       const controlMatch = /^\/admin\/settings\/controls\/([A-Z_]+)$/u.exec(
         request.path,
       );
@@ -598,12 +608,31 @@ export class AdminHttpController {
     const operations = this.requireOperations();
     const result = await operations.listProducts(
       principal,
-      listQuery(request.query),
+      productListQuery(request.query),
       newAdminCorrelationId(),
     );
     return this.render(
       200,
       productListContent(result, request.query),
+      principal,
+    );
+  }
+
+  private async productDetail(
+    principal: AdminPrincipal,
+    productId: string,
+    query: URLSearchParams,
+  ): Promise<AdminHttpResponse> {
+    rejectDuplicateParameters(query, ["return"]);
+    const product = await this.requireOperations().productDetail(
+      principal,
+      productId,
+      newAdminCorrelationId(),
+    );
+    if (!product) throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    return this.render(
+      200,
+      productDetailContent(product, safeProductReturnPath(query.get("return"))),
       principal,
     );
   }
@@ -1152,7 +1181,7 @@ const page = (
   additionalHeaders: Readonly<Record<string, string>> = {},
   csrfSecret?: string,
 ): AdminHttpResponse => ({
-  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.8"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
+  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.9"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
   headers: securityHeaders(additionalHeaders),
   statusCode,
 });
@@ -1404,6 +1433,38 @@ const safeOrderReturnPath = (value: string | null): string => {
   }
 };
 
+const productQueryKeys = [
+  "search",
+  "status",
+  "platform",
+  "type",
+  "offers",
+  "availability",
+  "publication",
+  "view",
+  "sort",
+  "limit",
+  "panel",
+] as const;
+
+const safeProductReturnPath = (value: string | null): string => {
+  if (!value || value.length > 2048) return "/admin/catalog";
+  try {
+    const parsed = new URL(value, "https://admin.invalid");
+    if (
+      parsed.origin !== "https://admin.invalid" ||
+      parsed.pathname !== "/admin/catalog"
+    )
+      return "/admin/catalog";
+    const allowed = new Set([...productQueryKeys, "cursor"]);
+    if ([...parsed.searchParams.keys()].some((key) => !allowed.has(key)))
+      return "/admin/catalog";
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return "/admin/catalog";
+  }
+};
+
 const compactQuery = (query: URLSearchParams) => {
   const cursor = optional(query, "cursor");
   const cursorDirection = optional(query, "direction");
@@ -1481,6 +1542,34 @@ const customerListQuery = (query: URLSearchParams) => {
     ...(registrationWindow ? { registrationWindow } : {}),
     ...(registeredFrom ? { registeredFrom } : {}),
     ...(registeredTo ? { registeredTo } : {}),
+    ...(search ? { search } : {}),
+    ...(sort ? { sort } : {}),
+    ...(status ? { status } : {}),
+  };
+};
+
+const productListQuery = (query: URLSearchParams) => {
+  rejectDuplicateParameters(query, [...productQueryKeys, "cursor"]);
+  const availability = optional(query, "availability");
+  const cursor = optional(query, "cursor");
+  const limit = optional(query, "limit");
+  const offerState = optional(query, "offers");
+  const platform = optional(query, "platform");
+  const publication = optional(query, "publication");
+  const productType = optional(query, "type");
+  const quickView = optional(query, "view");
+  const search = optional(query, "search");
+  const sort = optional(query, "sort");
+  const status = optional(query, "status");
+  return {
+    ...(availability ? { availability } : {}),
+    ...(cursor ? { cursor } : {}),
+    ...(limit ? { limit: Number(limit) } : {}),
+    ...(offerState ? { offerState } : {}),
+    ...(platform ? { platform } : {}),
+    ...(publication ? { publication } : {}),
+    ...(productType ? { productType } : {}),
+    ...(quickView ? { quickView } : {}),
     ...(search ? { search } : {}),
     ...(sort ? { sort } : {}),
     ...(status ? { status } : {}),
@@ -1963,10 +2052,93 @@ const customerDetailContent = (
   `${pageActionBar("Kundendetail", "Kundenkonto und zugeordnete Bestellhistorie.", `<a class="button-quiet" href="/admin/customers">Zurück zu Kunden</a><a class="button" href="/admin/orders?customer_id=${encodeURIComponent(customer.customerId)}">Alle Bestellungen</a>`)}<section class="customer-detail-identity"><span class="customer-detail-avatar">${icon("user")}</span><div><span class="eyebrow">Kundenkonto</span><h2>${escapeHtml(customer.email)}</h2><p title="Technische Kunden-ID: ${escapeHtml(customer.customerId)}">Kunden-ID ${escapeHtml(customer.customerId)}</p></div><span class="status status-${customer.verificationState.toLowerCase()}">${escapeHtml(operationalLabel(customer.verificationState))}</span></section><section class="state-strip customer-state-strip" aria-label="Kundenstatus"><div><span>Verifizierung</span><strong>${escapeHtml(operationalLabel(customer.verificationState))}</strong></div><div><span>Bestellungen</span><strong>${customer.orderCount}</strong></div><div><span>Registriert</span><strong>${escapeHtml(formatDateOnly(customer.createdAt))}</strong></div><div><span>Letzte Bestellung</span><strong>${customer.lastOrderReference ? escapeHtml(customer.lastOrderReference) : "Keine"}</strong>${customer.lastOrderAt ? `<small>${escapeHtml(formatDate(customer.lastOrderAt))}</small>` : ""}</div></section><section class="content-section customer-orders-section"><div class="section-heading"><div><h2>Letzte Bestellungen</h2><span>Maximal 10 aktuelle Einträge</span></div>${customer.orderCount > 0 ? `<a href="/admin/orders?customer_id=${encodeURIComponent(customer.customerId)}">Vollständigen Bestellverlauf öffnen</a>` : ""}</div>${recentOrdersTable(orders.orders)}</section><p class="page-note">Authentifizierungsdaten, Sitzungen und Verifizierungsnachweise werden in dieser Ansicht nicht ausgegeben.</p>`;
 
 const productListContent = (
-  result: AdminOperationsListResult<AdminProductSummary>,
+  result: AdminProductListResult,
   query: URLSearchParams,
+): string => {
+  const hasFilters = [
+    "status",
+    "platform",
+    "type",
+    "offers",
+    "availability",
+    "publication",
+  ].some((name) => optional(query, name));
+  const normalized = new URLSearchParams(query);
+  normalized.delete("cursor");
+  const hidden = (excluded: readonly string[]) =>
+    productQueryKeys
+      .filter((name) => !excluded.includes(name) && optional(query, name))
+      .map(
+        (name) =>
+          `<input type="hidden" name="${name}" value="${escapeHtml(query.get(name) ?? "")}">`,
+      )
+      .join("");
+  const viewHref = (view?: string) => {
+    return view
+      ? `/admin/catalog?view=${encodeURIComponent(view)}`
+      : "/admin/catalog";
+  };
+  const returnPath = `/admin/catalog${normalized.toString() ? `?${normalized.toString()}` : ""}`;
+  const actions = `<form class="page-search product-search" method="get" action="/admin/catalog">${hidden(["search"])}<label for="product-search">Produkte durchsuchen</label><span class="search-field">${icon("search")}<input id="product-search" type="search" name="search" maxlength="254" placeholder="Produktname, Produkt-ID oder Kennung" value="${escapeHtml(query.get("search") ?? "")}"></span><button class="button" type="submit">Suchen</button>${query.has("search") ? '<a class="button-quiet search-clear" href="/admin/catalog">Löschen</a>' : ""}</form><a class="button-quiet filter-trigger${hasFilters ? " is-active" : ""}" href="/admin/catalog?${escapeHtml(new URLSearchParams([...normalized.entries()].filter(([name]) => name !== "panel").concat([["panel", query.get("panel") === "filters" ? "closed" : "filters"]])).toString())}#product-filter">${icon("filter")} Filter${hasFilters ? " <span>aktiv</span>" : ""}</a>`;
+  const rows =
+    result.items.length === 0
+      ? `<div class="empty-state product-empty-state">${icon("package")}<div><strong>${hasFilters || query.has("search") ? "Keine Produkte gefunden" : "Noch keine Produkte im Katalog"}</strong><p>${hasFilters || query.has("search") ? "Die aktuelle Suche oder Filterauswahl liefert keine Ergebnisse." : "Es liegen noch keine autoritativen Produktdatensätze vor."}</p>${hasFilters || query.has("search") ? '<a href="/admin/catalog">Alle Produkte anzeigen</a>' : ""}</div></div>`
+      : `<div class="table-wrap products-table-wrap"><table class="operations-table products-table"><thead><tr><th>Produkt</th><th>Plattform / Typ</th><th>Lebenszyklus</th><th>Angebote</th><th>Veröffentlichung</th><th>Verfügbarkeit</th><th>Aktualisiert</th><th><span class="sr-only">Aktion</span></th></tr></thead><tbody>${result.items
+          .map((item) => {
+            const detail = `/admin/catalog/${encodeURIComponent(item.productId)}?return=${encodeURIComponent(returnPath)}`;
+            return `<tr><td data-label="Produkt"><span class="product-cell"><span class="product-media">${icon("package")}</span><span class="cell-stack"><strong>${escapeHtml(item.title)}</strong><small title="Produkt-ID: ${escapeHtml(item.productId)}">ID ${escapeHtml(shortIdentifier(item.productId))}</small></span></span></td><td data-label="Plattform / Typ"><span class="cell-stack"><strong>${escapeHtml(operationalLabel(item.platform))}</strong><small>${escapeHtml(operationalLabel(item.productType))}</small></span></td><td data-label="Lebenszyklus"><span class="status status-${escapeHtml(item.lifecycle.toLowerCase())}">${escapeHtml(operationalLabel(item.lifecycle))}</span><small>${item.active ? "Aktiv" : "Inaktiv"}</small></td><td data-label="Angebote"><span class="cell-stack"><strong>${item.offerCount}</strong><small>${item.supplierCount} Lieferant${item.supplierCount === 1 ? "" : "en"}</small></span></td><td data-label="Veröffentlichung"><span class="status status-${item.publicationState.toLowerCase()}">${item.publicationState === "PUBLISHED" ? "Veröffentlicht" : "Nicht veröffentlicht"}</span></td><td data-label="Verfügbarkeit"><span class="status status-${item.availableOfferCount > 0 ? "active" : "disabled"}">${item.availableOfferCount > 0 ? `${item.availableOfferCount} lieferbar` : "Nicht lieferbar"}</span></td><td data-label="Aktualisiert">${escapeHtml(formatDate(item.updatedAt))}</td><td data-label="Aktion"><a class="row-action" href="${escapeHtml(detail)}">Öffnen ${icon("arrow")}</a></td></tr>`;
+          })
+          .join("")}</tbody></table></div>`;
+  return `${pageActionBar("Produkte / Katalog", "Digitale Produkte und ihre operativen Katalogzustände verwalten.", actions)}<section class="metric-grid product-metrics" aria-label="Globale Produktkennzahlen">${metric("Gesamtprodukte", result.metrics.totalProducts, { href: viewHref(), iconName: "package", detail: "Alle Katalogprodukte", selected: !query.get("view") })}${metric("Aktive Produkte", result.metrics.activeProducts, { href: viewHref("ACTIVE"), iconName: "tag", detail: "Aktive Datensätze", selected: query.get("view") === "ACTIVE" })}${metric("Mit Lieferantenangebot", result.metrics.productsWithOffers, { href: viewHref("WITH_OFFERS"), iconName: "truck", detail: "Aktive Angebote", selected: query.get("view") === "WITH_OFFERS" })}${metric("Lieferbar", result.metrics.availableProducts, { href: viewHref("AVAILABLE"), iconName: "package", detail: "In Stock oder limitiert", selected: query.get("view") === "AVAILABLE" })}</section>${productFilterPanel(query, hidden)}<section class="content-section operations-section products-section flush"><div class="section-heading"><div><h2>Katalogprodukte</h2><span>${result.items.length} von ${result.totalCount} in dieser Ansicht</span></div>${productResultControls(result, hidden)}</div>${rows}${operationalPagination(result, query, "/admin/catalog")}</section>`;
+};
+
+const productFilterPanel = (
+  query: URLSearchParams,
+  hidden: (excluded: readonly string[]) => string,
+): string => {
+  const selected = (name: string, value: string) =>
+    query.get(name) === value ? " selected" : "";
+  const options = (name: string, values: readonly string[]) =>
+    `<option value="">Alle</option>${values.map((value) => `<option value="${value}"${selected(name, value)}>${escapeHtml(operationalLabel(value))}</option>`).join("")}`;
+  const expanded =
+    query.get("panel") === "filters" ||
+    [
+      "status",
+      "platform",
+      "type",
+      "offers",
+      "availability",
+      "publication",
+    ].some((name) => optional(query, name));
+  return `<details class="filter-panel product-filter-panel" id="product-filter"${expanded ? " open" : ""}><summary>${icon("filter")} Produktfilter</summary><form class="product-filter-grid" method="get" action="/admin/catalog">${hidden(["status", "platform", "type", "offers", "availability", "publication", "panel"])}<label>Lebenszyklus<select name="status">${options("status", ["ACTIVE", "INACTIVE", "ACTIVE_CANDIDATE", "REVIEW_REQUIRED", "REJECTED", "IN_STOCK", "LIMITED", "OUT_OF_STOCK", "PREORDER", "UNKNOWN"])}</select></label><label>Plattform<select name="platform">${options("platform", ["PC", "WINDOWS", "MACOS", "LINUX", "XBOX", "PLAYSTATION", "NINTENDO", "MOBILE", "WEB", "UNKNOWN"])}</select></label><label>Produkttyp<select name="type">${options("type", ["GAME", "SOFTWARE", "DLC", "SUBSCRIPTION", "GIFT_CARD", "UNKNOWN"])}</select></label><label>Angebote<select name="offers"><option value="">Alle</option><option value="WITH_OFFERS"${selected("offers", "WITH_OFFERS")}>Mit Angebot</option><option value="WITHOUT_OFFERS"${selected("offers", "WITHOUT_OFFERS")}>Ohne Angebot</option></select></label><label>Verfügbarkeit<select name="availability"><option value="">Alle</option><option value="AVAILABLE"${selected("availability", "AVAILABLE")}>Lieferbar</option><option value="UNAVAILABLE"${selected("availability", "UNAVAILABLE")}>Nicht lieferbar</option></select></label><label>Veröffentlichung<select name="publication"><option value="">Alle</option><option value="PUBLISHED"${selected("publication", "PUBLISHED")}>Veröffentlicht</option><option value="UNPUBLISHED"${selected("publication", "UNPUBLISHED")}>Nicht veröffentlicht</option></select></label><div class="filter-actions"><button type="submit">Anwenden</button><a class="reset-link" href="/admin/catalog">Zurücksetzen</a></div></form></details>`;
+};
+
+const productResultControls = (
+  result: AdminProductListResult,
+  hidden: (excluded: readonly string[]) => string,
 ): string =>
-  `${listActionBar("Produkte / Katalog", "Digitale Produkte, Lebenszyklus und verfügbare Lieferantenangebote.", "/admin/catalog", query, "Produktname oder Produkt-ID", "Produkt hinzufügen")}<section class="metric-grid" aria-label="Produktkennzahlen">${metric("Produkte", result.items.length, { icon: "PR", detail: "Aktuelle Ergebnisse" })}${metric("Aktiv", result.items.filter((item) => item.active).length, { icon: "AK", detail: "Shop-fähige Datensätze" })}${metric("Mit Angebot", result.items.filter((item) => item.offerCount > 0).length, { icon: "AN", detail: "Mindestens ein Angebot" })}${metric("Verfügbar", result.items.filter((item) => item.availableOfferCount > 0).length, { icon: "VF", detail: "Lieferbares Angebot" })}</section><details class="filter-panel" id="list-filter"${query.has("status") ? " open" : ""}><summary>Detailfilter</summary>${operationalFilter("/admin/catalog", query, "Produktname oder Produkt-ID", ["ACTIVE", "INACTIVE", "ACTIVE_CANDIDATE", "REVIEW_REQUIRED", "REJECTED"])}</details><section class="content-section operations-section flush"><div class="section-heading"><h2>Katalogprodukte</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Produkte gefunden", "Der Katalog enthält für diese Auswahl keine Produkte.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Produkt</th><th>Plattform</th><th>Typ</th><th>Lebenszyklus</th><th>Angebote</th><th>Verfügbar</th><th>Status</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Produkt"><span class="product-cell"><span class="product-media" aria-hidden="true">${escapeHtml(item.platform.slice(0, 2).toUpperCase())}</span><span class="cell-stack"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.productId)}</small></span></span></td><td data-label="Plattform">${escapeHtml(operationalLabel(item.platform))}</td><td data-label="Typ">${escapeHtml(operationalLabel(item.productType))}</td><td data-label="Lebenszyklus">${escapeHtml(operationalLabel(item.lifecycle))}</td><td data-label="Angebote">${item.offerCount}</td><td data-label="Verfügbar">${item.availableOfferCount}</td><td data-label="Status"><span class="status status-${item.active ? "active" : "disabled"}">${item.active ? "Aktiv" : "Inaktiv"}</span></td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/catalog")}</section>`;
+  `<form class="result-controls" method="get" action="/admin/catalog">${hidden(["sort", "limit", "cursor"])}<label>Sortierung<select name="sort"><option value="TITLE_ASC"${result.sort === "TITLE_ASC" ? " selected" : ""}>Name A–Z</option><option value="TITLE_DESC"${result.sort === "TITLE_DESC" ? " selected" : ""}>Name Z–A</option><option value="UPDATED_DESC"${result.sort === "UPDATED_DESC" ? " selected" : ""}>Zuletzt aktualisiert</option><option value="UPDATED_ASC"${result.sort === "UPDATED_ASC" ? " selected" : ""}>Älteste Aktualisierung</option></select></label><label>Pro Seite<select name="limit">${[10, 25, 50].map((value) => `<option value="${value}"${result.limit === value ? " selected" : ""}>${value}</option>`).join("")}</select></label><button class="button-quiet" type="submit">Übernehmen</button></form>`;
+
+const productDetailContent = (
+  product: AdminProductDetail,
+  returnPath: string,
+): string => {
+  const identifiers =
+    product.identifiers.length === 0
+      ? emptyState(
+          "Keine Kennungen",
+          "Für dieses Produkt sind keine kanonischen Kennungen hinterlegt.",
+        )
+      : `<div class="table-wrap"><table class="operations-table product-identifiers-table"><thead><tr><th>Typ</th><th>Kennung</th><th>Verifiziert</th></tr></thead><tbody>${product.identifiers.map((item) => `<tr><td data-label="Typ">${escapeHtml(item.type)}</td><td data-label="Kennung">${escapeHtml(item.value)}</td><td data-label="Verifiziert"><span class="status status-${item.verified ? "active" : "disabled"}">${item.verified ? "Ja" : "Nein"}</span></td></tr>`).join("")}</tbody></table></div>`;
+  const offers =
+    product.offers.length === 0
+      ? emptyState(
+          "Keine Angebote",
+          "Für dieses Produkt sind keine Lieferantenangebote hinterlegt.",
+        )
+      : `<div class="table-wrap"><table class="operations-table product-offers-table"><thead><tr><th>Lieferant</th><th>Angebotsreferenz</th><th>Verfügbarkeit</th><th>Status</th><th>Aktualisiert</th></tr></thead><tbody>${product.offers.map((offer) => `<tr><td data-label="Lieferant">${escapeHtml(offer.supplierName)}</td><td data-label="Angebotsreferenz">${escapeHtml(offer.supplierOfferReference)}</td><td data-label="Verfügbarkeit"><span class="status status-${offer.availability.toLowerCase()}">${escapeHtml(operationalLabel(offer.availability))}</span></td><td data-label="Status">${offer.active ? "Aktiv" : "Inaktiv"}</td><td data-label="Aktualisiert">${escapeHtml(formatDate(offer.updatedAt))}</td></tr>`).join("")}</tbody></table></div>`;
+  return `${pageActionBar("Produktdetail", "Katalogzustand, Kennungen und Lieferantenbeziehungen.", `<a class="button-quiet" href="${escapeHtml(returnPath)}">Zurück zu Produkten</a>`)}<section class="product-detail-identity"><span class="product-detail-media">${icon("package")}</span><div><span class="eyebrow">Katalogprodukt</span><h2>${escapeHtml(product.title)}</h2><p>Produkt-ID ${escapeHtml(product.productId)}</p></div><span class="status status-${product.active ? "active" : "disabled"}">${product.active ? "Aktiv" : "Inaktiv"}</span></section><section class="state-strip product-state-strip"><div><span>Lebenszyklus</span><strong>${escapeHtml(operationalLabel(product.lifecycle))}</strong></div><div><span>Verfügbarkeit</span><strong>${product.availableOfferCount > 0 ? `${product.availableOfferCount} lieferbar` : "Nicht lieferbar"}</strong></div><div><span>Veröffentlichung</span><strong>${product.publicationState === "PUBLISHED" ? "Veröffentlicht" : "Nicht veröffentlicht"}</strong></div><div><span>Lieferanten</span><strong>${product.supplierCount}</strong></div></section><section class="detail-grid"><article><h2>Produkt</h2>${detailRow("Plattform", operationalLabel(product.platform))}${detailRow("Produkttyp", operationalLabel(product.productType))}${detailRow("Angelegt", formatDate(product.createdAt))}${detailRow("Aktualisiert", formatDate(product.updatedAt))}</article><article><h2>Storefront</h2>${detailRow("Status", product.publicationState === "PUBLISHED" ? "Veröffentlicht" : "Nicht veröffentlicht")}${detailRow("Veröffentlichte Ziele", product.publicationStorefronts.length > 0 ? product.publicationStorefronts.join(", ") : "Keine")}${detailRow("Aktive Angebote", String(product.offerCount))}${detailRow("Lieferbare Angebote", String(product.availableOfferCount))}</article></section><section class="content-section product-detail-section"><div class="section-heading"><h2>Kanonische Kennungen</h2><span>Maximal 25 Einträge</span></div>${identifiers}</section><section class="content-section product-detail-section"><div class="section-heading"><h2>Lieferantenangebote</h2><span>Maximal 25 Einträge</span></div>${offers}</section><p class="page-note">Provider-Geheimnisse, Rohmetadaten und Produktschlüssel werden in dieser Ansicht nicht ausgegeben.</p>`;
+};
 
 const supplierListContent = (
   result: AdminOperationsListResult<AdminSupplierSummary>,
@@ -2133,31 +2305,38 @@ const operationalLabel = (value: string): string => {
     CUSTOMER_ACTION_REQUIRED: "Kundenaktion erforderlich",
     CUSTOMER_KEY_DELIVERY: "Kundenzustellung",
     DUPLICATE_REQUEST: "Doppelte Anfrage",
+    DLC: "Zusatzinhalt",
     ENABLED: "Aktiviert",
     GAME: "Spiel",
+    GIFT_CARD: "Geschenkkarte",
     HIGH: "Hoch",
     INFORMATION_PROVIDED: "Information bereitgestellt",
     IN_PROGRESS: "In Bearbeitung",
     INTERNAL: "Intern",
     INACTIVE: "Inaktiv",
+    IN_STOCK: "Auf Lager",
     INVOICE_PROBLEM: "Rechnungsproblem",
     KEY_NOT_AVAILABLE: "Produktschlüssel nicht verfügbar",
     KEY_REVEAL_PROBLEM: "Problem beim Schlüsselzugriff",
     LOW: "Niedrig",
     MAINTENANCE: "Wartung",
     NORMAL: "Normal",
+    LIMITED: "Begrenzt verfügbar",
     NO_PLATFORM_ERROR_FOUND: "Kein Plattformfehler festgestellt",
     OPEN: "Offen",
     ORDER_COMPLETED: "Bestellung abgeschlossen",
     ORDER_STATUS: "Bestellstatus",
     OTHER: "Sonstiges",
+    OUT_OF_STOCK: "Nicht auf Lager",
     PAUSED: "Pausiert",
     PAYMENT_PROBLEM: "Zahlungsproblem",
+    PREORDER: "Vorbestellung",
     PROCUREMENT_CREATE: "Beschaffung anlegen",
     REFUND_REQUEST: "Erstattungsanfrage",
     REFUND_REFERRED: "Erstattung weitergeleitet",
     RESOLVED: "Gelöst",
     SOFTWARE: "Software",
+    SUBSCRIPTION: "Abonnement",
     SUPPLIER_CLAIM_SUBMISSION: "Lieferantenreklamation senden",
     SUPPLIER_KEY_RETRIEVAL: "Lieferantenschlüssel abrufen",
     SUPPLIER_PROBLEM: "Lieferantenproblem",

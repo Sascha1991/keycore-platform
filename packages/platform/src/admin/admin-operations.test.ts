@@ -184,6 +184,58 @@ describe("AdminOperationsService", () => {
     ).rejects.toMatchObject({ reasonCode: "ADMIN_RESOURCE_UNAVAILABLE" });
   });
 
+  it("validates and binds product catalog filters and sorting", async () => {
+    const repository = new MemoryRepository();
+    const service = new AdminOperationsService(
+      repository,
+      new MemoryAudit(),
+      secret,
+      "CI",
+    );
+
+    await service.listProducts(
+      owner(),
+      {
+        availability: "AVAILABLE",
+        limit: 25,
+        offerState: "WITH_OFFERS",
+        platform: "WINDOWS",
+        productType: "GAME",
+        publication: "PUBLISHED",
+        quickView: "ACTIVE",
+        sort: "UPDATED_DESC",
+        status: "IN_STOCK",
+      },
+      requestId,
+    );
+    expect(repository.productInput).toMatchObject({
+      availability: "AVAILABLE",
+      lifecycle: "IN_STOCK",
+      limit: 25,
+      offerState: "WITH_OFFERS",
+      platform: "WINDOWS",
+      productType: "GAME",
+      publication: "PUBLISHED",
+      quickView: "ACTIVE",
+      sort: "UPDATED_DESC",
+    });
+    await service.listProducts(
+      owner(),
+      { platform: "PC", status: "ACTIVE" },
+      requestId,
+    );
+    expect(repository.productInput).toMatchObject({
+      lifecycle: "ACTIVE",
+      platform: "PC",
+    });
+    await expect(
+      service.listProducts(owner(), { platform: "COMMODORE" }, requestId),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await expect(
+      service.listProducts(owner(), { limit: 100 }, requestId),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+  });
+
   it("rejects unbounded or control-character input", async () => {
     const service = new AdminOperationsService(
       new MemoryRepository(),
@@ -279,8 +331,26 @@ class MemoryRepository implements AdminOperationsRepository {
   public async findCustomer(customerId: string) {
     return customerId === customer.customerId ? customer : null;
   }
-  public async listProducts() {
-    return { items: [] };
+  public productInput?: Parameters<
+    AdminOperationsRepository["listProducts"]
+  >[0];
+  public async listProducts(
+    input: Parameters<AdminOperationsRepository["listProducts"]>[0],
+  ) {
+    this.productInput = input;
+    return {
+      items: [],
+      metrics: {
+        activeProducts: 0,
+        availableProducts: 0,
+        productsWithOffers: 0,
+        totalProducts: 0,
+      },
+      totalCount: 0,
+    };
+  }
+  public async findProduct() {
+    return null;
   }
   public async listSuppliers() {
     return { items: [] };
