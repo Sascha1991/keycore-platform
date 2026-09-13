@@ -20,6 +20,10 @@ an authoritative read-only workspace. Global Product KPIs, server-side search,
 domain filters, stable sorting/pagination and a bounded Product detail use the
 canonical Product, active supplier-offer and Storefront publication records.
 No Product mutation, invented customer price or supplier-secret path was added.
+The subsequent Human correction centralizes field-specific lifecycle,
+platform and Product-type labels, removes duplicate fallback options and makes
+platform filtering capitalization-insensitive for existing `PC`, `Xbox` and
+`PlayStation` data without rewriting stored Product values.
 
 ## Functional changes
 
@@ -39,6 +43,9 @@ No Product mutation, invented customer price or supplier-secret path was added.
 - Product search covers title, Product UUID and verified canonical identifiers.
   Lifecycle, platform, type, current-offer, deliverability and publication
   filters are applied server-side and bound to signed cursor fingerprints.
+- Product lifecycle, platform and type filters derive from shared allowlists and
+  use the same field-specific German labels as list and detail. Unknown values
+  are described by field rather than by the generic status fallback.
 - Product detail exposes only canonical identity, lifecycle, publication and a
   maximum of 25 identifiers and supplier-offer relationships. Raw supplier
   metadata, credentials, Product Keys and ambiguous Product pricing are omitted.
@@ -114,6 +121,11 @@ No Product mutation, invented customer price or supplier-secret path was added.
   server-applied platform/availability filters, truthful filtered empty state,
   reset, bounded Product detail and return navigation. The page remained free
   of horizontal document overflow at both viewports.
+- The Human correction was rendered again at 1600 x 950. Browser inspection
+  confirmed unique lifecycle/platform/type choices, German field-specific
+  unknown labels, the `Verfügbares Lieferantenangebot` KPI text and consistent
+  `PC`, `Xbox` and `PlayStation` presentation. An `XBOX` filter matched the
+  existing mixed-case `Xbox` row, and its detail retained the same label.
 
 ## UAT and approval
 
@@ -125,10 +137,10 @@ remains `NOT_APPROVED`, and `SECURITY-READINESS` remains `NOT_APPROVED`.
 
 ## Validation
 
-- Focused Admin/Product presentation: 37 tests passed.
+- Focused Admin/Product presentation: 38 tests passed.
 - Product-related PostgreSQL persistence: 7 tests passed against an isolated
   PostgreSQL 16.10 container.
-- `npm run check`: 843 passed, 144 service-gated tests skipped; format, lint,
+- `npm run check`: 844 passed, 144 service-gated tests skipped; format, lint,
   typecheck and secret scan passed.
 - Security assessment: 36 passed, 369 excluded or service-gated.
 - E2E acceptance: 15 passed, one PostgreSQL test service-gated.

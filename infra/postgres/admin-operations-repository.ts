@@ -247,7 +247,9 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
     if (input.lifecycle)
       basePredicates.push(`product.lifecycle = ${parameter(input.lifecycle)}`);
     if (input.platform)
-      basePredicates.push(`product.platform = ${parameter(input.platform)}`);
+      basePredicates.push(
+        `upper(product.platform) = upper(${parameter(input.platform)})`,
+      );
     if (input.productType)
       basePredicates.push(
         `product.product_type = ${parameter(input.productType)}`,

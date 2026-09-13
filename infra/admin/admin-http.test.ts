@@ -752,7 +752,7 @@ describe("AdminHttpController", () => {
   it("renders the authoritative product workspace and bounded read-only detail", async () => {
     const controller = fixture();
     const request = authenticated("GET", "/admin/catalog");
-    request.query.set("platform", "WINDOWS");
+    request.query.set("platform", "PC");
     request.query.set("availability", "AVAILABLE");
     request.query.set("sort", "UPDATED_DESC");
     request.query.set("limit", "25");
@@ -764,10 +764,36 @@ describe("AdminHttpController", () => {
     expect(list.body).toContain("Mit Lieferantenangebot");
     expect(list.body).toContain('href="/admin/catalog?view=ACTIVE"');
     expect(list.body).not.toContain(
-      'href="/admin/catalog?platform=WINDOWS&amp;availability=AVAILABLE&amp;sort=UPDATED_DESC&amp;limit=25&amp;view=ACTIVE"',
+      'href="/admin/catalog?platform=PC&amp;availability=AVAILABLE&amp;sort=UPDATED_DESC&amp;limit=25&amp;view=ACTIVE"',
     );
     expect(list.body).toContain('id="product-search"');
     expect(list.body).toContain('class="filter-panel product-filter-panel"');
+    expect(list.body).toContain('name="publication"');
+    expect(list.body).toContain('<option value="PC" selected>PC</option>');
+    expect(list.body).toContain('<option value="WINDOWS">Windows</option>');
+    expect(list.body).toContain(">Verfügbares Lieferantenangebot</small>");
+    expect(list.body).not.toContain("In Stock oder limitiert");
+    expect(list.body).not.toContain("Unbekannter Status");
+    for (const name of ["status", "platform", "type"]) {
+      const select = new RegExp(
+        `<select name="${name}">([\\s\\S]*?)</select>`,
+        "u",
+      ).exec(list.body)?.[1];
+      expect(select).toBeDefined();
+      const options = [
+        ...(select ?? "").matchAll(
+          /<option value="([^"]*)"[^>]*>([^<]+)<\/option>/gu,
+        ),
+      ];
+      expect(new Set(options.map((option) => option[1])).size).toBe(
+        options.length,
+      );
+      expect(new Set(options.map((option) => option[2])).size).toBe(
+        options.length,
+      );
+    }
+    expect(list.body).toContain('name="offers"');
+    expect(list.body).toContain('name="availability"');
     expect(list.body).toContain('name="publication"');
     expect(list.body).toContain('value="UPDATED_DESC" selected');
     expect(list.body).toContain("Neonpfad: Berlin");
@@ -783,6 +809,8 @@ describe("AdminHttpController", () => {
     expect(detail.body).toContain("Kanonische Kennungen");
     expect(detail.body).toContain("4000000000001");
     expect(detail.body).toContain("Synthetic Supplier");
+    expect(detail.body).toContain("<dt>Plattform</dt><dd>PC</dd>");
+    expect(detail.body).toContain("<dt>Produkttyp</dt><dd>Spiel</dd>");
     expect(detail.body).not.toMatch(/product.?key|raw_metadata|credential/iu);
   });
 
@@ -1432,7 +1460,7 @@ const fixture = (
           availableOfferCount: 1,
           lifecycle: "IN_STOCK",
           offerCount: 2,
-          platform: "WINDOWS",
+          platform: "PC",
           productId: targetOrderId,
           productType: "GAME",
           publicationState: "PUBLISHED" as const,
@@ -1466,7 +1494,7 @@ const fixture = (
           updatedAt: new Date("2026-09-02T09:00:00.000Z"),
         },
       ],
-      platform: "WINDOWS",
+      platform: "PC",
       productId: targetOrderId,
       productType: "GAME",
       publicationState: "PUBLISHED" as const,

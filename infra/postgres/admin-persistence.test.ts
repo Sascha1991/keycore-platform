@@ -453,6 +453,13 @@ describePostgres("secure admin PostgreSQL persistence", () => {
           { active: true, productId, title: "Admin Persistence Product" },
         ],
       });
+      await expect(
+        repository.listProducts({
+          limit: 25,
+          platform: "windows",
+          sort: "TITLE_ASC",
+        }),
+      ).resolves.toMatchObject({ items: [{ productId }] });
       await expect(repository.listSuppliers({ limit: 25 })).resolves.toEqual({
         items: [],
       });

@@ -17,6 +17,9 @@ import {
   adminAuditOutcomeLabels,
   adminCapabilityLabel,
   adminCapabilityLabels,
+  adminProductLifecycleLabel,
+  adminProductPlatformLabel,
+  adminProductTypeLabel,
   adminRoleLabel,
   adminRoleLabels,
   adminStaffStatusLabel,
@@ -81,6 +84,26 @@ describe("German Admin presentation labels", () => {
     expect(adminStatusLabel("GRANTED")).toBe("Erteilt");
     expect(adminStatusLabel("UNKNOWN")).toBe("Unbekannt");
     expect(adminStatusLabel("FUTURE_STATUS")).toBe("Unbekannter Status");
+  });
+
+  it("uses field-specific product labels for known and unknown values", () => {
+    expect(adminProductLifecycleLabel("ACTIVE")).toBe("Aktiv");
+    expect(adminProductLifecycleLabel("UNKNOWN")).toBe(
+      "Lebenszyklus unbekannt",
+    );
+    expect(adminProductLifecycleLabel("FUTURE_LIFECYCLE")).toBe(
+      "Lebenszyklus unbekannt",
+    );
+    expect(adminProductPlatformLabel("PC")).toBe("PC");
+    expect(adminProductPlatformLabel("WINDOWS")).toBe("Windows");
+    expect(adminProductPlatformLabel("Xbox")).toBe("Xbox");
+    expect(adminProductPlatformLabel("PlayStation")).toBe("PlayStation");
+    expect(adminProductPlatformLabel("FUTURE_PLATFORM")).toBe(
+      "Plattform unbekannt",
+    );
+    expect(adminProductTypeLabel("GAME")).toBe("Spiel");
+    expect(adminProductTypeLabel("UNKNOWN")).toBe("Unbekannt");
+    expect(adminProductTypeLabel("FUTURE_TYPE")).toBe("Unbekannt");
   });
 
   it("requires every Admin audit code used by production sources to have a label", () => {

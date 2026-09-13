@@ -9,6 +9,12 @@
   writes, ambiguous prices, raw supplier metadata and Product Keys remain
   absent; Human-UAT and security approvals are unchanged.
 
+- Corrected the Product workspace after Human browser review with shared,
+  field-specific lifecycle, platform and Product-type labels, deduplicated
+  authoritative filter options and case-insensitive matching for existing
+  platform capitalization. The deliverability KPI now uses digital-catalog
+  wording; Product write and security boundaries remain unchanged.
+
 - Added normal staging Admin sign-in with an email address and a persistent
   scrypt password credential. Ordinary bootstrap runs now preserve existing
   credentials unless explicit rotation is requested. Admin staff can request a

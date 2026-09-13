@@ -122,6 +122,17 @@ export type AdminProductSort =
 
 export type AdminProductQuickView = "ACTIVE" | "WITH_OFFERS" | "AVAILABLE";
 
+export const adminProductLifecycleValues = [
+  ...availabilityStates,
+  "ACTIVE",
+  "INACTIVE",
+  "ACTIVE_CANDIDATE",
+  "REVIEW_REQUIRED",
+  "REJECTED",
+] as const;
+
+export const adminProductPlatformValues = [...platforms, "PC"] as const;
+
 export interface AdminProductQuery extends AdminListQuery {
   readonly platform?: string;
   readonly productType?: string;
@@ -452,10 +463,7 @@ export class AdminOperationsService {
     this.require(principal, "CATALOG_VIEW");
     const search = parseSearch(query.search);
     const lifecycle = parseProductLifecycle(query.status);
-    const platform = parseAllowed(query.platform, [
-      ...platforms,
-      "PC",
-    ] as const);
+    const platform = parseAllowed(query.platform, adminProductPlatformValues);
     const productType = parseAllowed(query.productType, productTypes);
     const offerState = parseAllowed(query.offerState, [
       "WITH_OFFERS",
@@ -871,16 +879,7 @@ const parseAllowed = <T extends string>(
 };
 
 const parseProductLifecycle = (value: string | undefined) =>
-  parseAllowed(value, productLifecycleValues);
-
-const productLifecycleValues = [
-  ...availabilityStates,
-  "ACTIVE",
-  "INACTIVE",
-  "ACTIVE_CANDIDATE",
-  "REVIEW_REQUIRED",
-  "REJECTED",
-] as const;
+  parseAllowed(value, adminProductLifecycleValues);
 
 const parseProductSort = (value: string | undefined): AdminProductSort => {
   if (!value) return "TITLE_ASC";

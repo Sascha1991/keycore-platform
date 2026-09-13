@@ -333,6 +333,58 @@ export const adminStatusLabel = (status: string): string =>
     ? adminStatusLabels[status]
     : "Unbekannter Status";
 
+const adminProductLifecycleLabels = {
+  ACTIVE: "Aktiv",
+  ACTIVE_CANDIDATE: "Aktiver Kandidat",
+  INACTIVE: "Inaktiv",
+  IN_STOCK: "Verfügbar",
+  LIMITED: "Begrenzt verfügbar",
+  OUT_OF_STOCK: "Nicht verfügbar",
+  PREORDER: "Vorbestellung",
+  REJECTED: "Abgelehnt",
+  REVIEW_REQUIRED: "Prüfung erforderlich",
+  UNKNOWN: "Lebenszyklus unbekannt",
+} as const;
+
+const adminProductPlatformLabels = {
+  LINUX: "Linux",
+  MACOS: "macOS",
+  MOBILE: "Mobil",
+  NINTENDO: "Nintendo",
+  PC: "PC",
+  PLAYSTATION: "PlayStation",
+  UNKNOWN: "Plattform unbekannt",
+  WEB: "Web",
+  WINDOWS: "Windows",
+  XBOX: "Xbox",
+} as const;
+
+const adminProductTypeLabels = {
+  DLC: "Zusatzinhalt",
+  GAME: "Spiel",
+  GIFT_CARD: "Geschenkkarte",
+  SOFTWARE: "Software",
+  SUBSCRIPTION: "Abonnement",
+  UNKNOWN: "Unbekannt",
+} as const;
+
+export const adminProductLifecycleLabel = (value: string): string =>
+  hasOwn(adminProductLifecycleLabels, value)
+    ? adminProductLifecycleLabels[value]
+    : "Lebenszyklus unbekannt";
+
+export const adminProductPlatformLabel = (value: string): string => {
+  const normalized = value.toUpperCase();
+  return hasOwn(adminProductPlatformLabels, normalized)
+    ? adminProductPlatformLabels[normalized]
+    : "Plattform unbekannt";
+};
+
+export const adminProductTypeLabel = (value: string): string =>
+  hasOwn(adminProductTypeLabels, value)
+    ? adminProductTypeLabels[value]
+    : "Unbekannt";
+
 export const adminAuditEventTypeLabel = (eventType: string): string => {
   if (hasOwn(adminAuditEventTypeLabels, eventType))
     return adminAuditEventTypeLabels[eventType];
