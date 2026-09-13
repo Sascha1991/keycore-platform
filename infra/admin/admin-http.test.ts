@@ -555,7 +555,7 @@ describe("AdminHttpController", () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.9");
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.10");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
     expect(response.body).toContain('id="icon-home"');
@@ -669,6 +669,39 @@ describe("AdminHttpController", () => {
     await expect(
       support.handle(authenticated("GET", "/admin/discounts")),
     ).resolves.toMatchObject({ statusCode: 403 });
+  });
+
+  it("renders the supplier workspace and bounded detail without unsupported mutations", async () => {
+    const controller = fixture();
+    const listRequest = authenticated("GET", "/admin/suppliers");
+    listRequest.query.set("panel", "filters");
+    listRequest.query.set("sync", "NEVER");
+    const list = await controller.handle(listRequest);
+
+    expect(list.statusCode).toBe(200);
+    expect(list.body).toContain("Globale Lieferantenkennzahlen");
+    expect(list.body).toContain("Lieferantenfilter");
+    expect(list.body).toContain('name="sync"');
+    expect(list.body).toContain("Keine aktuellen Daten");
+    expect(list.body).toContain(`/admin/suppliers/${targetOrderId}`);
+    expect(list.body).not.toMatch(
+      /Lieferant hinzufügen|Verbindung testen|Jetzt synchronisieren|Zugangsdaten bearbeiten/u,
+    );
+
+    const detail = await controller.handle(
+      authenticated("GET", `/admin/suppliers/${targetOrderId}`),
+    );
+    expect(detail.statusCode).toBe(200);
+    expect(detail.body).toContain("Lieferantendetail");
+    expect(detail.body).toContain("Deployment-gesteuert");
+    expect(detail.body).toContain("Nicht im Browser verfügbar");
+    expect(detail.body).toContain("Katalog");
+    expect(detail.body).not.toContain("Unbekannter Status");
+    expect(detail.body).toContain("Maximal 10 aktuelle Läufe");
+    expect(detail.body).toContain("Maximal 25 aktuelle Datensätze");
+    expect(detail.body).not.toMatch(
+      /ciphertext|raw_payload|claim_code|session_hash/iu,
+    );
   });
 
   it("renders the authoritative customer workspace and privacy-bounded detail", async () => {
@@ -1506,15 +1539,45 @@ const fixture = (
     listSuppliers: async () => ({
       items: [
         {
-          activeOfferCount: 1,
+          availableOfferCount: 1,
+          currentOfferCount: 1,
           displayName: "Synthetic Supplier",
-          lastSyncAt: null,
-          lastSyncStatus: null,
+          lastSuccessfulSyncAt: null,
+          latestSyncAt: null,
+          latestSyncStatus: null,
+          mappedProductCount: 1,
           productCount: 1,
+          reviewRequiredCount: 0,
           supplierCode: "synthetic",
           supplierId: targetOrderId,
+          updatedAt: new Date("2026-09-02T09:00:00.000Z"),
         },
       ],
+      metrics: {
+        suppliersRequiringAttention: 0,
+        suppliersWithOffers: 1,
+        suppliersWithProducts: 1,
+        totalSuppliers: 1,
+      },
+      totalCount: 1,
+    }),
+    findSupplier: async () => ({
+      availableOfferCount: 1,
+      capabilities: ["CATALOG"],
+      createdAt: new Date("2026-09-01T09:00:00.000Z"),
+      currentOfferCount: 1,
+      displayName: "Synthetic Supplier",
+      lastSuccessfulSyncAt: null,
+      latestSyncAt: null,
+      latestSyncStatus: null,
+      mappedProductCount: 1,
+      productCount: 1,
+      recentOffers: [],
+      recentSyncRuns: [],
+      reviewRequiredCount: 0,
+      supplierCode: "synthetic",
+      supplierId: targetOrderId,
+      updatedAt: new Date("2026-09-02T09:00:00.000Z"),
     }),
     listSupportCases: async () => ({
       items: [

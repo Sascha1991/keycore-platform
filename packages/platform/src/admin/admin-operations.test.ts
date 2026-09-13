@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -236,6 +238,47 @@ describe("AdminOperationsService", () => {
     ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
   });
 
+  it("validates supplier filters and capability-checks supplier detail", async () => {
+    const audit = new MemoryAudit();
+    const repository = new MemoryRepository();
+    const service = new AdminOperationsService(repository, audit, secret, "CI");
+
+    await service.listSuppliers(
+      owner(),
+      {
+        catalog: "OPEN_MAPPINGS",
+        limit: 10,
+        offers: "AVAILABLE",
+        quickView: "ATTENTION",
+        sort: "NAME_DESC",
+        sync: "FAILED",
+      },
+      requestId,
+    );
+    expect(repository.supplierInput).toMatchObject({
+      catalog: "OPEN_MAPPINGS",
+      limit: 10,
+      offers: "AVAILABLE",
+      quickView: "ATTENTION",
+      sort: "NAME_DESC",
+      sync: "FAILED",
+    });
+    expect(audit.events.at(-1)?.reasonCode).toBe("ADMIN_SUPPLIERS_VIEWED");
+
+    await expect(
+      service.supplierDetail(owner(), supplier.supplierId, requestId),
+    ).resolves.toEqual(supplier);
+    expect(audit.events.at(-1)?.reasonCode).toBe(
+      "ADMIN_SUPPLIER_DETAIL_VIEWED",
+    );
+    await expect(
+      service.listSuppliers(owner(), { sync: "SUCCESS" }, requestId),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await expect(
+      service.supplierDetail(support(), supplier.supplierId, requestId),
+    ).rejects.toBeInstanceOf(AdminAccessError);
+  });
+
   it("rejects unbounded or control-character input", async () => {
     const service = new AdminOperationsService(
       new MemoryRepository(),
@@ -352,8 +395,26 @@ class MemoryRepository implements AdminOperationsRepository {
   public async findProduct() {
     return null;
   }
-  public async listSuppliers() {
-    return { items: [] };
+  public supplierInput?: Parameters<
+    AdminOperationsRepository["listSuppliers"]
+  >[0];
+  public async listSuppliers(
+    input: Parameters<AdminOperationsRepository["listSuppliers"]>[0],
+  ) {
+    this.supplierInput = input;
+    return {
+      items: [supplier],
+      metrics: {
+        suppliersRequiringAttention: 0,
+        suppliersWithOffers: 0,
+        suppliersWithProducts: 0,
+        totalSuppliers: 1,
+      },
+      totalCount: 1,
+    };
+  }
+  public async findSupplier(supplierId: string) {
+    return supplierId === supplier.supplierId ? supplier : null;
   }
   public async listSupportCases() {
     return { items: [] };
@@ -409,6 +470,25 @@ const customer = {
   verificationState: "VERIFIED" as const,
 };
 
+const supplier = {
+  availableOfferCount: 0,
+  capabilities: ["catalog"],
+  createdAt: new Date("2026-09-01T09:00:00.000Z"),
+  currentOfferCount: 0,
+  displayName: "Synthetic Supplier",
+  lastSuccessfulSyncAt: null,
+  latestSyncAt: null,
+  latestSyncStatus: null,
+  mappedProductCount: 0,
+  productCount: 0,
+  recentOffers: [],
+  recentSyncRuns: [],
+  reviewRequiredCount: 0,
+  supplierCode: "synthetic",
+  supplierId: "20000000-0000-4000-8000-000000000002",
+  updatedAt: new Date("2026-09-01T09:00:00.000Z"),
+};
+
 const owner = (): AdminPrincipal => ({
   adminId: "a1000000-0000-4000-8000-000000000001",
   assurance: "MFA",
@@ -421,4 +501,3 @@ const required = <T>(value: T | undefined): T => {
   if (value === undefined) throw new Error("Expected value");
   return value;
 };
-import { randomBytes } from "node:crypto";

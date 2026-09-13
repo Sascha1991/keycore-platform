@@ -202,9 +202,84 @@ export interface AdminSupplierSummary {
   readonly supplierCode: string;
   readonly displayName: string;
   readonly productCount: number;
-  readonly activeOfferCount: number;
-  readonly lastSyncStatus: string | null;
-  readonly lastSyncAt: Date | null;
+  readonly mappedProductCount: number;
+  readonly reviewRequiredCount: number;
+  readonly currentOfferCount: number;
+  readonly availableOfferCount: number;
+  readonly latestSyncStatus: string | null;
+  readonly latestSyncAt: Date | null;
+  readonly lastSuccessfulSyncAt: Date | null;
+  readonly updatedAt: Date;
+}
+
+export type AdminSupplierSort =
+  "NAME_ASC" | "NAME_DESC" | "UPDATED_DESC" | "UPDATED_ASC";
+
+export type AdminSupplierQuickView =
+  "ATTENTION" | "WITH_PRODUCTS" | "WITH_OFFERS";
+
+export interface AdminSupplierQuery extends AdminListQuery {
+  readonly sync?: string;
+  readonly catalog?: string;
+  readonly offers?: string;
+  readonly sort?: string;
+  readonly quickView?: string;
+}
+
+export interface AdminSupplierMetrics {
+  readonly totalSuppliers: number;
+  readonly suppliersWithProducts: number;
+  readonly suppliersWithOffers: number;
+  readonly suppliersRequiringAttention: number;
+}
+
+export interface AdminSupplierPage extends AdminOperationsPage<AdminSupplierSummary> {
+  readonly metrics: AdminSupplierMetrics;
+  readonly totalCount: number;
+}
+
+export interface AdminSupplierListResult extends AdminSupplierPage {
+  readonly nextCursorValue?: string;
+  readonly limit: number;
+  readonly sort: AdminSupplierSort;
+}
+
+export interface AdminSupplierRepositoryListInput {
+  readonly search?: string;
+  readonly sync?: "SUCCEEDED" | "FAILED" | "RUNNING" | "NEVER";
+  readonly catalog?: "WITH_PRODUCTS" | "WITHOUT_PRODUCTS" | "OPEN_MAPPINGS";
+  readonly offers?:
+    "WITH_OFFERS" | "WITHOUT_OFFERS" | "AVAILABLE" | "NONE_AVAILABLE";
+  readonly quickView?: AdminSupplierQuickView;
+  readonly sort?: AdminSupplierSort;
+  readonly limit: number;
+  readonly after?: AdminReadCursor;
+}
+
+export interface AdminSupplierSyncRunSummary {
+  readonly runId: string;
+  readonly mode: string;
+  readonly status: string;
+  readonly startedAt: Date;
+  readonly completedAt: Date | null;
+  readonly failedAt: Date | null;
+}
+
+export interface AdminSupplierOfferSummary {
+  readonly offerId: string;
+  readonly supplierOfferReference: string;
+  readonly supplierProductTitle: string;
+  readonly canonicalProductTitle: string | null;
+  readonly availability: string;
+  readonly active: boolean;
+  readonly updatedAt: Date;
+}
+
+export interface AdminSupplierDetail extends AdminSupplierSummary {
+  readonly createdAt: Date;
+  readonly capabilities: readonly string[];
+  readonly recentSyncRuns: readonly AdminSupplierSyncRunSummary[];
+  readonly recentOffers: readonly AdminSupplierOfferSummary[];
 }
 
 export interface AdminSupportCaseSummary {
@@ -278,8 +353,9 @@ export interface AdminOperationsRepository {
   ): Promise<AdminProductPage>;
   findProduct(productId: string): Promise<AdminProductDetail | null>;
   listSuppliers(
-    input: AdminRepositoryListInput,
-  ): Promise<AdminOperationsPage<AdminSupplierSummary>>;
+    input: AdminSupplierRepositoryListInput,
+  ): Promise<AdminSupplierPage>;
+  findSupplier(supplierId: string): Promise<AdminSupplierDetail | null>;
   listSupportCases(
     input: AdminRepositoryListInput,
   ): Promise<AdminOperationsPage<AdminSupportCaseSummary>>;
@@ -557,14 +633,76 @@ export class AdminOperationsService {
     return product;
   }
 
-  public listSuppliers(
+  public async listSuppliers(
     principal: AdminPrincipal,
-    query: AdminListQuery,
+    query: AdminSupplierQuery,
     correlationId: CorrelationId,
-  ) {
-    return this.list("suppliers", principal, query, correlationId, (input) =>
-      this.repository.listSuppliers(input),
+  ): Promise<AdminSupplierListResult> {
+    this.require(principal, "SUPPLIER_VIEW");
+    const search = parseSearch(query.search);
+    const sync = parseSupplierSync(query.sync);
+    const catalog = parseSupplierCatalog(query.catalog);
+    const offers = parseSupplierOffers(query.offers);
+    const quickView = parseSupplierQuickView(query.quickView);
+    const sort = parseSupplierSort(query.sort);
+    const limit = parseLimit(query.limit);
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({ catalog, offers, quickView, search, sort, sync }),
+        "utf8",
+      )
+      .digest("hex");
+    const after = query.cursor
+      ? decodeCursor(query.cursor, fingerprint, this.cursorSecret)
+      : undefined;
+    const page = await this.repository.listSuppliers({
+      ...(after ? { after } : {}),
+      ...(catalog ? { catalog } : {}),
+      ...(offers ? { offers } : {}),
+      ...(quickView ? { quickView } : {}),
+      ...(search ? { search } : {}),
+      ...(sync ? { sync } : {}),
+      limit,
+      sort,
+    });
+    await this.auditRead(
+      principal,
+      correlationId,
+      "ADMIN_SUPPLIERS_VIEWED",
+      page.items.length,
     );
+    return {
+      ...page,
+      limit,
+      sort,
+      ...(page.nextCursor
+        ? {
+            nextCursorValue: encodeCursor(
+              page.nextCursor,
+              fingerprint,
+              this.cursorSecret,
+            ),
+          }
+        : {}),
+    };
+  }
+
+  public async supplierDetail(
+    principal: AdminPrincipal,
+    supplierId: string,
+    correlationId: CorrelationId,
+  ): Promise<AdminSupplierDetail | null> {
+    this.require(principal, "SUPPLIER_VIEW");
+    if (!isUuid(supplierId))
+      throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    const supplier = await this.repository.findSupplier(supplierId);
+    await this.auditRead(
+      principal,
+      correlationId,
+      "ADMIN_SUPPLIER_DETAIL_VIEWED",
+      supplier ? 1 : 0,
+    );
+    return supplier;
   }
 
   public listSupportCases(
@@ -895,6 +1033,34 @@ const parseProductLimit = (value: number | undefined): number => {
   if (![10, 25, 50].includes(value))
     throw new AdminAccessError("ADMIN_INPUT_INVALID");
   return value;
+};
+
+const parseSupplierSync = (value: string | undefined) =>
+  parseAllowed(value, ["SUCCEEDED", "FAILED", "RUNNING", "NEVER"] as const);
+
+const parseSupplierCatalog = (value: string | undefined) =>
+  parseAllowed(value, [
+    "WITH_PRODUCTS",
+    "WITHOUT_PRODUCTS",
+    "OPEN_MAPPINGS",
+  ] as const);
+
+const parseSupplierOffers = (value: string | undefined) =>
+  parseAllowed(value, [
+    "WITH_OFFERS",
+    "WITHOUT_OFFERS",
+    "AVAILABLE",
+    "NONE_AVAILABLE",
+  ] as const);
+
+const parseSupplierQuickView = (value: string | undefined) =>
+  parseAllowed(value, ["ATTENTION", "WITH_PRODUCTS", "WITH_OFFERS"] as const);
+
+const parseSupplierSort = (value: string | undefined): AdminSupplierSort => {
+  if (!value) return "NAME_ASC";
+  if (!["NAME_ASC", "NAME_DESC", "UPDATED_DESC", "UPDATED_ASC"].includes(value))
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value as AdminSupplierSort;
 };
 
 const parseCustomerStatus = (

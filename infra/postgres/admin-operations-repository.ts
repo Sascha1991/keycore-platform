@@ -11,7 +11,9 @@ import type {
   AdminProductRepositoryListInput,
   AdminProductSort,
   AdminRepositoryListInput,
-  AdminSupplierSummary,
+  AdminSupplierDetail,
+  AdminSupplierRepositoryListInput,
+  AdminSupplierSort,
   AdminSupportCaseSummary,
 } from "../../packages/platform/src/contracts.js";
 import { adminCapturedPaymentVolumeStates } from "../../packages/platform/src/contracts.js";
@@ -485,44 +487,93 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
     };
   }
 
-  public async listSuppliers(
-    input: AdminRepositoryListInput,
-  ): Promise<AdminOperationsPage<AdminSupplierSummary>> {
+  public async listSuppliers(input: AdminSupplierRepositoryListInput) {
+    const requestedSort = input.sort ?? "NAME_ASC";
     const values: unknown[] = [];
-    const predicates: string[] = [];
+    const basePredicates: string[] = [];
     const parameter = (value: unknown) => {
       values.push(value);
       return `$${values.length}`;
     };
     if (input.search)
-      predicates.push(
+      basePredicates.push(
         `(supplier.id::text = ${parameter(input.search)} OR supplier.display_name ILIKE ${parameter(like(input.search))} ESCAPE '\\' OR supplier.supplier_code ILIKE ${parameter(like(input.search))} ESCAPE '\\')`,
       );
+    const hasProducts =
+      "EXISTS (SELECT 1 FROM supplier_products filtered_product WHERE filtered_product.supplier_id = supplier.id)";
+    const hasOffers =
+      "EXISTS (SELECT 1 FROM supplier_offers filtered_offer WHERE filtered_offer.supplier_id = supplier.id AND filtered_offer.active = true)";
+    const hasAvailableOffers =
+      "EXISTS (SELECT 1 FROM supplier_offers filtered_offer JOIN offers filtered_canonical_offer ON filtered_canonical_offer.supplier_offer_id = filtered_offer.id WHERE filtered_offer.supplier_id = supplier.id AND filtered_offer.active = true AND filtered_canonical_offer.availability IN ('IN_STOCK', 'LIMITED'))";
+    const hasOpenMappings =
+      "EXISTS (SELECT 1 FROM supplier_product_canonical_mappings filtered_mapping WHERE filtered_mapping.supplier_id = supplier.id AND filtered_mapping.state = 'REVIEW_REQUIRED')";
+    const latestSyncStatus =
+      "(SELECT filtered_run.status FROM catalog_sync_runs filtered_run WHERE filtered_run.supplier_id = supplier.id ORDER BY filtered_run.started_at DESC, filtered_run.id DESC LIMIT 1)";
+    if (input.sync)
+      basePredicates.push(
+        input.sync === "NEVER"
+          ? `NOT EXISTS (SELECT 1 FROM catalog_sync_runs filtered_run WHERE filtered_run.supplier_id = supplier.id)`
+          : `${latestSyncStatus} = ${parameter(input.sync)}`,
+      );
+    if (input.catalog)
+      basePredicates.push(
+        input.catalog === "WITH_PRODUCTS"
+          ? hasProducts
+          : input.catalog === "WITHOUT_PRODUCTS"
+            ? `NOT ${hasProducts}`
+            : hasOpenMappings,
+      );
+    if (input.offers)
+      basePredicates.push(
+        input.offers === "WITH_OFFERS"
+          ? hasOffers
+          : input.offers === "WITHOUT_OFFERS"
+            ? `NOT ${hasOffers}`
+            : input.offers === "AVAILABLE"
+              ? hasAvailableOffers
+              : `${hasOffers} AND NOT ${hasAvailableOffers}`,
+      );
+    if (input.quickView === "ATTENTION")
+      basePredicates.push(
+        `(${latestSyncStatus} = 'FAILED' OR ${hasOpenMappings})`,
+      );
+    if (input.quickView === "WITH_PRODUCTS") basePredicates.push(hasProducts);
+    if (input.quickView === "WITH_OFFERS") basePredicates.push(hasOffers);
+    const countValues = [...values];
+    const predicates = [...basePredicates];
+    const sort = supplierSort(requestedSort);
     if (input.after)
       predicates.push(
-        `(lower(supplier.display_name), supplier.id) > (${parameter(input.after.sortValue)}, ${parameter(input.after.id)}::uuid)`,
+        `(${sort.expression}, supplier.id) ${sort.comparator} (${sort.cast(parameter(input.after.sortValue))}, ${parameter(input.after.id)}::uuid)`,
       );
     const result = await this.database.query<{
       readonly id: string;
       readonly supplier_code: string;
       readonly display_name: string;
       readonly product_count: string;
-      readonly active_offer_count: string;
-      readonly last_sync_status: string | null;
-      readonly last_sync_at: Date | null;
+      readonly mapped_product_count: string;
+      readonly review_required_count: string;
+      readonly current_offer_count: string;
+      readonly available_offer_count: string;
+      readonly latest_sync_status: string | null;
+      readonly latest_sync_at: Date | null;
+      readonly last_successful_sync_at: Date | null;
+      readonly updated_at: Date;
     }>(
       `
       WITH selected_suppliers AS (
-        SELECT supplier.id, supplier.supplier_code, supplier.display_name
+        SELECT supplier.id, supplier.supplier_code, supplier.display_name, supplier.updated_at
         FROM suppliers supplier
         ${where(predicates)}
-        ORDER BY lower(supplier.display_name) ASC, supplier.id ASC
+        ORDER BY ${sort.expression} ${sort.direction}, supplier.id ${sort.direction}
         LIMIT ${parameter(input.limit + 1)}
       )
-      SELECT supplier.id::text, supplier.supplier_code, supplier.display_name,
+      SELECT supplier.id::text, supplier.supplier_code, supplier.display_name, supplier.updated_at,
         product_stats.product_count,
-        offer_stats.active_offer_count,
-        latest_sync.status AS last_sync_status, latest_sync.started_at AS last_sync_at
+        mapping_stats.mapped_product_count, mapping_stats.review_required_count,
+        offer_stats.current_offer_count, offer_stats.available_offer_count,
+        latest_sync.status AS latest_sync_status, latest_sync.started_at AS latest_sync_at,
+        last_success.started_at AS last_successful_sync_at
       FROM selected_suppliers supplier
       LEFT JOIN LATERAL (
         SELECT count(*)::text AS product_count
@@ -530,32 +581,196 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
         WHERE supplier_product.supplier_id = supplier.id
       ) product_stats ON true
       LEFT JOIN LATERAL (
-        SELECT count(*) FILTER (WHERE supplier_offer.active = true)::text AS active_offer_count
+        SELECT
+          count(*) FILTER (WHERE mapping.product_id IS NOT NULL AND mapping.state IN ('AUTO_MATCHED', 'MANUAL_MATCHED'))::text AS mapped_product_count,
+          count(*) FILTER (WHERE mapping.state = 'REVIEW_REQUIRED')::text AS review_required_count
+        FROM supplier_product_canonical_mappings mapping
+        WHERE mapping.supplier_id = supplier.id
+      ) mapping_stats ON true
+      LEFT JOIN LATERAL (
+        SELECT count(*) FILTER (WHERE supplier_offer.active = true)::text AS current_offer_count,
+          count(*) FILTER (WHERE supplier_offer.active = true AND canonical_offer.availability IN ('IN_STOCK', 'LIMITED'))::text AS available_offer_count
         FROM supplier_offers supplier_offer
+        LEFT JOIN offers canonical_offer ON canonical_offer.supplier_offer_id = supplier_offer.id
         WHERE supplier_offer.supplier_id = supplier.id
       ) offer_stats ON true
       LEFT JOIN LATERAL (
         SELECT status, started_at FROM catalog_sync_runs run
         WHERE run.supplier_id = supplier.id ORDER BY started_at DESC, id DESC LIMIT 1
       ) latest_sync ON true
-      ORDER BY lower(supplier.display_name) ASC, supplier.id ASC
+      LEFT JOIN LATERAL (
+        SELECT started_at FROM catalog_sync_runs run
+        WHERE run.supplier_id = supplier.id AND run.status = 'SUCCEEDED'
+        ORDER BY started_at DESC, id DESC LIMIT 1
+      ) last_success ON true
+      ORDER BY ${sort.expression} ${sort.direction}, supplier.id ${sort.direction}
     `,
       values,
     );
-    return page(
+    const countResult = await this.database.query<{
+      readonly total_count: string;
+    }>(
+      `SELECT count(*)::text AS total_count FROM suppliers supplier ${where(basePredicates)}`,
+      countValues,
+    );
+    const metricResult = await this.database.query<{
+      readonly total_suppliers: string;
+      readonly suppliers_with_products: string;
+      readonly suppliers_with_offers: string;
+      readonly suppliers_requiring_attention: string;
+    }>(`
+      SELECT count(*)::text AS total_suppliers,
+        count(*) FILTER (WHERE ${hasProducts})::text AS suppliers_with_products,
+        count(*) FILTER (WHERE ${hasOffers})::text AS suppliers_with_offers,
+        count(*) FILTER (WHERE ${latestSyncStatus} = 'FAILED' OR ${hasOpenMappings})::text AS suppliers_requiring_attention
+      FROM suppliers supplier
+    `);
+    const paged = page(
       input.limit,
       result.rows,
       (row) => ({
-        activeOfferCount: Number(row.active_offer_count),
+        availableOfferCount: Number(row.available_offer_count),
+        currentOfferCount: Number(row.current_offer_count),
         displayName: row.display_name,
-        lastSyncAt: row.last_sync_at,
-        lastSyncStatus: row.last_sync_status,
+        lastSuccessfulSyncAt: row.last_successful_sync_at,
+        latestSyncAt: row.latest_sync_at,
+        latestSyncStatus: row.latest_sync_status,
+        mappedProductCount: Number(row.mapped_product_count),
         productCount: Number(row.product_count),
+        reviewRequiredCount: Number(row.review_required_count),
         supplierCode: row.supplier_code,
         supplierId: row.id,
+        updatedAt: row.updated_at,
       }),
-      (row) => ({ id: row.id, sortValue: row.display_name.toLowerCase() }),
+      (row) => ({
+        id: row.id,
+        sortValue: requestedSort.startsWith("NAME_")
+          ? row.display_name.toLowerCase()
+          : row.updated_at.toISOString(),
+      }),
     );
+    const count = required(countResult.rows[0]);
+    const metrics = required(metricResult.rows[0]);
+    return {
+      ...paged,
+      metrics: {
+        suppliersRequiringAttention: Number(
+          metrics.suppliers_requiring_attention,
+        ),
+        suppliersWithOffers: Number(metrics.suppliers_with_offers),
+        suppliersWithProducts: Number(metrics.suppliers_with_products),
+        totalSuppliers: Number(metrics.total_suppliers),
+      },
+      totalCount: Number(count.total_count),
+    };
+  }
+
+  public async findSupplier(
+    supplierId: string,
+  ): Promise<AdminSupplierDetail | null> {
+    const core = await this.database.query<{
+      readonly id: string;
+      readonly supplier_code: string;
+      readonly display_name: string;
+      readonly capabilities: Record<string, unknown>;
+      readonly created_at: Date;
+      readonly updated_at: Date;
+      readonly product_count: string;
+      readonly mapped_product_count: string;
+      readonly review_required_count: string;
+      readonly current_offer_count: string;
+      readonly available_offer_count: string;
+      readonly latest_sync_status: string | null;
+      readonly latest_sync_at: Date | null;
+      readonly last_successful_sync_at: Date | null;
+    }>(
+      `
+      SELECT supplier.id::text, supplier.supplier_code, supplier.display_name,
+        supplier.capabilities, supplier.created_at, supplier.updated_at,
+        (SELECT count(*)::text FROM supplier_products product WHERE product.supplier_id = supplier.id) AS product_count,
+        (SELECT count(*)::text FROM supplier_product_canonical_mappings mapping WHERE mapping.supplier_id = supplier.id AND mapping.product_id IS NOT NULL AND mapping.state IN ('AUTO_MATCHED', 'MANUAL_MATCHED')) AS mapped_product_count,
+        (SELECT count(*)::text FROM supplier_product_canonical_mappings mapping WHERE mapping.supplier_id = supplier.id AND mapping.state = 'REVIEW_REQUIRED') AS review_required_count,
+        (SELECT count(*)::text FROM supplier_offers supplier_offer WHERE supplier_offer.supplier_id = supplier.id AND supplier_offer.active = true) AS current_offer_count,
+        (SELECT count(*)::text FROM supplier_offers supplier_offer JOIN offers canonical_offer ON canonical_offer.supplier_offer_id = supplier_offer.id WHERE supplier_offer.supplier_id = supplier.id AND supplier_offer.active = true AND canonical_offer.availability IN ('IN_STOCK', 'LIMITED')) AS available_offer_count,
+        (SELECT run.status FROM catalog_sync_runs run WHERE run.supplier_id = supplier.id ORDER BY run.started_at DESC, run.id DESC LIMIT 1) AS latest_sync_status,
+        (SELECT run.started_at FROM catalog_sync_runs run WHERE run.supplier_id = supplier.id ORDER BY run.started_at DESC, run.id DESC LIMIT 1) AS latest_sync_at,
+        (SELECT run.started_at FROM catalog_sync_runs run WHERE run.supplier_id = supplier.id AND run.status = 'SUCCEEDED' ORDER BY run.started_at DESC, run.id DESC LIMIT 1) AS last_successful_sync_at
+      FROM suppliers supplier WHERE supplier.id = $1::uuid
+    `,
+      [supplierId],
+    );
+    const supplier = core.rows[0];
+    if (!supplier) return null;
+    const syncRuns = await this.database.query<{
+      readonly id: string;
+      readonly mode: string;
+      readonly status: string;
+      readonly started_at: Date;
+      readonly completed_at: Date | null;
+      readonly failed_at: Date | null;
+    }>(
+      `SELECT id::text, mode, status, started_at, completed_at, failed_at FROM catalog_sync_runs WHERE supplier_id = $1::uuid ORDER BY started_at DESC, id DESC LIMIT 10`,
+      [supplierId],
+    );
+    const offers = await this.database.query<{
+      readonly id: string;
+      readonly supplier_offer_id: string;
+      readonly supplier_product_title: string;
+      readonly canonical_product_title: string | null;
+      readonly availability: string;
+      readonly active: boolean;
+      readonly updated_at: Date;
+    }>(
+      `
+        SELECT supplier_offer.id::text, supplier_offer.supplier_offer_id,
+          supplier_product.title AS supplier_product_title, product.title AS canonical_product_title,
+          COALESCE(canonical_offer.availability, 'UNKNOWN') AS availability,
+          supplier_offer.active, GREATEST(supplier_offer.updated_at, COALESCE(canonical_offer.updated_at, supplier_offer.updated_at)) AS updated_at
+        FROM supplier_offers supplier_offer
+        JOIN supplier_products supplier_product ON supplier_product.id = supplier_offer.supplier_product_id
+        LEFT JOIN offers canonical_offer ON canonical_offer.supplier_offer_id = supplier_offer.id
+        LEFT JOIN products product ON product.id = canonical_offer.product_id
+        WHERE supplier_offer.supplier_id = $1::uuid
+        ORDER BY supplier_offer.updated_at DESC, supplier_offer.id DESC LIMIT 25
+      `,
+      [supplierId],
+    );
+    return {
+      availableOfferCount: Number(supplier.available_offer_count),
+      capabilities: Object.entries(supplier.capabilities ?? {})
+        .filter(([, enabled]) => enabled === true)
+        .map(([capability]) => capability)
+        .sort(),
+      createdAt: supplier.created_at,
+      currentOfferCount: Number(supplier.current_offer_count),
+      displayName: supplier.display_name,
+      lastSuccessfulSyncAt: supplier.last_successful_sync_at,
+      latestSyncAt: supplier.latest_sync_at,
+      latestSyncStatus: supplier.latest_sync_status,
+      mappedProductCount: Number(supplier.mapped_product_count),
+      productCount: Number(supplier.product_count),
+      recentOffers: offers.rows.map((row) => ({
+        active: row.active,
+        availability: row.availability,
+        canonicalProductTitle: row.canonical_product_title,
+        offerId: row.id,
+        supplierOfferReference: row.supplier_offer_id,
+        supplierProductTitle: row.supplier_product_title,
+        updatedAt: row.updated_at,
+      })),
+      recentSyncRuns: syncRuns.rows.map((row) => ({
+        completedAt: row.completed_at,
+        failedAt: row.failed_at,
+        mode: row.mode,
+        runId: row.id,
+        startedAt: row.started_at,
+        status: row.status,
+      })),
+      reviewRequiredCount: Number(supplier.review_required_count),
+      supplierCode: supplier.supplier_code,
+      supplierId: supplier.id,
+      updatedAt: supplier.updated_at,
+    };
   }
 
   public async listSupportCases(
@@ -792,6 +1007,43 @@ const productSort = (
     comparator: ">",
     direction: "ASC",
     expression: "lower(product.title)",
+  };
+};
+
+const supplierSort = (
+  sort: AdminSupplierSort,
+): {
+  readonly cast: (parameter: string) => string;
+  readonly comparator: "<" | ">";
+  readonly direction: "ASC" | "DESC";
+  readonly expression: string;
+} => {
+  if (sort === "NAME_DESC")
+    return {
+      cast: (parameter) => parameter,
+      comparator: "<",
+      direction: "DESC",
+      expression: "lower(supplier.display_name)",
+    };
+  if (sort === "UPDATED_ASC")
+    return {
+      cast: (parameter) => `${parameter}::timestamptz`,
+      comparator: ">",
+      direction: "ASC",
+      expression: "supplier.updated_at",
+    };
+  if (sort === "UPDATED_DESC")
+    return {
+      cast: (parameter) => `${parameter}::timestamptz`,
+      comparator: "<",
+      direction: "DESC",
+      expression: "supplier.updated_at",
+    };
+  return {
+    cast: (parameter) => parameter,
+    comparator: ">",
+    direction: "ASC",
+    expression: "lower(supplier.display_name)",
   };
 };
 

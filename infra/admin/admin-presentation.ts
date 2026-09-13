@@ -229,6 +229,7 @@ export const knownAdminAuditCodes = [
   "ADMIN_STAFF_ENABLED",
   "ADMIN_STAFF_LIST_VIEWED",
   "ADMIN_STAFF_REACTIVATED",
+  "ADMIN_SUPPLIER_DETAIL_VIEWED",
   "ADMIN_SUPPLIERS_VIEWED",
   "ADMIN_SUPPORT_VIEWED",
 ] as const;
@@ -271,6 +272,7 @@ export const adminAuditCodeLabels = {
   ADMIN_STAFF_ENABLED: "Mitarbeiter reaktiviert",
   ADMIN_STAFF_LIST_VIEWED: "Mitarbeiterliste aufgerufen",
   ADMIN_STAFF_REACTIVATED: "Mitarbeiter reaktiviert",
+  ADMIN_SUPPLIER_DETAIL_VIEWED: "Lieferantendetail aufgerufen",
   ADMIN_SUPPLIERS_VIEWED: "Lieferantenliste aufgerufen",
   ADMIN_SUPPORT_VIEWED: "Supportfälle aufgerufen",
 } as const satisfies Readonly<Record<KnownAdminAuditCode, string>>;

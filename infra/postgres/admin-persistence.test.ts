@@ -460,8 +460,17 @@ describePostgres("secure admin PostgreSQL persistence", () => {
           sort: "TITLE_ASC",
         }),
       ).resolves.toMatchObject({ items: [{ productId }] });
-      await expect(repository.listSuppliers({ limit: 25 })).resolves.toEqual({
+      await expect(
+        repository.listSuppliers({ limit: 25 }),
+      ).resolves.toMatchObject({
         items: [],
+        metrics: {
+          suppliersRequiringAttention: 0,
+          suppliersWithOffers: 0,
+          suppliersWithProducts: 0,
+          totalSuppliers: 0,
+        },
+        totalCount: 0,
       });
       await expect(
         repository.listSupportCases({ limit: 25, status: "OPEN" }),
@@ -531,14 +540,23 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       await database.transaction(async (client) => {
         await client.query("SET LOCAL statement_timeout = '1500ms'");
         const repository = new PostgresAdminOperationsRepository(client);
-        await expect(repository.listSuppliers({ limit: 25 })).resolves.toEqual({
+        await expect(
+          repository.listSuppliers({ limit: 25 }),
+        ).resolves.toMatchObject({
           items: [
             expect.objectContaining({
-              activeOfferCount: 2250,
+              availableOfferCount: 0,
+              currentOfferCount: 2250,
               productCount: 3000,
               supplierId,
             }),
           ],
+          metrics: {
+            suppliersWithOffers: 1,
+            suppliersWithProducts: 1,
+            totalSuppliers: 1,
+          },
+          totalCount: 1,
         });
       });
     } finally {

@@ -14,7 +14,8 @@ import type {
   AdminCapability,
   AdminOperationsService,
   AdminCustomerSummary,
-  AdminSupplierSummary,
+  AdminSupplierDetail,
+  AdminSupplierListResult,
   AdminSupportCaseSummary,
   AdminFraudReviewSummary,
   AdminOperationsControlSummary,
@@ -162,6 +163,14 @@ export class AdminHttpController {
         return await this.productDetail(
           principal,
           productDetailMatch[1],
+          request.query,
+        );
+      const supplierDetailMatch =
+        /^\/admin\/suppliers\/([0-9a-f-]{36})$/iu.exec(request.path);
+      if (request.method === "GET" && supplierDetailMatch?.[1])
+        return await this.supplierDetail(
+          principal,
+          supplierDetailMatch[1],
           request.query,
         );
       const controlMatch = /^\/admin\/settings\/controls\/([A-Z_]+)$/u.exec(
@@ -668,12 +677,34 @@ export class AdminHttpController {
     const operations = this.requireOperations();
     const result = await operations.listSuppliers(
       principal,
-      listQuery(request.query),
+      supplierListQuery(request.query),
       newAdminCorrelationId(),
     );
     return this.render(
       200,
       supplierListContent(result, request.query),
+      principal,
+    );
+  }
+
+  private async supplierDetail(
+    principal: AdminPrincipal,
+    supplierId: string,
+    query: URLSearchParams,
+  ): Promise<AdminHttpResponse> {
+    rejectDuplicateParameters(query, ["return"]);
+    const supplier = await this.requireOperations().supplierDetail(
+      principal,
+      supplierId,
+      newAdminCorrelationId(),
+    );
+    if (!supplier) throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    return this.render(
+      200,
+      supplierDetailContent(
+        supplier,
+        safeSupplierReturnPath(query.get("return")),
+      ),
       principal,
     );
   }
@@ -1187,7 +1218,7 @@ const page = (
   additionalHeaders: Readonly<Record<string, string>> = {},
   csrfSecret?: string,
 ): AdminHttpResponse => ({
-  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.9"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
+  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.10"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
   headers: securityHeaders(additionalHeaders),
   statusCode,
 });
@@ -1471,6 +1502,35 @@ const safeProductReturnPath = (value: string | null): string => {
   }
 };
 
+const supplierQueryKeys = [
+  "search",
+  "sync",
+  "catalog",
+  "offers",
+  "view",
+  "sort",
+  "limit",
+  "panel",
+] as const;
+
+const safeSupplierReturnPath = (value: string | null): string => {
+  if (!value || value.length > 2048) return "/admin/suppliers";
+  try {
+    const parsed = new URL(value, "https://admin.invalid");
+    if (
+      parsed.origin !== "https://admin.invalid" ||
+      parsed.pathname !== "/admin/suppliers"
+    )
+      return "/admin/suppliers";
+    const allowed = new Set([...supplierQueryKeys, "cursor"]);
+    if ([...parsed.searchParams.keys()].some((key) => !allowed.has(key)))
+      return "/admin/suppliers";
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return "/admin/suppliers";
+  }
+};
+
 const compactQuery = (query: URLSearchParams) => {
   const cursor = optional(query, "cursor");
   const cursorDirection = optional(query, "direction");
@@ -1517,6 +1577,37 @@ const listQuery = (query: URLSearchParams) => {
     ...(cursor ? { cursor } : {}),
     ...(search ? { search } : {}),
     ...(status ? { status } : {}),
+  };
+};
+
+const supplierListQuery = (query: URLSearchParams) => {
+  rejectDuplicateParameters(query, [
+    "search",
+    "sync",
+    "catalog",
+    "offers",
+    "view",
+    "sort",
+    "limit",
+    "cursor",
+  ]);
+  const catalog = optional(query, "catalog");
+  const cursor = optional(query, "cursor");
+  const limit = optional(query, "limit");
+  const offers = optional(query, "offers");
+  const search = optional(query, "search");
+  const sort = optional(query, "sort");
+  const sync = optional(query, "sync");
+  const quickView = optional(query, "view");
+  return {
+    ...(catalog ? { catalog } : {}),
+    ...(cursor ? { cursor } : {}),
+    ...(limit ? { limit: Number(limit) } : {}),
+    ...(offers ? { offers } : {}),
+    ...(search ? { search } : {}),
+    ...(sort ? { sort } : {}),
+    ...(sync ? { sync } : {}),
+    ...(quickView ? { quickView } : {}),
   };
 };
 
@@ -2166,18 +2257,107 @@ const productDetailContent = (
 };
 
 const supplierListContent = (
-  result: AdminOperationsListResult<AdminSupplierSummary>,
+  result: AdminSupplierListResult,
   query: URLSearchParams,
+): string => {
+  const hasFilters = ["sync", "catalog", "offers"].some((name) =>
+    optional(query, name),
+  );
+  const normalized = new URLSearchParams(query);
+  normalized.delete("cursor");
+  const hidden = (excluded: readonly string[]) =>
+    supplierQueryKeys
+      .filter((name) => !excluded.includes(name) && optional(query, name))
+      .map(
+        (name) =>
+          `<input type="hidden" name="${name}" value="${escapeHtml(query.get(name) ?? "")}">`,
+      )
+      .join("");
+  const viewHref = (view?: string) =>
+    view
+      ? `/admin/suppliers?view=${encodeURIComponent(view)}`
+      : "/admin/suppliers";
+  const actions = `<form class="page-search supplier-search" method="get" action="/admin/suppliers">${hidden(["search"])}<label for="supplier-search">Lieferanten durchsuchen</label><span class="search-field">${icon("search")}<input id="supplier-search" type="search" name="search" maxlength="254" placeholder="Lieferant oder Lieferanten-ID" value="${escapeHtml(query.get("search") ?? "")}"></span><button class="button" type="submit">Suchen</button>${query.has("search") ? '<a class="button-quiet search-clear" href="/admin/suppliers">Löschen</a>' : ""}</form><a class="button-quiet filter-trigger${hasFilters ? " is-active" : ""}" href="/admin/suppliers?${escapeHtml(new URLSearchParams([...normalized.entries()].filter(([name]) => name !== "panel").concat([["panel", query.get("panel") === "filters" ? "closed" : "filters"]])).toString())}#supplier-filter">${icon("filter")} Filter${hasFilters ? " <span>aktiv</span>" : ""}</a>`;
+  const rows =
+    result.items.length === 0
+      ? `<div class="empty-state supplier-empty-state">${icon("truck")}<div><strong>${hasFilters || query.has("search") || query.has("view") ? "Keine Lieferanten gefunden" : "Noch keine Lieferanten eingerichtet"}</strong><p>${hasFilters || query.has("search") || query.has("view") ? "Die aktuelle Suche oder Filterauswahl liefert keine Ergebnisse." : "Es sind keine autoritativen Lieferantenintegrationen vorhanden."}</p>${hasFilters || query.has("search") || query.has("view") ? '<a href="/admin/suppliers">Alle Lieferanten anzeigen</a>' : ""}</div></div>`
+      : `<div class="table-wrap suppliers-table-wrap"><table class="operations-table suppliers-table"><thead><tr><th scope="col">Lieferant</th><th scope="col">Betriebszustand</th><th scope="col">Synchronisierung</th><th scope="col">Katalog / Zuordnungen</th><th scope="col">Angebote</th><th scope="col">Aktualisiert</th><th scope="col"><span class="sr-only">Aktion</span></th></tr></thead><tbody>${result.items
+          .map((item) => {
+            const attention = supplierAttention(item);
+            const returnPath = `/admin/suppliers${normalized.toString() ? `?${normalized.toString()}` : ""}`;
+            const detail = `/admin/suppliers/${encodeURIComponent(item.supplierId)}?return=${encodeURIComponent(returnPath)}`;
+            return `<tr><td data-label="Lieferant"><span class="supplier-identity"><span class="supplier-media">${icon("truck")}</span><span class="cell-stack"><strong>${escapeHtml(item.displayName)}</strong><small>${escapeHtml(item.supplierCode)} · ID ${escapeHtml(shortIdentifier(item.supplierId))}</small></span></span></td><td data-label="Betriebszustand"><span class="status status-${attention ? "warning" : item.latestSyncStatus === "SUCCEEDED" ? "active" : "unknown"}">${escapeHtml(attention ?? (item.latestSyncStatus === "SUCCEEDED" ? "Betriebsbereit" : "Keine aktuellen Daten"))}</span></td><td data-label="Synchronisierung">${supplierSyncSummary(item.latestSyncStatus, item.latestSyncAt)}</td><td data-label="Katalog / Zuordnungen"><span class="cell-stack"><strong>${formatCount(item.productCount)} Lieferantenprodukte</strong><small>${formatCount(item.mappedProductCount)} zugeordnet${item.reviewRequiredCount > 0 ? ` · ${formatCount(item.reviewRequiredCount)} zu prüfen` : ""}</small></span></td><td data-label="Angebote"><span class="cell-stack"><strong>${formatCount(item.currentOfferCount)} aktuell</strong><small>${formatCount(item.availableOfferCount)} verfügbar</small></span></td><td data-label="Aktualisiert">${escapeHtml(formatDate(item.updatedAt))}</td><td data-label="Aktion"><a class="row-action" href="${escapeHtml(detail)}" aria-label="Lieferant ${escapeHtml(item.displayName)} öffnen">Öffnen ${icon("arrow")}</a></td></tr>`;
+          })
+          .join("")}</tbody></table></div>`;
+  return `${pageActionBar("Lieferanten", "Lieferanten, Integrationen und Katalogstatus verwalten.", actions)}<section class="metric-grid supplier-metrics" aria-label="Globale Lieferantenkennzahlen">${metric("Lieferanten", result.metrics.totalSuppliers, { href: viewHref(), iconName: "truck", detail: "Alle Integrationen", selected: !query.get("view") })}${metric("Mit Katalogdaten", result.metrics.suppliersWithProducts, { href: viewHref("WITH_PRODUCTS"), iconName: "package", detail: "Lieferantenprodukte vorhanden", selected: query.get("view") === "WITH_PRODUCTS" })}${metric("Mit Angeboten", result.metrics.suppliersWithOffers, { href: viewHref("WITH_OFFERS"), iconName: "tag", detail: "Aktuelle Angebote vorhanden", selected: query.get("view") === "WITH_OFFERS" })}${metric("Handlungsbedarf", result.metrics.suppliersRequiringAttention, { href: viewHref("ATTENTION"), iconName: "alert", detail: "Sync-Fehler oder Zuordnungsprüfung", selected: query.get("view") === "ATTENTION" })}</section>${supplierFilterPanel(query, hidden)}<section class="content-section operations-section suppliers-section flush"><div class="section-heading"><div><h2>Lieferantenintegrationen</h2><span>${result.items.length} von ${result.totalCount} in dieser Ansicht</span></div>${supplierResultControls(result, hidden)}</div>${rows}${operationalPagination(result, query, "/admin/suppliers")}</section><p class="page-note">Zugangsdaten, Provider-Rohdaten, Produktschlüssel und kundenbezogene Geheimnisse werden nicht ausgegeben. Anlage und Betriebsaktionen bleiben mangels autoritativer Verwaltungs-Domain bewusst außerhalb dieser Ansicht.</p>`;
+};
+
+const supplierFilterPanel = (
+  query: URLSearchParams,
+  hidden: (excluded: readonly string[]) => string,
+): string => {
+  const selected = (name: string, value: string) =>
+    query.get(name) === value ? " selected" : "";
+  const expanded =
+    query.get("panel") === "filters" ||
+    ["sync", "catalog", "offers"].some((name) => optional(query, name));
+  return `<details class="filter-panel supplier-filter-panel" id="supplier-filter"${expanded ? " open" : ""}><summary>${icon("filter")} Lieferantenfilter</summary><form class="supplier-filter-grid" method="get" action="/admin/suppliers">${hidden(["sync", "catalog", "offers", "panel"])}<label>Synchronisierung<select name="sync"><option value="">Alle</option><option value="SUCCEEDED"${selected("sync", "SUCCEEDED")}>Erfolgreich</option><option value="RUNNING"${selected("sync", "RUNNING")}>Läuft</option><option value="FAILED"${selected("sync", "FAILED")}>Fehlgeschlagen</option><option value="NEVER"${selected("sync", "NEVER")}>Nie synchronisiert</option></select></label><label>Katalog<select name="catalog"><option value="">Alle</option><option value="WITH_PRODUCTS"${selected("catalog", "WITH_PRODUCTS")}>Mit Lieferantenprodukten</option><option value="WITHOUT_PRODUCTS"${selected("catalog", "WITHOUT_PRODUCTS")}>Ohne Lieferantenprodukte</option><option value="OPEN_MAPPINGS"${selected("catalog", "OPEN_MAPPINGS")}>Zuordnungsprüfung offen</option></select></label><label>Angebote<select name="offers"><option value="">Alle</option><option value="WITH_OFFERS"${selected("offers", "WITH_OFFERS")}>Mit aktuellen Angeboten</option><option value="WITHOUT_OFFERS"${selected("offers", "WITHOUT_OFFERS")}>Ohne aktuelle Angebote</option><option value="AVAILABLE"${selected("offers", "AVAILABLE")}>Mit verfügbaren Angeboten</option><option value="NONE_AVAILABLE"${selected("offers", "NONE_AVAILABLE")}>Angebote, nicht verfügbar</option></select></label><div class="filter-actions"><button type="submit">Anwenden</button><a class="reset-link" href="/admin/suppliers">Zurücksetzen</a></div></form></details>`;
+};
+
+const supplierResultControls = (
+  result: AdminSupplierListResult,
+  hidden: (excluded: readonly string[]) => string,
 ): string =>
-  `${listActionBar("Lieferanten", "Konfigurierte Beschaffungsquellen und deren sichere Betriebsmetadaten.", "/admin/suppliers", query, "Name, Code oder Lieferanten-ID", "Lieferant hinzufügen")}<section class="metric-grid" aria-label="Lieferantenkennzahlen">${metric("Lieferanten", result.items.length, { icon: "LI", detail: "Aktuelle Ergebnisse" })}${metric("Mit Produkten", result.items.filter((item) => item.productCount > 0).length, { icon: "PR", detail: "Zugeordnete Produkte" })}${metric(
-    "Produkte",
-    result.items.reduce((sum, item) => sum + item.productCount, 0),
-    { icon: "GP", detail: "In dieser Auswahl" },
-  )}${metric(
-    "Aktive Angebote",
-    result.items.reduce((sum, item) => sum + item.activeOfferCount, 0),
-    { icon: "AA", detail: "Autoritativ verfügbar" },
-  )}</section><details class="filter-panel" id="list-filter"><summary>Detailfilter</summary>${operationalFilter("/admin/suppliers", query, "Name, Code oder Lieferanten-ID", [])}</details><section class="content-section operations-section flush"><div class="section-heading"><h2>Konfigurierte Integrationen</h2><span>${result.items.length} Einträge</span></div>${result.items.length === 0 ? emptyState("Keine Lieferanten vorhanden", "Es sind keine Lieferantenintegrationen konfiguriert.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Lieferant</th><th>Interner Code</th><th>Produkte</th><th>Aktive Angebote</th><th>Letzte Synchronisierung</th><th>Status</th></tr></thead><tbody>${result.items.map((item) => `<tr><td data-label="Lieferant"><span class="product-cell"><span class="product-media" aria-hidden="true">${escapeHtml(item.supplierCode.slice(0, 2).toUpperCase())}</span><span class="cell-stack"><strong>${escapeHtml(item.displayName)}</strong><small>${escapeHtml(item.supplierId)}</small></span></span></td><td data-label="Interner Code">${escapeHtml(item.supplierCode)}</td><td data-label="Produkte">${item.productCount}</td><td data-label="Aktive Angebote">${item.activeOfferCount}</td><td data-label="Letzte Synchronisierung">${item.lastSyncAt ? escapeHtml(formatDate(item.lastSyncAt)) : "Nicht ausgeführt"}</td><td data-label="Status"><span class="status status-${escapeHtml((item.lastSyncStatus ?? "unknown").toLowerCase())}">${escapeHtml(operationalLabel(item.lastSyncStatus ?? "UNKNOWN"))}</span></td></tr>`).join("")}</tbody></table></div>`}${operationalPagination(result, query, "/admin/suppliers")}</section><p class="page-note">Zugangsdaten und Provider-Geheimnisse werden in diesem Bereich grundsätzlich nicht ausgegeben.</p>`;
+  `<form class="result-controls" method="get" action="/admin/suppliers">${hidden(["sort", "limit", "cursor"])}<label>Sortierung<select name="sort"><option value="NAME_ASC"${result.sort === "NAME_ASC" ? " selected" : ""}>Name A–Z</option><option value="NAME_DESC"${result.sort === "NAME_DESC" ? " selected" : ""}>Name Z–A</option><option value="UPDATED_DESC"${result.sort === "UPDATED_DESC" ? " selected" : ""}>Zuletzt aktualisiert</option><option value="UPDATED_ASC"${result.sort === "UPDATED_ASC" ? " selected" : ""}>Älteste Aktualisierung</option></select></label><label>Pro Seite<select name="limit">${[10, 25, 50].map((value) => `<option value="${value}"${result.limit === value ? " selected" : ""}>${value}</option>`).join("")}</select></label><button class="button-quiet" type="submit">Übernehmen</button></form>`;
+
+const supplierAttention = (
+  supplier: Pick<
+    AdminSupplierDetail,
+    "latestSyncStatus" | "reviewRequiredCount"
+  >,
+): string | null =>
+  supplier.latestSyncStatus === "FAILED"
+    ? "Synchronisierung fehlgeschlagen"
+    : supplier.reviewRequiredCount > 0
+      ? "Zuordnungsprüfung erforderlich"
+      : null;
+
+const supplierSyncSummary = (status: string | null, at: Date | null): string =>
+  `<span class="cell-stack"><strong>${escapeHtml(status ? operationalLabel(status) : "Nie synchronisiert")}</strong><small>${at ? escapeHtml(formatDate(at)) : "Keine Synchronisationsdaten"}</small></span>`;
+
+const formatCount = (value: number): string =>
+  new Intl.NumberFormat("de-DE").format(value);
+
+const supplierDetailContent = (
+  supplier: AdminSupplierDetail,
+  returnPath: string,
+): string => {
+  const attention = supplierAttention(supplier);
+  const capabilities =
+    supplier.capabilities.length > 0
+      ? supplier.capabilities
+          .map(
+            (value) =>
+              `<span class="status status-info">${escapeHtml(operationalLabel(value.toUpperCase()))}</span>`,
+          )
+          .join("")
+      : '<span class="muted-value">Keine Capabilities hinterlegt</span>';
+  const syncRows =
+    supplier.recentSyncRuns.length === 0
+      ? emptyState(
+          "Keine Synchronisationsdaten",
+          "Für diesen Lieferanten wurde noch keine Synchronisierung protokolliert.",
+        )
+      : `<div class="table-wrap"><table class="operations-table supplier-sync-table"><thead><tr><th>Zeitpunkt</th><th>Modus</th><th>Ergebnis</th><th>Abschluss</th></tr></thead><tbody>${supplier.recentSyncRuns.map((run) => `<tr><td data-label="Zeitpunkt">${escapeHtml(formatDate(run.startedAt))}</td><td data-label="Modus">${escapeHtml(operationalLabel(run.mode))}</td><td data-label="Ergebnis"><span class="status status-${run.status.toLowerCase()}">${escapeHtml(operationalLabel(run.status))}</span></td><td data-label="Abschluss">${run.completedAt ? escapeHtml(formatDate(run.completedAt)) : run.failedAt ? escapeHtml(formatDate(run.failedAt)) : "Läuft"}</td></tr>`).join("")}</tbody></table></div>`;
+  const offerRows =
+    supplier.recentOffers.length === 0
+      ? emptyState(
+          "Keine aktuellen Angebotsdaten",
+          "Für diesen Lieferanten sind keine Angebotsdatensätze hinterlegt.",
+        )
+      : `<div class="table-wrap"><table class="operations-table supplier-offers-table"><thead><tr><th>Lieferantenprodukt</th><th>Kanonisches Produkt</th><th>Angebot</th><th>Verfügbarkeit</th><th>Aktualisiert</th></tr></thead><tbody>${supplier.recentOffers.map((offer) => `<tr><td data-label="Lieferantenprodukt">${escapeHtml(offer.supplierProductTitle)}</td><td data-label="Kanonisches Produkt">${escapeHtml(offer.canonicalProductTitle ?? "Nicht zugeordnet")}</td><td data-label="Angebot"><span class="cell-stack"><strong>${escapeHtml(offer.supplierOfferReference)}</strong><small>${offer.active ? "Aktuell" : "Inaktiv"}</small></span></td><td data-label="Verfügbarkeit"><span class="status status-${offer.availability.toLowerCase()}">${escapeHtml(adminProductLifecycleLabel(offer.availability))}</span></td><td data-label="Aktualisiert">${escapeHtml(formatDate(offer.updatedAt))}</td></tr>`).join("")}</tbody></table></div>`;
+  return `${pageActionBar("Lieferantendetail", "Integration, Synchronisierung und Katalogbeziehungen.", `<a class="button-quiet" href="${escapeHtml(returnPath)}">Zurück zu Lieferanten</a>`)}<section class="supplier-detail-identity"><span class="supplier-detail-media">${icon("truck")}</span><div><span class="eyebrow">Lieferantenintegration</span><h2>${escapeHtml(supplier.displayName)}</h2><p>${escapeHtml(supplier.supplierCode)} · ID ${escapeHtml(supplier.supplierId)}</p></div><span class="status status-${attention ? "warning" : supplier.latestSyncStatus === "SUCCEEDED" ? "active" : "unknown"}">${escapeHtml(attention ?? (supplier.latestSyncStatus === "SUCCEEDED" ? "Betriebsbereit" : "Keine aktuellen Daten"))}</span></section><section class="state-strip supplier-state-strip" aria-label="Lieferantenzustand"><div><span>Integration</span><strong>Registriert</strong><small>Keine Browser-Konfiguration</small></div><div><span>Synchronisierung</span><strong>${escapeHtml(supplier.latestSyncStatus ? operationalLabel(supplier.latestSyncStatus) : "Nie synchronisiert")}</strong>${supplier.latestSyncAt ? `<small>${escapeHtml(formatDate(supplier.latestSyncAt))}</small>` : ""}</div><div><span>Letzter Erfolg</span><strong>${supplier.lastSuccessfulSyncAt ? escapeHtml(formatDate(supplier.lastSuccessfulSyncAt)) : "Keiner"}</strong></div><div><span>Handlungsbedarf</span><strong>${escapeHtml(attention ?? "Keiner erkannt")}</strong></div></section><section class="detail-grid supplier-detail-grid"><article><h2>Lieferantendaten</h2>${detailRow("Lieferanten-ID", supplier.supplierId)}${detailRow("Interner Code", supplier.supplierCode)}${detailRow("Erstellt", formatDate(supplier.createdAt))}${detailRow("Aktualisiert", formatDate(supplier.updatedAt))}</article><article><h2>Integration</h2>${detailRow("Konfigurationsgrenze", "Deployment-gesteuert")}${detailRow("Zugangsdaten", "Nicht im Browser verfügbar")}<div class="detail-capabilities"><span>Capabilities</span><div>${capabilities}</div></div></article></section><section class="content-section supplier-catalog-section"><div class="section-heading"><div><h2>Katalog & Zuordnungen</h2><span>Autoritative aktuelle Bestände</span></div></div><div class="supplier-summary-grid"><div><span>Lieferantenprodukte</span><strong>${formatCount(supplier.productCount)}</strong></div><div><span>Zugeordnet</span><strong>${formatCount(supplier.mappedProductCount)}</strong></div><div><span>Prüfung erforderlich</span><strong>${formatCount(supplier.reviewRequiredCount)}</strong></div><div><span>Aktuelle Angebote</span><strong>${formatCount(supplier.currentOfferCount)}</strong></div><div><span>Verfügbare Angebote</span><strong>${formatCount(supplier.availableOfferCount)}</strong></div></div></section><section class="content-section supplier-detail-section"><div class="section-heading"><div><h2>Synchronisierung</h2><span>Maximal 10 aktuelle Läufe</span></div></div>${syncRows}</section><section class="content-section supplier-detail-section"><div class="section-heading"><div><h2>Angebote</h2><span>Maximal 25 aktuelle Datensätze</span></div></div>${offerRows}</section><p class="page-note">Die Ansicht ist bewusst lesend: Es existiert derzeit keine autoritative Admin-Domain für Onboarding, Metadatenänderungen, Credential-Verwaltung, Verbindungstests oder manuelle Synchronisation. Provider-Geheimnisse, Rohantworten, Produktschlüssel und Kundendaten werden nicht ausgegeben.</p>`;
+};
 
 const discountsContent = (): string =>
   `${pageActionBar("Rabatte & Kampagnen", "Rabatte, Gutscheine und Kampagnen innerhalb der freigegebenen Plattformgrenzen.", '<form class="page-search"><label for="discount-search">Rabatte durchsuchen</label><input id="discount-search" type="search" placeholder="Code, Name oder Beschreibung" disabled><span class="button-disabled" aria-disabled="true" title="Es besteht noch keine autoritative Rabatt-Domain">Rabatt erstellen</span></form>')}<section class="metric-grid" aria-label="Rabattkennzahlen">${metric("Aktive Rabatte", 0, { icon: "RA", detail: "Keine Domain angebunden" })}${metric("Geplante Kampagnen", 0, { icon: "KA", detail: "Keine Domain angebunden" })}${metric("Einlösungen", 0, { icon: "EI", detail: "Nicht verfügbar" })}</section><nav class="section-tabs" aria-label="Rabattansichten"><a href="/admin/discounts" aria-current="page">Alle</a><span aria-disabled="true">Aktiv</span><span aria-disabled="true">Geplant</span><span aria-disabled="true">Abgelaufen</span></nav><section class="content-section">${emptyState("Noch keine Rabattverwaltung verfügbar", "Das aktuelle Plattformmodell enthält keine autoritative Rabatt- oder Kampagnen-Domain. Anlage und Bearbeitung bleiben deshalb sicher deaktiviert.")}</section><p class="page-note">Es werden keine WooCommerce-Gutscheine oder erfundenen Kampagnendaten als KeyCore-Autorität dargestellt.</p>`;
@@ -2325,6 +2505,7 @@ const operationalLabel = (value: string): string => {
     ACCOUNT_PROBLEM: "Kontoproblem",
     ACTIVATION_PROBLEM: "Aktivierungsproblem",
     ACTIVE_CANDIDATE: "Aktiver Kandidat",
+    CATALOG: "Katalog",
     CLOSED: "Geschlossen",
     CUSTOMER: "Kunde",
     CUSTOMER_ACTION_REQUIRED: "Kundenaktion erforderlich",
@@ -2360,7 +2541,9 @@ const operationalLabel = (value: string): string => {
     REFUND_REQUEST: "Erstattungsanfrage",
     REFUND_REFERRED: "Erstattung weitergeleitet",
     RESOLVED: "Gelöst",
+    RUNNING: "Läuft",
     SOFTWARE: "Software",
+    SUCCEEDED: "Erfolgreich",
     SUBSCRIPTION: "Abonnement",
     SUPPLIER_CLAIM_SUBMISSION: "Lieferantenreklamation senden",
     SUPPLIER_KEY_RETRIEVAL: "Lieferantenschlüssel abrufen",
@@ -2372,6 +2555,7 @@ const operationalLabel = (value: string): string => {
     UNVERIFIED: "Nicht verifiziert",
     URGENT: "Dringend",
     VERIFIED: "Verifiziert",
+    FAILED: "Fehlgeschlagen",
     WAITING_FOR_CUSTOMER: "Wartet auf Kunde",
     WAITING_FOR_INTERNAL: "Wartet intern",
   };
