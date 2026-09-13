@@ -1,11 +1,15 @@
 import type {
   AdminCustomerSummary,
+  AdminCustomerRepositoryListInput,
+  AdminCustomerSort,
   AdminFinanceCurrencySummary,
   AdminFraudReviewSummary,
   AdminOperationsControlSummary,
   AdminOperationsPage,
   AdminOperationsRepository,
-  AdminProductSummary,
+  AdminProductDetail,
+  AdminProductRepositoryListInput,
+  AdminProductSort,
   AdminRepositoryListInput,
   AdminSupplierSummary,
   AdminSupportCaseSummary,
@@ -16,48 +20,132 @@ import type { Queryable } from "./client.js";
 export class PostgresAdminOperationsRepository implements AdminOperationsRepository {
   public constructor(private readonly database: Queryable) {}
 
-  public async listCustomers(
-    input: AdminRepositoryListInput,
-  ): Promise<AdminOperationsPage<AdminCustomerSummary>> {
+  public async listCustomers(input: AdminCustomerRepositoryListInput) {
     const values: unknown[] = [];
-    const predicates: string[] = [];
+    const basePredicates: string[] = [];
     const parameter = (value: unknown) => {
       values.push(value);
       return `$${values.length}`;
     };
     if (input.search)
-      predicates.push(
+      basePredicates.push(
         `(customer.id::text = ${parameter(input.search)} OR customer.email_normalized ILIKE ${parameter(like(input.search))} ESCAPE '\\')`,
       );
     if (input.status)
-      predicates.push(
+      basePredicates.push(
         `customer.email_verification_state = ${parameter(input.status)}`,
       );
-    if (input.after)
-      predicates.push(
-        `(customer.created_at, customer.id) < (${parameter(input.after.sortValue)}::timestamptz, ${parameter(input.after.id)}::uuid)`,
+    if (input.orderPresence === "WITH_ORDERS")
+      basePredicates.push(
+        "EXISTS (SELECT 1 FROM keycore_orders owned_order WHERE owned_order.customer_id = customer.id)",
       );
-    const result = await this.database.query<{
-      readonly id: string;
-      readonly email_normalized: string;
-      readonly email_verification_state: AdminCustomerSummary["verificationState"];
-      readonly order_count: string;
-      readonly last_order_at: Date | null;
-      readonly created_at: Date;
-    }>(
-      `
+    if (input.orderPresence === "WITHOUT_ORDERS")
+      basePredicates.push(
+        "NOT EXISTS (SELECT 1 FROM keycore_orders owned_order WHERE owned_order.customer_id = customer.id)",
+      );
+    if (input.orderPresence === "WITH_CAPTURED_PAYMENT")
+      basePredicates.push(
+        `EXISTS (SELECT 1 FROM keycore_orders owned_order WHERE owned_order.customer_id = customer.id AND owned_order.payment_status = ANY(${parameter(adminCapturedPaymentVolumeStates)}::text[]))`,
+      );
+    if (input.registrationWindow === "LAST_30_DAYS")
+      basePredicates.push(
+        "customer.created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days' AND customer.created_at <= CURRENT_TIMESTAMP",
+      );
+    if (input.registeredFrom)
+      basePredicates.push(
+        `customer.created_at >= ${parameter(input.registeredFrom)}`,
+      );
+    if (input.registeredTo)
+      basePredicates.push(
+        `customer.created_at <= ${parameter(input.registeredTo)}`,
+      );
+
+    const countValues = [...values];
+    const baseWhere = where(basePredicates);
+    const predicates = [...basePredicates];
+    const sort = customerSort(input.sort);
+    if (input.after) {
+      const sortParameter = parameter(input.after.sortValue);
+      const idParameter = parameter(input.after.id);
+      predicates.push(
+        `(${sort.expression}, customer.id) ${sort.comparator} (${sort.cast(sortParameter)}, ${idParameter}::uuid)`,
+      );
+    }
+    const [result, countResult, metricResult, paymentVolumeResult] =
+      await Promise.all([
+        this.database.query<{
+          readonly id: string;
+          readonly email_normalized: string;
+          readonly email_verification_state: AdminCustomerSummary["verificationState"];
+          readonly order_count: string;
+          readonly last_order_at: Date | null;
+          readonly last_order_reference: string | null;
+          readonly last_order_status: string | null;
+          readonly created_at: Date;
+        }>(
+          `
       SELECT customer.id::text, customer.email_normalized, customer.email_verification_state,
-        count(orders.id)::text AS order_count, max(orders.created_at) AS last_order_at, customer.created_at
+        count(orders.id)::text AS order_count,
+        latest_order.created_at AS last_order_at,
+        latest_order.operator_reference AS last_order_reference,
+        latest_order.status AS last_order_status,
+        customer.created_at
       FROM keycore_customers customer
       LEFT JOIN keycore_orders orders ON orders.customer_id = customer.id
+      LEFT JOIN LATERAL (
+        SELECT recent_order.operator_reference, recent_order.status, recent_order.created_at
+        FROM keycore_orders recent_order
+        WHERE recent_order.customer_id = customer.id
+        ORDER BY recent_order.created_at DESC, recent_order.id DESC
+        LIMIT 1
+      ) latest_order ON true
       ${where(predicates)}
-      GROUP BY customer.id
-      ORDER BY customer.created_at DESC, customer.id DESC
+      GROUP BY customer.id, latest_order.operator_reference, latest_order.status, latest_order.created_at
+      ORDER BY ${sort.expression} ${sort.direction}, customer.id ${sort.direction}
       LIMIT ${parameter(input.limit + 1)}
     `,
-      values,
-    );
-    return page(
+          values,
+        ),
+        this.database.query<{ readonly total_customers: string }>(
+          `SELECT count(*)::text AS total_customers FROM keycore_customers customer ${baseWhere}`,
+          countValues,
+        ),
+        this.database.query<{
+          readonly customers_with_orders: string;
+          readonly new_customers_last_30_days: string;
+          readonly total_customers: string;
+          readonly verified_customers: string;
+        }>(`
+          SELECT
+            count(*)::text AS total_customers,
+            count(*) FILTER (WHERE customer.email_verification_state = 'VERIFIED')::text AS verified_customers,
+            count(*) FILTER (WHERE EXISTS (
+              SELECT 1 FROM keycore_orders owned_order
+              WHERE owned_order.customer_id = customer.id
+            ))::text AS customers_with_orders,
+            count(*) FILTER (
+              WHERE customer.created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+                AND customer.created_at <= CURRENT_TIMESTAMP
+            )::text AS new_customers_last_30_days
+          FROM keycore_customers customer
+        `),
+        this.database.query<{
+          readonly amount_minor: string;
+          readonly currency: string;
+        }>(
+          `
+          SELECT owned_order.currency,
+            COALESCE(sum(owned_order.customer_amount_minor), 0)::text AS amount_minor
+          FROM keycore_orders owned_order
+          WHERE owned_order.customer_id IS NOT NULL
+            AND owned_order.payment_status = ANY($1::text[])
+          GROUP BY owned_order.currency
+          ORDER BY owned_order.currency ASC
+        `,
+          [adminCapturedPaymentVolumeStates],
+        ),
+      ]);
+    const paged = page(
       input.limit,
       result.rows,
       (row) => ({
@@ -65,60 +153,190 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
         customerId: row.id,
         email: row.email_normalized,
         lastOrderAt: row.last_order_at,
+        lastOrderReference: row.last_order_reference,
+        lastOrderStatus: row.last_order_status,
         orderCount: Number(row.order_count),
         verificationState: row.email_verification_state,
       }),
-      (row) => ({ id: row.id, sortValue: row.created_at.toISOString() }),
+      (row) => ({
+        id: row.id,
+        sortValue:
+          input.sort === "EMAIL_ASC" || input.sort === "EMAIL_DESC"
+            ? row.email_normalized.toLowerCase()
+            : row.created_at.toISOString(),
+      }),
     );
+    const count = required(countResult.rows[0]);
+    const metrics = required(metricResult.rows[0]);
+    return {
+      ...paged,
+      metrics: {
+        capturedPaymentVolumes: paymentVolumeResult.rows.map((row) => ({
+          amountMinor: row.amount_minor,
+          currency: row.currency,
+        })),
+        customersWithOrders: Number(metrics.customers_with_orders),
+        newCustomersLast30Days: Number(metrics.new_customers_last_30_days),
+        totalCustomers: Number(metrics.total_customers),
+        verifiedCustomers: Number(metrics.verified_customers),
+      },
+      totalCount: Number(count.total_customers),
+    };
   }
 
-  public async listProducts(
-    input: AdminRepositoryListInput,
-  ): Promise<AdminOperationsPage<AdminProductSummary>> {
+  public async findCustomer(
+    customerId: string,
+  ): Promise<AdminCustomerSummary | null> {
+    const result = await this.database.query<{
+      readonly id: string;
+      readonly email_normalized: string;
+      readonly email_verification_state: AdminCustomerSummary["verificationState"];
+      readonly order_count: string;
+      readonly last_order_at: Date | null;
+      readonly last_order_reference: string | null;
+      readonly last_order_status: string | null;
+      readonly created_at: Date;
+    }>(
+      `
+      SELECT customer.id::text, customer.email_normalized, customer.email_verification_state,
+        count(orders.id)::text AS order_count,
+        latest_order.created_at AS last_order_at,
+        latest_order.operator_reference AS last_order_reference,
+        latest_order.status AS last_order_status,
+        customer.created_at
+      FROM keycore_customers customer
+      LEFT JOIN keycore_orders orders ON orders.customer_id = customer.id
+      LEFT JOIN LATERAL (
+        SELECT recent_order.operator_reference, recent_order.status, recent_order.created_at
+        FROM keycore_orders recent_order
+        WHERE recent_order.customer_id = customer.id
+        ORDER BY recent_order.created_at DESC, recent_order.id DESC
+        LIMIT 1
+      ) latest_order ON true
+      WHERE customer.id = $1::uuid
+      GROUP BY customer.id, latest_order.operator_reference, latest_order.status, latest_order.created_at
+      `,
+      [customerId],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          createdAt: row.created_at,
+          customerId: row.id,
+          email: row.email_normalized,
+          lastOrderAt: row.last_order_at,
+          lastOrderReference: row.last_order_reference,
+          lastOrderStatus: row.last_order_status,
+          orderCount: Number(row.order_count),
+          verificationState: row.email_verification_state,
+        }
+      : null;
+  }
+
+  public async listProducts(input: AdminProductRepositoryListInput) {
     const values: unknown[] = [];
-    const predicates: string[] = [];
+    const basePredicates: string[] = [];
     const parameter = (value: unknown) => {
       values.push(value);
       return `$${values.length}`;
     };
     if (input.search)
-      predicates.push(
-        `(product.id::text = ${parameter(input.search)} OR product.title ILIKE ${parameter(like(input.search))} ESCAPE '\\')`,
+      basePredicates.push(
+        `(product.id::text = ${parameter(input.search)} OR product.title ILIKE ${parameter(like(input.search))} ESCAPE '\\' OR EXISTS (SELECT 1 FROM canonical_product_identifiers identifier WHERE identifier.product_id = product.id AND identifier.verified = true AND identifier.identifier_value ILIKE ${parameter(like(input.search))} ESCAPE '\\'))`,
       );
-    if (input.status === "ACTIVE") predicates.push("product.active = true");
-    else if (input.status === "INACTIVE")
-      predicates.push("product.active = false");
-    else if (input.status)
-      predicates.push(`product.lifecycle = ${parameter(input.status)}`);
-    if (input.after)
-      predicates.push(
-        `(lower(product.title), product.id) > (${parameter(input.after.sortValue)}, ${parameter(input.after.id)}::uuid)`,
+    if (input.lifecycle)
+      basePredicates.push(`product.lifecycle = ${parameter(input.lifecycle)}`);
+    if (input.platform)
+      basePredicates.push(
+        `upper(product.platform) = upper(${parameter(input.platform)})`,
       );
-    const result = await this.database.query<{
-      readonly id: string;
-      readonly title: string;
-      readonly product_type: string;
-      readonly platform: string;
-      readonly lifecycle: string;
-      readonly active: boolean;
-      readonly offer_count: string;
-      readonly available_offer_count: string;
-    }>(
-      `
+    if (input.productType)
+      basePredicates.push(
+        `product.product_type = ${parameter(input.productType)}`,
+      );
+    const hasOffer =
+      "EXISTS (SELECT 1 FROM offers current_offer JOIN supplier_offers current_supplier_offer ON current_supplier_offer.id = current_offer.supplier_offer_id WHERE current_offer.product_id = product.id AND current_supplier_offer.active = true)";
+    const hasAvailableOffer =
+      "EXISTS (SELECT 1 FROM offers current_offer JOIN supplier_offers current_supplier_offer ON current_supplier_offer.id = current_offer.supplier_offer_id WHERE current_offer.product_id = product.id AND current_supplier_offer.active = true AND current_offer.availability IN ('IN_STOCK', 'LIMITED'))";
+    const isPublished =
+      "EXISTS (SELECT 1 FROM storefront_publications publication WHERE publication.product_id = product.id AND publication.state = 'PUBLISHED')";
+    if (input.offerState)
+      basePredicates.push(
+        input.offerState === "WITH_OFFERS" ? hasOffer : `NOT ${hasOffer}`,
+      );
+    if (input.availability)
+      basePredicates.push(
+        input.availability === "AVAILABLE"
+          ? hasAvailableOffer
+          : `NOT ${hasAvailableOffer}`,
+      );
+    if (input.publication)
+      basePredicates.push(
+        input.publication === "PUBLISHED" ? isPublished : `NOT ${isPublished}`,
+      );
+    if (input.quickView === "ACTIVE")
+      basePredicates.push("product.active = true");
+    if (input.quickView === "WITH_OFFERS") basePredicates.push(hasOffer);
+    if (input.quickView === "AVAILABLE") basePredicates.push(hasAvailableOffer);
+    const countValues = [...values];
+    const predicates = [...basePredicates];
+    const sort = productSort(input.sort);
+    if (input.after) {
+      const sortValue = parameter(input.after.sortValue);
+      const id = parameter(input.after.id);
+      predicates.push(
+        `(${sort.expression}, product.id) ${sort.comparator} (${sort.cast(sortValue)}, ${id}::uuid)`,
+      );
+    }
+    const [result, countResult, metricResult] = await Promise.all([
+      this.database.query<{
+        readonly id: string;
+        readonly title: string;
+        readonly product_type: string;
+        readonly platform: string;
+        readonly lifecycle: string;
+        readonly active: boolean;
+        readonly offer_count: string;
+        readonly available_offer_count: string;
+        readonly supplier_count: string;
+        readonly publication_state: "PUBLISHED" | "UNPUBLISHED";
+        readonly updated_at: Date;
+      }>(
+        `
       SELECT product.id::text, product.title, product.product_type, product.platform, product.lifecycle, product.active,
-        count(offer.id)::text AS offer_count,
-        count(offer.id) FILTER (WHERE offer.availability = 'AVAILABLE' AND supplier_offer.active = true)::text AS available_offer_count
+        count(offer.id) FILTER (WHERE supplier_offer.active = true)::text AS offer_count,
+        count(offer.id) FILTER (WHERE offer.availability IN ('IN_STOCK', 'LIMITED') AND supplier_offer.active = true)::text AS available_offer_count,
+        count(DISTINCT supplier_offer.supplier_id) FILTER (WHERE supplier_offer.active = true)::text AS supplier_count,
+        CASE WHEN ${isPublished} THEN 'PUBLISHED' ELSE 'UNPUBLISHED' END AS publication_state,
+        product.updated_at
       FROM products product
       LEFT JOIN offers offer ON offer.product_id = product.id
       LEFT JOIN supplier_offers supplier_offer ON supplier_offer.id = offer.supplier_offer_id
       ${where(predicates)}
       GROUP BY product.id
-      ORDER BY lower(product.title) ASC, product.id ASC
+      ORDER BY ${sort.expression} ${sort.direction}, product.id ${sort.direction}
       LIMIT ${parameter(input.limit + 1)}
     `,
-      values,
-    );
-    return page(
+        values,
+      ),
+      this.database.query<{ readonly total_products: string }>(
+        `SELECT count(*)::text AS total_products FROM products product ${where(basePredicates)}`,
+        countValues,
+      ),
+      this.database.query<{
+        readonly total_products: string;
+        readonly active_products: string;
+        readonly products_with_offers: string;
+        readonly available_products: string;
+      }>(`
+        SELECT count(*)::text AS total_products,
+          count(*) FILTER (WHERE product.active = true)::text AS active_products,
+          count(*) FILTER (WHERE ${hasOffer})::text AS products_with_offers,
+          count(*) FILTER (WHERE ${hasAvailableOffer})::text AS available_products
+        FROM products product
+      `),
+    ]);
+    const paged = page(
       input.limit,
       result.rows,
       (row) => ({
@@ -129,10 +347,142 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
         platform: row.platform,
         productId: row.id,
         productType: row.product_type,
+        publicationState: row.publication_state,
+        supplierCount: Number(row.supplier_count),
         title: row.title,
+        updatedAt: row.updated_at,
       }),
-      (row) => ({ id: row.id, sortValue: row.title.toLowerCase() }),
+      (row) => ({
+        id: row.id,
+        sortValue: input.sort.startsWith("TITLE_")
+          ? row.title.toLowerCase()
+          : row.updated_at.toISOString(),
+      }),
     );
+    const count = required(countResult.rows[0]);
+    const metrics = required(metricResult.rows[0]);
+    return {
+      ...paged,
+      metrics: {
+        activeProducts: Number(metrics.active_products),
+        availableProducts: Number(metrics.available_products),
+        productsWithOffers: Number(metrics.products_with_offers),
+        totalProducts: Number(metrics.total_products),
+      },
+      totalCount: Number(count.total_products),
+    };
+  }
+
+  public async findProduct(
+    productId: string,
+  ): Promise<AdminProductDetail | null> {
+    const productResult = await this.database.query<{
+      readonly id: string;
+      readonly title: string;
+      readonly product_type: string;
+      readonly platform: string;
+      readonly lifecycle: string;
+      readonly active: boolean;
+      readonly offer_count: string;
+      readonly available_offer_count: string;
+      readonly supplier_count: string;
+      readonly publication_state: "PUBLISHED" | "UNPUBLISHED";
+      readonly created_at: Date;
+      readonly updated_at: Date;
+    }>(
+      `
+      SELECT product.id::text, product.title, product.product_type, product.platform,
+        product.lifecycle, product.active, product.created_at, product.updated_at,
+        count(offer.id) FILTER (WHERE supplier_offer.active = true)::text AS offer_count,
+        count(offer.id) FILTER (WHERE supplier_offer.active = true AND offer.availability IN ('IN_STOCK', 'LIMITED'))::text AS available_offer_count,
+        count(DISTINCT supplier_offer.supplier_id) FILTER (WHERE supplier_offer.active = true)::text AS supplier_count,
+        CASE WHEN EXISTS (SELECT 1 FROM storefront_publications publication WHERE publication.product_id = product.id AND publication.state = 'PUBLISHED') THEN 'PUBLISHED' ELSE 'UNPUBLISHED' END AS publication_state
+      FROM products product
+      LEFT JOIN offers offer ON offer.product_id = product.id
+      LEFT JOIN supplier_offers supplier_offer ON supplier_offer.id = offer.supplier_offer_id
+      WHERE product.id = $1::uuid
+      GROUP BY product.id
+    `,
+      [productId],
+    );
+    const product = productResult.rows[0];
+    if (!product) return null;
+    const [identifierResult, offerResult, publicationResult] =
+      await Promise.all([
+        this.database.query<{
+          readonly identifier_type: string;
+          readonly identifier_value: string;
+          readonly verified: boolean;
+        }>(
+          `
+        SELECT identifier_type, identifier_value, verified
+        FROM canonical_product_identifiers
+        WHERE product_id = $1::uuid
+        ORDER BY verified DESC, identifier_type ASC, identifier_value ASC
+        LIMIT 25
+      `,
+          [productId],
+        ),
+        this.database.query<{
+          readonly offer_id: string;
+          readonly supplier_name: string;
+          readonly supplier_offer_reference: string;
+          readonly availability: string;
+          readonly active: boolean;
+          readonly updated_at: Date;
+        }>(
+          `
+        SELECT offer.id::text AS offer_id, supplier.display_name AS supplier_name,
+          supplier_offer.supplier_offer_id AS supplier_offer_reference,
+          offer.availability, supplier_offer.active, GREATEST(offer.updated_at, supplier_offer.updated_at) AS updated_at
+        FROM offers offer
+        JOIN supplier_offers supplier_offer ON supplier_offer.id = offer.supplier_offer_id
+        JOIN suppliers supplier ON supplier.id = supplier_offer.supplier_id
+        WHERE offer.product_id = $1::uuid
+        ORDER BY supplier_offer.active DESC, offer.updated_at DESC, offer.id DESC
+        LIMIT 25
+      `,
+          [productId],
+        ),
+        this.database.query<{ readonly storefront: string }>(
+          `
+        SELECT storefront FROM storefront_publications
+        WHERE product_id = $1::uuid AND state = 'PUBLISHED'
+        ORDER BY storefront ASC LIMIT 25
+      `,
+          [productId],
+        ),
+      ]);
+    return {
+      active: product.active,
+      availableOfferCount: Number(product.available_offer_count),
+      createdAt: product.created_at,
+      identifiers: identifierResult.rows.map((row) => ({
+        type: row.identifier_type,
+        value: row.identifier_value,
+        verified: row.verified,
+      })),
+      lifecycle: product.lifecycle,
+      offerCount: Number(product.offer_count),
+      offers: offerResult.rows.map((row) => ({
+        active: row.active,
+        availability: row.availability,
+        offerId: row.offer_id,
+        supplierName: row.supplier_name,
+        supplierOfferReference: row.supplier_offer_reference,
+        updatedAt: row.updated_at,
+      })),
+      platform: product.platform,
+      productId: product.id,
+      productType: product.product_type,
+      publicationState: product.publication_state,
+      publicationStorefronts: publicationResult.rows.map(
+        (row) => row.storefront,
+      ),
+      supplierCount: Number(product.supplier_count),
+      title: product.title,
+      updatedAt: product.updated_at,
+    };
   }
 
   public async listSuppliers(
@@ -370,6 +720,86 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
 
 const where = (predicates: readonly string[]): string =>
   predicates.length > 0 ? `WHERE ${predicates.join(" AND ")}` : "";
+
+const customerSort = (
+  sort: AdminCustomerSort,
+): {
+  readonly cast: (parameter: string) => string;
+  readonly comparator: "<" | ">";
+  readonly direction: "ASC" | "DESC";
+  readonly expression: string;
+} => {
+  if (sort === "OLDEST")
+    return {
+      cast: (parameter) => `${parameter}::timestamptz`,
+      comparator: ">",
+      direction: "ASC",
+      expression: "customer.created_at",
+    };
+  if (sort === "EMAIL_ASC")
+    return {
+      cast: (parameter) => parameter,
+      comparator: ">",
+      direction: "ASC",
+      expression: "lower(customer.email_normalized)",
+    };
+  if (sort === "EMAIL_DESC")
+    return {
+      cast: (parameter) => parameter,
+      comparator: "<",
+      direction: "DESC",
+      expression: "lower(customer.email_normalized)",
+    };
+  return {
+    cast: (parameter) => `${parameter}::timestamptz`,
+    comparator: "<",
+    direction: "DESC",
+    expression: "customer.created_at",
+  };
+};
+
+const productSort = (
+  sort: AdminProductSort,
+): {
+  readonly cast: (parameter: string) => string;
+  readonly comparator: "<" | ">";
+  readonly direction: "ASC" | "DESC";
+  readonly expression: string;
+} => {
+  if (sort === "TITLE_DESC")
+    return {
+      cast: (parameter) => parameter,
+      comparator: "<",
+      direction: "DESC",
+      expression: "lower(product.title)",
+    };
+  if (sort === "UPDATED_ASC")
+    return {
+      cast: (parameter) => `${parameter}::timestamptz`,
+      comparator: ">",
+      direction: "ASC",
+      expression: "product.updated_at",
+    };
+  if (sort === "UPDATED_DESC")
+    return {
+      cast: (parameter) => `${parameter}::timestamptz`,
+      comparator: "<",
+      direction: "DESC",
+      expression: "product.updated_at",
+    };
+  return {
+    cast: (parameter) => parameter,
+    comparator: ">",
+    direction: "ASC",
+    expression: "lower(product.title)",
+  };
+};
+
+const required = <T>(value: T | undefined): T => {
+  if (value === undefined) throw new Error("Expected database result row");
+  return value;
+};
+
 const like = (value: string): string =>
   `%${value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
 

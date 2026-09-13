@@ -173,8 +173,10 @@ describe("secure admin authentication and orders", () => {
       () => now,
     );
     vi.mocked(repository.list).mockResolvedValueOnce({
+      metrics: orderMetrics,
       orders: [summary()],
       nextCursor: { createdAt: now, orderId: targetOrderId },
+      totalCount: 2,
     });
 
     const first = await service.list(
@@ -184,14 +186,26 @@ describe("secure admin authentication and orders", () => {
     );
     expect(repository.list).toHaveBeenCalledWith(
       expect.objectContaining({
+        cursorDirection: "NEXT",
         filters: {
           exactCustomerEmail: "admin@example.test",
           status: "COMPLETED",
         },
         limit: 25,
+        sort: "NEWEST",
       }),
     );
     expect(first.nextCursorValue).toBeTruthy();
+    await service.list(
+      owner,
+      { search: "kr0000001" },
+      correlationId("admin-reference-search"),
+    );
+    expect(repository.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        filters: { exactOperatorReference: "KR0000001" },
+      }),
+    );
     const cursor = required(first.nextCursorValue);
     await service.list(
       owner,
@@ -200,7 +214,7 @@ describe("secure admin authentication and orders", () => {
     );
     expect(repository.list).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        after: { createdAt: now, orderId: targetOrderId },
+        cursor: { createdAt: now, orderId: targetOrderId },
       }),
     );
     await expect(
@@ -237,7 +251,7 @@ describe("secure admin authentication and orders", () => {
       owner,
       {
         fromDate: "2026-09-01",
-        limit: 100,
+        limit: 50,
         search: targetOrderId,
         toDate: "2026-09-02",
       },
@@ -249,10 +263,97 @@ describe("secure admin authentication and orders", () => {
         fromDate: "2026-09-01",
         toDate: "2026-09-02",
       },
-      limit: 100,
+      cursorDirection: "NEXT",
+      limit: 50,
+      sort: "NEWEST",
     });
     await expect(
-      service.list(owner, { limit: 101 }, correlationId("admin-limit-invalid")),
+      service.list(owner, { limit: 100 }, correlationId("admin-limit-invalid")),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await service.list(
+      owner,
+      { operationalView: "PROCESSING" },
+      correlationId("admin-operational-view"),
+    );
+    expect(repository.list).toHaveBeenLastCalledWith({
+      cursorDirection: "NEXT",
+      filters: { operationalView: "PROCESSING" },
+      limit: 25,
+      sort: "NEWEST",
+    });
+    await service.list(
+      owner,
+      {
+        customerId: targetOrderId,
+        customerEmail: "ADMIN@EXAMPLE.TEST",
+        fulfillmentStatus: "SUCCEEDED",
+        limit: 10,
+        operatorReference: "kr0000001",
+        paymentStatus: "CAPTURED",
+        procurementStatus: "SUCCEEDED",
+        riskStatus: "APPROVED",
+        sort: "OLDEST",
+      },
+      correlationId("admin-dimensional-filters"),
+    );
+    expect(repository.list).toHaveBeenLastCalledWith({
+      cursorDirection: "NEXT",
+      filters: {
+        exactCustomerId: targetOrderId,
+        exactCustomerEmail: "admin@example.test",
+        exactOperatorReference: "KR0000001",
+        fulfillmentStatus: "SUCCEEDED",
+        paymentStatus: "CAPTURED",
+        procurementStatus: "SUCCEEDED",
+        riskStatus: "APPROVED",
+      },
+      limit: 10,
+      sort: "OLDEST",
+    });
+    await expect(
+      service.list(
+        owner,
+        { customerId: "not-a-customer-id" },
+        correlationId("admin-customer-id-invalid"),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await expect(
+      service.list(
+        owner,
+        { operatorReference: "KR-PARTIAL" },
+        correlationId("admin-reference-invalid"),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await expect(
+      service.list(
+        owner,
+        {
+          operatorReference: "KR0000001",
+          search: "KR0000002",
+        },
+        correlationId("admin-reference-conflict"),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await expect(
+      service.list(
+        owner,
+        { operationalView: "EVERYTHING" },
+        correlationId("admin-operational-view-invalid"),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await expect(
+      service.list(
+        owner,
+        { paymentStatus: "PAID" },
+        correlationId("admin-payment-invalid"),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
+    await expect(
+      service.list(
+        owner,
+        { cursorDirection: "SIDEWAYS" },
+        correlationId("admin-cursor-direction-invalid"),
+      ),
     ).rejects.toMatchObject({ reasonCode: "ADMIN_INPUT_INVALID" });
     await expect(
       service.list(
@@ -380,21 +481,42 @@ const repositoryFixture = (): AdminOrderReadRepository => ({
     processingOrders: 1,
     recentOrders: [summary()],
     revenueByCurrency: [{ amountMinor: "2199", currency: "EUR" }],
+    topProducts: [
+      {
+        productId: "10000000-0000-4000-8000-000000000001",
+        productTitle: "Arena Eleven",
+        purchasedQuantity: 1,
+      },
+    ],
     totalOrders: 1,
   })),
   findDetail: vi.fn(async () => detail()),
-  list: vi.fn(async () => ({ orders: [summary()] })),
+  list: vi.fn(async () => ({
+    metrics: orderMetrics,
+    orders: [summary()],
+    totalCount: 1,
+  })),
 });
+
+const orderMetrics = {
+  attentionOrders: 0,
+  failedOrders: 0,
+  processingOrders: 1,
+  totalOrders: 1,
+};
 
 const summary = () => ({
   amountMinor: "2199",
   createdAt: now,
   currency: "EUR",
+  customerAccessConfirmed: false,
   customerEmail: "admin@example.test",
   fulfillmentStatus: "PENDING",
   orderId: targetOrderId,
+  operatorReference: "KR0000001",
   paymentStatus: "CAPTURED",
   procurementStatus: "SUCCEEDED",
+  productPlatform: "WINDOWS",
   productTitle: "Arena Eleven",
   quantity: 1,
   riskStatus: "APPROVED",

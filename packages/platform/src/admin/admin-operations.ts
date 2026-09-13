@@ -23,6 +23,11 @@ import type {
   SupportMessageVisibility,
 } from "../support/support-cases.js";
 import {
+  availabilityStates,
+  platforms,
+  productTypes,
+} from "../domain/catalog.js";
+import {
   AdminAccessError,
   hasAdminCapability,
   type AdminCapability,
@@ -36,6 +41,14 @@ export interface AdminListQuery {
   readonly limit?: number;
 }
 
+export interface AdminCustomerQuery extends AdminListQuery {
+  readonly orderPresence?: string;
+  readonly registrationWindow?: string;
+  readonly registeredFrom?: string;
+  readonly registeredTo?: string;
+  readonly sort?: string;
+}
+
 export interface AdminReadCursor {
   readonly sortValue: string;
   readonly id: string;
@@ -47,7 +60,47 @@ export interface AdminCustomerSummary {
   readonly verificationState: "UNVERIFIED" | "VERIFIED";
   readonly orderCount: number;
   readonly lastOrderAt: Date | null;
+  readonly lastOrderReference: string | null;
+  readonly lastOrderStatus: string | null;
   readonly createdAt: Date;
+}
+
+export interface AdminCustomerMetrics {
+  readonly capturedPaymentVolumes: readonly {
+    readonly amountMinor: string;
+    readonly currency: string;
+  }[];
+  readonly customersWithOrders: number;
+  readonly newCustomersLast30Days: number;
+  readonly totalCustomers: number;
+  readonly verifiedCustomers: number;
+}
+
+export interface AdminCustomerPage extends AdminOperationsPage<AdminCustomerSummary> {
+  readonly metrics: AdminCustomerMetrics;
+  readonly totalCount: number;
+}
+
+export interface AdminCustomerListResult extends AdminCustomerPage {
+  readonly nextCursorValue?: string;
+  readonly limit: number;
+  readonly sort: AdminCustomerSort;
+}
+
+export type AdminCustomerSort =
+  "NEWEST" | "OLDEST" | "EMAIL_ASC" | "EMAIL_DESC";
+
+export interface AdminCustomerRepositoryListInput {
+  readonly search?: string;
+  readonly status?: string;
+  readonly orderPresence?:
+    "WITH_ORDERS" | "WITHOUT_ORDERS" | "WITH_CAPTURED_PAYMENT";
+  readonly registrationWindow?: "LAST_30_DAYS";
+  readonly registeredFrom?: Date;
+  readonly registeredTo?: Date;
+  readonly sort: AdminCustomerSort;
+  readonly limit: number;
+  readonly after?: AdminReadCursor;
 }
 
 export interface AdminProductSummary {
@@ -59,6 +112,89 @@ export interface AdminProductSummary {
   readonly active: boolean;
   readonly offerCount: number;
   readonly availableOfferCount: number;
+  readonly supplierCount: number;
+  readonly publicationState: "PUBLISHED" | "UNPUBLISHED";
+  readonly updatedAt: Date;
+}
+
+export type AdminProductSort =
+  "TITLE_ASC" | "TITLE_DESC" | "UPDATED_DESC" | "UPDATED_ASC";
+
+export type AdminProductQuickView = "ACTIVE" | "WITH_OFFERS" | "AVAILABLE";
+
+export const adminProductLifecycleValues = [
+  ...availabilityStates,
+  "ACTIVE",
+  "INACTIVE",
+  "ACTIVE_CANDIDATE",
+  "REVIEW_REQUIRED",
+  "REJECTED",
+] as const;
+
+export const adminProductPlatformValues = [...platforms, "PC"] as const;
+
+export interface AdminProductQuery extends AdminListQuery {
+  readonly platform?: string;
+  readonly productType?: string;
+  readonly offerState?: string;
+  readonly availability?: string;
+  readonly publication?: string;
+  readonly sort?: string;
+  readonly quickView?: string;
+}
+
+export interface AdminProductMetrics {
+  readonly totalProducts: number;
+  readonly activeProducts: number;
+  readonly productsWithOffers: number;
+  readonly availableProducts: number;
+}
+
+export interface AdminProductPage extends AdminOperationsPage<AdminProductSummary> {
+  readonly metrics: AdminProductMetrics;
+  readonly totalCount: number;
+}
+
+export interface AdminProductListResult extends AdminProductPage {
+  readonly nextCursorValue?: string;
+  readonly limit: number;
+  readonly sort: AdminProductSort;
+}
+
+export interface AdminProductRepositoryListInput {
+  readonly search?: string;
+  readonly lifecycle?: string;
+  readonly platform?: string;
+  readonly productType?: string;
+  readonly offerState?: "WITH_OFFERS" | "WITHOUT_OFFERS";
+  readonly availability?: "AVAILABLE" | "UNAVAILABLE";
+  readonly publication?: "PUBLISHED" | "UNPUBLISHED";
+  readonly quickView?: AdminProductQuickView;
+  readonly sort: AdminProductSort;
+  readonly limit: number;
+  readonly after?: AdminReadCursor;
+}
+
+export interface AdminProductIdentifierSummary {
+  readonly type: string;
+  readonly value: string;
+  readonly verified: boolean;
+}
+
+export interface AdminProductOfferSummary {
+  readonly offerId: string;
+  readonly supplierName: string;
+  readonly supplierOfferReference: string;
+  readonly availability: string;
+  readonly active: boolean;
+  readonly updatedAt: Date;
+}
+
+export interface AdminProductDetail extends AdminProductSummary {
+  readonly createdAt: Date;
+  readonly identifiers: readonly AdminProductIdentifierSummary[];
+  readonly offers: readonly AdminProductOfferSummary[];
+  readonly publicationStorefronts: readonly string[];
 }
 
 export interface AdminSupplierSummary {
@@ -134,11 +270,13 @@ export interface AdminOperationsListResult<T> extends AdminOperationsPage<T> {
 
 export interface AdminOperationsRepository {
   listCustomers(
-    input: AdminRepositoryListInput,
-  ): Promise<AdminOperationsPage<AdminCustomerSummary>>;
+    input: AdminCustomerRepositoryListInput,
+  ): Promise<AdminCustomerPage>;
+  findCustomer(customerId: string): Promise<AdminCustomerSummary | null>;
   listProducts(
-    input: AdminRepositoryListInput,
-  ): Promise<AdminOperationsPage<AdminProductSummary>>;
+    input: AdminProductRepositoryListInput,
+  ): Promise<AdminProductPage>;
+  findProduct(productId: string): Promise<AdminProductDetail | null>;
   listSuppliers(
     input: AdminRepositoryListInput,
   ): Promise<AdminOperationsPage<AdminSupplierSummary>>;
@@ -226,24 +364,197 @@ export class AdminOperationsService {
       );
   }
 
-  public listCustomers(
+  public async listCustomers(
     principal: AdminPrincipal,
-    query: AdminListQuery,
+    query: AdminCustomerQuery,
     correlationId: CorrelationId,
-  ) {
-    return this.list("customers", principal, query, correlationId, (input) =>
-      this.repository.listCustomers(input),
+  ): Promise<AdminCustomerListResult> {
+    this.require(principal, "CUSTOMER_VIEW");
+    const search = parseSearch(query.search);
+    const status = parseCustomerStatus(query.status);
+    const orderPresence = parseOrderPresence(query.orderPresence);
+    const registrationWindow = parseRegistrationWindow(
+      query.registrationWindow,
     );
+    const registeredFrom = parseCustomerDate(query.registeredFrom, false);
+    const registeredTo = parseCustomerDate(query.registeredTo, true);
+    if (
+      registeredFrom &&
+      registeredTo &&
+      registeredFrom.getTime() > registeredTo.getTime()
+    )
+      throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    const sort = parseCustomerSort(query.sort);
+    const limit = parseLimit(query.limit);
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          orderPresence,
+          registrationWindow,
+          registeredFrom: registeredFrom?.toISOString(),
+          registeredTo: registeredTo?.toISOString(),
+          search,
+          section: "customers",
+          sort,
+          status,
+        }),
+        "utf8",
+      )
+      .digest("hex");
+    const after = query.cursor
+      ? decodeCursor(query.cursor, fingerprint, this.cursorSecret)
+      : undefined;
+    const page = await this.repository.listCustomers({
+      ...(after ? { after } : {}),
+      ...(orderPresence ? { orderPresence } : {}),
+      ...(registrationWindow ? { registrationWindow } : {}),
+      ...(registeredFrom ? { registeredFrom } : {}),
+      ...(registeredTo ? { registeredTo } : {}),
+      ...(search ? { search } : {}),
+      ...(status ? { status } : {}),
+      limit,
+      sort,
+    });
+    await this.auditRead(
+      principal,
+      correlationId,
+      "ADMIN_CUSTOMERS_VIEWED",
+      page.items.length,
+    );
+    return {
+      ...page,
+      limit,
+      sort,
+      ...(page.nextCursor
+        ? {
+            nextCursorValue: encodeCursor(
+              page.nextCursor,
+              fingerprint,
+              this.cursorSecret,
+            ),
+          }
+        : {}),
+    };
   }
 
-  public listProducts(
+  public async customerDetail(
     principal: AdminPrincipal,
-    query: AdminListQuery,
+    customerId: string,
     correlationId: CorrelationId,
-  ) {
-    return this.list("products", principal, query, correlationId, (input) =>
-      this.repository.listProducts(input),
+  ): Promise<AdminCustomerSummary | null> {
+    this.require(principal, "CUSTOMER_VIEW");
+    if (!isUuid(customerId))
+      throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    const customer = await this.repository.findCustomer(customerId);
+    await this.auditRead(
+      principal,
+      correlationId,
+      "ADMIN_CUSTOMER_DETAIL_VIEWED",
+      customer ? 1 : 0,
     );
+    return customer;
+  }
+
+  public async listProducts(
+    principal: AdminPrincipal,
+    query: AdminProductQuery,
+    correlationId: CorrelationId,
+  ): Promise<AdminProductListResult> {
+    this.require(principal, "CATALOG_VIEW");
+    const search = parseSearch(query.search);
+    const lifecycle = parseProductLifecycle(query.status);
+    const platform = parseAllowed(query.platform, adminProductPlatformValues);
+    const productType = parseAllowed(query.productType, productTypes);
+    const offerState = parseAllowed(query.offerState, [
+      "WITH_OFFERS",
+      "WITHOUT_OFFERS",
+    ] as const);
+    const availability = parseAllowed(query.availability, [
+      "AVAILABLE",
+      "UNAVAILABLE",
+    ] as const);
+    const publication = parseAllowed(query.publication, [
+      "PUBLISHED",
+      "UNPUBLISHED",
+    ] as const);
+    const quickView = parseAllowed(query.quickView, [
+      "ACTIVE",
+      "WITH_OFFERS",
+      "AVAILABLE",
+    ] as const);
+    const sort = parseProductSort(query.sort);
+    const limit = parseProductLimit(query.limit);
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          availability,
+          lifecycle,
+          offerState,
+          platform,
+          productType,
+          publication,
+          quickView,
+          search,
+          section: "products",
+          sort,
+        }),
+        "utf8",
+      )
+      .digest("hex");
+    const after = query.cursor
+      ? decodeCursor(query.cursor, fingerprint, this.cursorSecret)
+      : undefined;
+    const page = await this.repository.listProducts({
+      ...(after ? { after } : {}),
+      ...(availability ? { availability } : {}),
+      ...(lifecycle ? { lifecycle } : {}),
+      ...(offerState ? { offerState } : {}),
+      ...(platform ? { platform } : {}),
+      ...(productType ? { productType } : {}),
+      ...(publication ? { publication } : {}),
+      ...(quickView ? { quickView } : {}),
+      ...(search ? { search } : {}),
+      limit,
+      sort,
+    });
+    await this.auditRead(
+      principal,
+      correlationId,
+      "ADMIN_PRODUCTS_VIEWED",
+      page.items.length,
+    );
+    return {
+      ...page,
+      limit,
+      sort,
+      ...(page.nextCursor
+        ? {
+            nextCursorValue: encodeCursor(
+              page.nextCursor,
+              fingerprint,
+              this.cursorSecret,
+            ),
+          }
+        : {}),
+    };
+  }
+
+  public async productDetail(
+    principal: AdminPrincipal,
+    productId: string,
+    correlationId: CorrelationId,
+  ): Promise<AdminProductDetail | null> {
+    this.require(principal, "CATALOG_VIEW");
+    if (!isUuid(productId))
+      throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    const product = await this.repository.findProduct(productId);
+    await this.auditRead(
+      principal,
+      correlationId,
+      "ADMIN_PRODUCT_DETAIL_VIEWED",
+      product ? 1 : 0,
+    );
+    return product;
   }
 
   public listSuppliers(
@@ -556,6 +867,94 @@ const parseStatus = (value: string | undefined): string | undefined => {
     throw new AdminAccessError("ADMIN_INPUT_INVALID");
   return normalized;
 };
+
+const parseAllowed = <T extends string>(
+  value: string | undefined,
+  allowed: readonly T[],
+): T | undefined => {
+  if (!value) return undefined;
+  if (!allowed.includes(value as T))
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value as T;
+};
+
+const parseProductLifecycle = (value: string | undefined) =>
+  parseAllowed(value, adminProductLifecycleValues);
+
+const parseProductSort = (value: string | undefined): AdminProductSort => {
+  if (!value) return "TITLE_ASC";
+  if (
+    !["TITLE_ASC", "TITLE_DESC", "UPDATED_DESC", "UPDATED_ASC"].includes(value)
+  )
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value as AdminProductSort;
+};
+
+const parseProductLimit = (value: number | undefined): number => {
+  if (value === undefined) return 10;
+  if (![10, 25, 50].includes(value))
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value;
+};
+
+const parseCustomerStatus = (
+  value: string | undefined,
+): "VERIFIED" | "UNVERIFIED" | undefined => {
+  const status = parseStatus(value);
+  if (!status) return undefined;
+  if (status !== "VERIFIED" && status !== "UNVERIFIED")
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return status;
+};
+
+const parseOrderPresence = (
+  value: string | undefined,
+): "WITH_ORDERS" | "WITHOUT_ORDERS" | "WITH_CAPTURED_PAYMENT" | undefined => {
+  if (!value) return undefined;
+  if (
+    value !== "WITH_ORDERS" &&
+    value !== "WITHOUT_ORDERS" &&
+    value !== "WITH_CAPTURED_PAYMENT"
+  )
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value;
+};
+
+const parseRegistrationWindow = (
+  value: string | undefined,
+): "LAST_30_DAYS" | undefined => {
+  if (!value) return undefined;
+  if (value !== "LAST_30_DAYS")
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value;
+};
+
+const parseCustomerSort = (value: string | undefined): AdminCustomerSort => {
+  if (!value) return "NEWEST";
+  if (!["NEWEST", "OLDEST", "EMAIL_ASC", "EMAIL_DESC"].includes(value))
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return value as AdminCustomerSort;
+};
+
+const parseCustomerDate = (
+  value: string | undefined,
+  endOfDay: boolean,
+): Date | undefined => {
+  if (!value) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value))
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  const date = new Date(
+    `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`,
+  );
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value)
+    throw new AdminAccessError("ADMIN_INPUT_INVALID");
+  return date;
+};
+
+const isUuid = (value: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+    value,
+  );
 
 const parseLimit = (value: number | undefined): number => {
   if (value === undefined) return 25;

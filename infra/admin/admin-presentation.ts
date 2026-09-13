@@ -98,8 +98,17 @@ type AdminPresentationStatus =
   | "DEFAULT"
   | "DENY"
   | "GRANTED"
+  | "LINUX"
+  | "MACOS"
+  | "MOBILE"
+  | "NINTENDO"
   | "NONE"
-  | "UNKNOWN";
+  | "PC"
+  | "PLAYSTATION"
+  | "UNKNOWN"
+  | "WEB"
+  | "WINDOWS"
+  | "XBOX";
 
 export const adminStatusLabels = {
   ACTIVE: "Aktiv",
@@ -128,19 +137,25 @@ export const adminStatusLabels = {
   GRANTED: "Erteilt",
   IN_FLIGHT: "In Bearbeitung",
   IN_PROGRESS: "In Bearbeitung",
+  LINUX: "Linux",
+  MACOS: "macOS",
   MANUAL_REVIEW: "Manuelle Prüfung",
   MANUAL_REVIEW_REQUIRED: "Manuelle Prüfung erforderlich",
+  MOBILE: "Mobil",
+  NINTENDO: "Nintendo",
   NOT_AVAILABLE: "Nicht verfügbar",
   NOT_EVALUATED: "Nicht bewertet",
   NOT_READY: "Nicht bereit",
   NOT_STARTED: "Nicht begonnen",
   NONE: "Keine",
   PARTIALLY_REFUNDED: "Teilweise erstattet",
+  PC: "PC",
   PAYMENT_AUTHORIZED: "Zahlung autorisiert",
   PAYMENT_CAPTURED: "Zahlung erfasst",
   PENDING: "Ausstehend",
   PROCUREMENT_IN_PROGRESS: "Beschaffung läuft",
   PROCUREMENT_PENDING: "Beschaffung ausstehend",
+  PLAYSTATION: "PlayStation",
   READY: "Bereit",
   REFUND_PENDING: "Erstattung ausstehend",
   REFUNDED: "Erstattet",
@@ -151,6 +166,9 @@ export const adminStatusLabels = {
   REVOKED: "Widerrufen",
   SUCCEEDED: "Erfolgreich",
   UNKNOWN: "Unbekannt",
+  WEB: "Web",
+  WINDOWS: "Windows",
+  XBOX: "Xbox",
 } as const satisfies Readonly<Record<AdminPresentationStatus, string>>;
 
 type FixedAuditEventType = (typeof auditEventTypes)[number];
@@ -180,6 +198,7 @@ export const knownAdminAuditCodes = [
   "ADMIN_AUDIT_VIEWED",
   "ADMIN_AUTHENTICATED",
   "ADMIN_DASHBOARD_VIEWED",
+  "ADMIN_CUSTOMER_DETAIL_VIEWED",
   "ADMIN_CUSTOMERS_VIEWED",
   "ADMIN_FINANCE_VIEWED",
   "ADMIN_FRAUD_VIEWED",
@@ -195,6 +214,7 @@ export const knownAdminAuditCodes = [
   "ADMIN_NOTIFICATIONS_VIEWED",
   "ADMIN_PERMISSION_GRANTED",
   "ADMIN_PERMISSION_REVOKED",
+  "ADMIN_PRODUCT_DETAIL_VIEWED",
   "ADMIN_RESOURCE_UNAVAILABLE",
   "ADMIN_ROLE_CHANGED",
   "ADMIN_PRODUCTS_VIEWED",
@@ -220,6 +240,7 @@ export const adminAuditCodeLabels = {
   ADMIN_AUDIT_VIEWED: "Audit-Protokoll aufgerufen",
   ADMIN_AUTHENTICATED: "Admin-Anmeldung erfolgreich",
   ADMIN_DASHBOARD_VIEWED: "Übersicht aufgerufen",
+  ADMIN_CUSTOMER_DETAIL_VIEWED: "Kundendetail aufgerufen",
   ADMIN_CUSTOMERS_VIEWED: "Kundenliste aufgerufen",
   ADMIN_FINANCE_VIEWED: "Finanzübersicht aufgerufen",
   ADMIN_FRAUD_VIEWED: "Betrugsprüfungen aufgerufen",
@@ -235,6 +256,7 @@ export const adminAuditCodeLabels = {
   ADMIN_NOTIFICATIONS_VIEWED: "Benachrichtigungen aufgerufen",
   ADMIN_PERMISSION_GRANTED: "Berechtigung erteilt",
   ADMIN_PERMISSION_REVOKED: "Berechtigung widerrufen",
+  ADMIN_PRODUCT_DETAIL_VIEWED: "Produktdetail aufgerufen",
   ADMIN_RESOURCE_UNAVAILABLE: "Admin-Ressource nicht verfügbar",
   ADMIN_ROLE_CHANGED: "Mitarbeiterrolle geändert",
   ADMIN_PRODUCTS_VIEWED: "Produktkatalog aufgerufen",
@@ -310,6 +332,58 @@ export const adminStatusLabel = (status: string): string =>
   hasOwn(adminStatusLabels, status)
     ? adminStatusLabels[status]
     : "Unbekannter Status";
+
+const adminProductLifecycleLabels = {
+  ACTIVE: "Aktiv",
+  ACTIVE_CANDIDATE: "Aktiver Kandidat",
+  INACTIVE: "Inaktiv",
+  IN_STOCK: "Verfügbar",
+  LIMITED: "Begrenzt verfügbar",
+  OUT_OF_STOCK: "Nicht verfügbar",
+  PREORDER: "Vorbestellung",
+  REJECTED: "Abgelehnt",
+  REVIEW_REQUIRED: "Prüfung erforderlich",
+  UNKNOWN: "Lebenszyklus unbekannt",
+} as const;
+
+const adminProductPlatformLabels = {
+  LINUX: "Linux",
+  MACOS: "macOS",
+  MOBILE: "Mobil",
+  NINTENDO: "Nintendo",
+  PC: "PC",
+  PLAYSTATION: "PlayStation",
+  UNKNOWN: "Plattform unbekannt",
+  WEB: "Web",
+  WINDOWS: "Windows",
+  XBOX: "Xbox",
+} as const;
+
+const adminProductTypeLabels = {
+  DLC: "Zusatzinhalt",
+  GAME: "Spiel",
+  GIFT_CARD: "Geschenkkarte",
+  SOFTWARE: "Software",
+  SUBSCRIPTION: "Abonnement",
+  UNKNOWN: "Unbekannt",
+} as const;
+
+export const adminProductLifecycleLabel = (value: string): string =>
+  hasOwn(adminProductLifecycleLabels, value)
+    ? adminProductLifecycleLabels[value]
+    : "Lebenszyklus unbekannt";
+
+export const adminProductPlatformLabel = (value: string): string => {
+  const normalized = value.toUpperCase();
+  return hasOwn(adminProductPlatformLabels, normalized)
+    ? adminProductPlatformLabels[normalized]
+    : "Plattform unbekannt";
+};
+
+export const adminProductTypeLabel = (value: string): string =>
+  hasOwn(adminProductTypeLabels, value)
+    ? adminProductTypeLabels[value]
+    : "Unbekannt";
 
 export const adminAuditEventTypeLabel = (eventType: string): string => {
   if (hasOwn(adminAuditEventTypeLabels, eventType))

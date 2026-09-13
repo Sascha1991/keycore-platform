@@ -59,4 +59,27 @@ describe("MailpitStagingTransport", () => {
       () => new MailpitStagingTransport("https://mail.example.test"),
     ).toThrow("Internal staging Mailpit URL is required");
   });
+
+  it("delivers a one-time Admin reset link through the internal Mailpit API", async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetch);
+    const transport = new MailpitStagingTransport(
+      "http://mail:8025",
+      "https://admin.staging.keyrano.de",
+    );
+    const rawToken = "r".repeat(43);
+    await expect(
+      transport.sendPasswordReset({
+        emailNormalized: "staff@example.test",
+        expiresAt: new Date("2026-09-12T12:45:00.000Z"),
+        rawToken,
+      }),
+    ).resolves.toEqual({ status: "ACCEPTED" });
+    const payload = JSON.stringify(fetch.mock.calls);
+    expect(payload).toContain(
+      `https://admin.staging.keyrano.de/admin/password-reset/${rawToken}`,
+    );
+    expect(payload).toContain("2026-09-12T12:45:00.000Z");
+    expect(payload).not.toMatch(/password_hash|session_code/iu);
+  });
 });

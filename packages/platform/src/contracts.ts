@@ -1,5 +1,7 @@
 export * from "./audit/service.js";
 export * from "./admin/admin-orders.js";
+export * from "./admin/admin-password-authentication.js";
+export * from "./admin/admin-password-reset.js";
 export * from "./admin/admin-operations.js";
 export * from "./admin/admin-staff.js";
 export * from "./catalog/germany-eligibility.js";

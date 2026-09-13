@@ -10,6 +10,8 @@ import {
   hashAdminSession,
   orderId,
   type AdminOrderReadRepository,
+  type AdminPasswordLoginPort,
+  type AdminPasswordResetPort,
   type AdminOperationsRepository,
   type AdminOperationsControlMutationPort,
   type AdminSupportOperationsPort,
@@ -27,6 +29,8 @@ const hmacMaterial = [
 ].join("-");
 const rawSession = "http-admin-opaque-session-1234567890abcdef";
 const staffRawSession = "http-staff-opaque-session-1234567890abcdef";
+const adminEmail = "admin@example.test";
+const adminPassword = ["correct", "admin", "password"].join("-");
 const origin = "https://admin.staging.keyrano.de";
 const adminId = "a1000000-0000-4000-8000-000000000001";
 const staffAdminId = "a1000000-0000-4000-8000-000000000002";
@@ -53,10 +57,15 @@ describe("AdminHttpController", () => {
     });
   });
 
-  it("logs in only by exact-origin POST and returns hardened cookies and headers", async () => {
+  it("logs in by email and password and returns hardened cookies and headers", async () => {
     const controller = fixture();
     const response = await controller.handle(
-      request("POST", "/admin/login", { origin }, { session_code: rawSession }),
+      request(
+        "POST",
+        "/admin/login",
+        { origin },
+        { email: adminEmail, password: adminPassword },
+      ),
     );
     expect(response).toMatchObject({
       statusCode: 303,
@@ -68,6 +77,13 @@ describe("AdminHttpController", () => {
     expect(response.headers["Content-Security-Policy"]).toContain(
       "frame-ancestors 'none'",
     );
+    await expect(
+      controller.handle(
+        request("GET", "/admin/", {
+          cookie: cookiePair(required(response.headers["Set-Cookie"])),
+        }),
+      ),
+    ).resolves.toMatchObject({ statusCode: 200 });
   });
 
   it("keeps owner and synthetic staff sessions independent across separate cookie jars", async () => {
@@ -79,12 +95,17 @@ describe("AdminHttpController", () => {
       },
     });
     const ownerLogin = await controller.handle(
-      request("POST", "/admin/login", { origin }, { session_code: rawSession }),
+      request(
+        "POST",
+        "/admin/recovery",
+        { origin },
+        { session_code: rawSession },
+      ),
     );
     const staffLogin = await controller.handle(
       request(
         "POST",
-        "/admin/login",
+        "/admin/recovery",
         { origin },
         { session_code: staffRawSession },
       ),
@@ -134,7 +155,9 @@ describe("AdminHttpController", () => {
     expect(login.headers["X-Content-Type-Options"]).toBe("nosniff");
     expect(login.headers["X-Frame-Options"]).toBe("DENY");
     expect(login.headers["Cross-Origin-Opener-Policy"]).toBe("same-origin");
-    expect(login.body.match(/name="session_code"/gu)).toHaveLength(1);
+    expect(login.body.match(/name="email"/gu)).toHaveLength(1);
+    expect(login.body.match(/name="password"/gu)).toHaveLength(1);
+    expect(login.body).not.toContain('name="session_code"');
     expect(login.body).not.toMatch(/name="csrf"|name="origin"/u);
 
     await expect(
@@ -143,7 +166,10 @@ describe("AdminHttpController", () => {
           "POST",
           "/admin/login",
           { origin },
-          { session_code: "invalid-session-code-longer-than-32-bytes" },
+          {
+            email: adminEmail,
+            password: ["invalid", "admin", "password"].join("-"),
+          },
         ),
       ),
     ).resolves.toMatchObject({ statusCode: 401 });
@@ -156,11 +182,168 @@ describe("AdminHttpController", () => {
       await expect(
         controller.handle(
           request("POST", "/admin/login", headers, {
+            email: adminEmail,
+            password: adminPassword,
+          }),
+        ),
+      ).resolves.toMatchObject({ statusCode: 400 });
+    }
+  });
+
+  it("preserves logout and permits a fresh password login afterward", async () => {
+    const controller = fixture();
+    const dashboard = await controller.handle(authenticated("GET", "/admin/"));
+    const csrf =
+      /action="\/admin\/logout"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"/u.exec(
+        dashboard.body,
+      )?.[1];
+    expect(csrf).toBeTruthy();
+
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          "/admin/logout",
+          { origin },
+          { csrf: required(csrf) },
+        ),
+      ),
+    ).resolves.toMatchObject({
+      statusCode: 303,
+      headers: { Location: "/admin/login" },
+    });
+    await expect(
+      controller.handle(
+        request(
+          "POST",
+          "/admin/login",
+          { origin },
+          { email: adminEmail, password: adminPassword },
+        ),
+      ),
+    ).resolves.toMatchObject({
+      statusCode: 303,
+      headers: { Location: "/admin/" },
+    });
+  });
+
+  it("keeps the opaque session code on a separate recovery-only form", async () => {
+    const controller = fixture();
+    const login = await controller.handle(request("GET", "/admin/login"));
+    const recovery = await controller.handle(request("GET", "/admin/recovery"));
+
+    expect(login.body).not.toContain("Sicherer Zugangscode");
+    expect(recovery.body).toContain("Wiederherstellungszugang");
+    expect(recovery.body).toContain('name="session_code"');
+    await expect(
+      controller.handle(
+        request(
+          "POST",
+          "/admin/login",
+          { origin },
+          { session_code: rawSession },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 400 });
+    for (const headers of [
+      {},
+      { origin: "null" },
+      { origin: "https://attacker.invalid" },
+    ]) {
+      await expect(
+        controller.handle(
+          request("POST", "/admin/recovery", headers, {
             session_code: rawSession,
           }),
         ),
       ).resolves.toMatchObject({ statusCode: 400 });
     }
+  });
+
+  it("provides a generic exact-origin password-reset request flow", async () => {
+    const controller = fixture();
+    const login = await controller.handle(request("GET", "/admin/login"));
+    expect(login.body).toContain('href="/admin/password-reset"');
+    expect(login.body).not.toContain('name="session_code"');
+
+    const page = await controller.handle(
+      request("GET", "/admin/password-reset"),
+    );
+    expect(page.body).toContain("Link zum Zurücksetzen senden");
+    expect(page.body).toContain('name="email"');
+
+    for (const email of [adminEmail, "unknown@example.test", "invalid"]) {
+      const response = await controller.handle(
+        request("POST", "/admin/password-reset", { origin }, { email }),
+      );
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain(
+        "Falls für diese E-Mail-Adresse ein aktives Admin-Konto existiert",
+      );
+    }
+    for (const headers of [
+      {},
+      { origin: "null" },
+      { origin: "https://other.example.test" },
+    ]) {
+      await expect(
+        controller.handle(
+          request("POST", "/admin/password-reset", headers, {
+            email: adminEmail,
+          }),
+        ),
+      ).resolves.toMatchObject({ statusCode: 400 });
+    }
+  });
+
+  it("validates and completes one-time password-reset forms without weakening field checks", async () => {
+    const controller = fixture();
+    const token = "a".repeat(43);
+    const page = await controller.handle(
+      request("GET", `/admin/password-reset/${token}`),
+    );
+    expect(page.body).toContain("Neues Passwort");
+    expect(page.body).toContain("Passwort bestätigen");
+
+    const mismatch = await controller.handle(
+      request(
+        "POST",
+        `/admin/password-reset/${token}`,
+        { origin },
+        {
+          password: adminPassword,
+          password_confirmation: "different-password",
+        },
+      ),
+    );
+    expect(mismatch.statusCode).toBe(400);
+    expect(mismatch.body).toContain("stimmen nicht überein");
+
+    const completed = await controller.handle(
+      request(
+        "POST",
+        `/admin/password-reset/${token}`,
+        { origin },
+        { password: adminPassword, password_confirmation: adminPassword },
+      ),
+    );
+    expect(completed.statusCode).toBe(200);
+    expect(completed.body).toContain("Passwort erfolgreich geändert");
+    expect(completed.body).toContain('href="/admin/login"');
+
+    const invalid = await fixture({
+      passwordResetResult: "INVALID_OR_EXPIRED",
+    }).handle(
+      request(
+        "POST",
+        `/admin/password-reset/${token}`,
+        { origin },
+        { password: adminPassword, password_confirmation: adminPassword },
+      ),
+    );
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.body).toContain("Dieser Link ist nicht mehr gültig");
+    expect(invalid.body).toContain('href="/admin/password-reset"');
   });
 
   it("renders safe order data and never includes key material", async () => {
@@ -186,6 +369,26 @@ describe("AdminHttpController", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('class="orders-table"');
+    expect(response.body).toContain('class="metric-grid orders-metrics"');
+    expect(response.body).toContain('id="order-filter"');
+    expect(response.body).toContain('name="payment"');
+    expect(response.body).toContain('name="reference"');
+    expect(response.body).toContain('name="customer"');
+    expect(response.body).toContain('name="risk"');
+    expect(response.body).toContain('name="procurement"');
+    expect(response.body).toContain('name="fulfillment"');
+    expect(response.body).toContain('name="sort"');
+    expect(response.body).toContain('name="limit"');
+    expect(response.body).toContain('href="#icon-filter"');
+    expect(response.body).toContain('href="#icon-search"');
+    expect(response.body).toContain(
+      "Bestellreferenz, Bestell-ID oder Kunden-E-Mail",
+    );
+    expect(response.body).toContain(
+      'href="/admin/orders?panel=filters#order-filter"',
+    );
+    expect(response.body).toContain('aria-expanded="false"');
+    expect(response.body).toContain(">KR0000001</a>");
     expect(response.body).toContain('<th scope="col">Bestellung</th>');
     for (const label of [
       "Bestellung",
@@ -200,7 +403,10 @@ describe("AdminHttpController", () => {
     expect(response.body).toContain(targetOrderId);
     expect(response.body).toContain("customer@example.test");
     expect(response.body).toContain("Arena Eleven");
+    expect(response.body).toContain("Windows · Menge 1");
     expect(response.body).toContain("Auslieferung ausstehend");
+    expect(response.body).toContain("Legende der Bestellzustände");
+    expect(response.body).toContain("Kein Abrufnachweis");
     expect(response.body).toContain('value="PAYMENT_AUTHORIZED"');
     expect(response.body).toContain("Zahlung autorisiert");
     expect(visibleText(response.body)).not.toMatch(
@@ -221,21 +427,150 @@ describe("AdminHttpController", () => {
     expect(css).toMatch(
       /\.metric-grid,\s*\.filter-bar,\s*\.staff-form\s*\{[^}]*grid-template-columns:\s*1fr/gu,
     );
+    expect(css).toMatch(
+      /\.workspace-grid\s*>\s*aside\s*\{[^}]*position:\s*static/gu,
+    );
+    expect(css).toMatch(/\.metric-card\s*\{[^}]*border:\s*1px solid/gu);
+    expect(css).toMatch(
+      /\.metric-icon\s*\{[^}]*display:\s*inline-flex[^}]*align-items:\s*center[^}]*justify-content:\s*center[^}]*width:\s*58px[^}]*height:\s*58px[^}]*padding:\s*15px/gu,
+    );
+    expect(css).toMatch(
+      /\.metric-icon \.icon\s*\{[^}]*display:\s*block[^}]*width:\s*28px[^}]*height:\s*28px/gu,
+    );
+    expect(css).toContain(
+      "Human browser review correction 02: orders workspace and detail",
+    );
+    expect(css).toMatch(/\.orders-table\s*\{[^}]*table-layout:\s*fixed/gu);
+    expect(css).toMatch(/\.orders-table-wrap\s*\{[^}]*border-right:\s*0/gu);
+  });
+
+  it("preserves operational order filters and validates detail return navigation", async () => {
+    const controller = fixture();
+    const opened = authenticated("GET", "/admin/orders");
+    opened.query.set("panel", "filters");
+    const openedResponse = await controller.handle(opened);
+    expect(openedResponse.body).toContain('id="order-filter" open><summary>');
+    expect(openedResponse.body).toContain('aria-expanded="true"');
+    expect(openedResponse.body).toContain("panel=closed#order-filter");
+
+    const filtered = authenticated("GET", "/admin/orders");
+    filtered.query.set("reference", "KR0000001");
+    filtered.query.set("customer", "customer@example.test");
+    filtered.query.set("status", "");
+    filtered.query.set("view", "PROCESSING");
+    filtered.query.set("payment", "CAPTURED");
+    filtered.query.set("risk", "APPROVED");
+    filtered.query.set("procurement", "SUCCEEDED");
+    filtered.query.set("fulfillment", "PENDING");
+    filtered.query.set("from", "");
+    filtered.query.set("to", "");
+    filtered.query.set("sort", "OLDEST");
+    filtered.query.set("limit", "10");
+    const response = await controller.handle(filtered);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain(
+      'class="metric-card" href="/admin/orders?reference=KR0000001&amp;customer=customer%40example.test&amp;view=PROCESSING',
+    );
+    expect(response.body).toContain('aria-current="true"');
+    expect(response.body).toContain('aria-current="true"');
+    expect(response.body).toContain(
+      '<option value="CAPTURED" selected>Erfasst</option>',
+    );
+    expect(response.body).toContain(
+      'name="reference" maxlength="9" pattern="KR[0-9A-Fa-f]{7}" placeholder="KR0000001" value="KR0000001"',
+    );
+    expect(response.body).toContain(
+      'name="customer" maxlength="254" autocomplete="off" value="customer@example.test"',
+    );
+    expect(response.body).toContain(
+      '<option value="OLDEST" selected>Älteste zuerst</option>',
+    );
+    expect(response.body).toContain("<strong>Zahlung:</strong> Erfasst");
+    expect(response.body).toContain("1 Ergebnis");
+    expect(response.body).toContain("panel=closed#order-filter");
+    expect(response.body).toContain(
+      "<strong>Bestellreferenz:</strong> KR0000001",
+    );
+    expect(response.body).toContain(
+      "<strong>Kunden-E-Mail:</strong> customer@example.test",
+    );
+    expect(response.body).toContain("Filter <span>6</span>");
+    expect(response.body).not.toContain("<strong>Status:</strong>");
+    expect(response.body).not.toContain("<strong>Von:</strong>");
+    expect(response.body).not.toContain("<strong>Bis:</strong>");
+    expect(response.body).not.toContain("status=&amp;");
+    expect(response.body).not.toContain("from=&amp;");
+    expect(response.body).not.toContain("to=&amp;");
+    expect(response.body).toContain(
+      'href="/admin/orders?view=PROCESSING&amp;sort=OLDEST&amp;limit=10"',
+    );
+
+    const closed = authenticated("GET", "/admin/orders");
+    closed.query.set("reference", "KR0000001");
+    closed.query.set("customer", "customer@example.test");
+    closed.query.set("payment", "CAPTURED");
+    closed.query.set("panel", "closed");
+    const closedResponse = await controller.handle(closed);
+    expect(closedResponse.body).toContain('aria-expanded="false"');
+    expect(closedResponse.body).toContain('id="order-filter"><summary>');
+    expect(closedResponse.body).toContain('value="KR0000001"');
+    expect(closedResponse.body).toContain('value="customer@example.test"');
+    expect(closedResponse.body).toContain("panel=filters#order-filter");
+
+    const invalidPanel = authenticated("GET", "/admin/orders");
+    invalidPanel.query.set("panel", "unexpected");
+    const invalidPanelResponse = await controller.handle(invalidPanel);
+    expect(invalidPanelResponse.statusCode).toBe(400);
+
+    const safeDetail = authenticated("GET", `/admin/orders/${targetOrderId}`);
+    safeDetail.query.set(
+      "return",
+      "/admin/orders?view=PROCESSING&payment=CAPTURED",
+    );
+    const safe = await controller.handle(safeDetail);
+    expect(safe.body).toContain("Bestellung KR0000001");
+    expect(safe.body).toContain("Technische Bestell-ID");
+    expect(safe.body).toContain(
+      'href="/admin/orders?view=PROCESSING&amp;payment=CAPTURED"',
+    );
+
+    const unsafeDetail = authenticated("GET", `/admin/orders/${targetOrderId}`);
+    unsafeDetail.query.set("return", "https://attacker.invalid/admin/orders");
+    const unsafe = await controller.handle(unsafeDetail);
+    expect(unsafe.body).toContain('href="/admin/orders"');
+    expect(unsafe.body).not.toContain("attacker.invalid");
+  });
+
+  it("renders customer retrieval only from authoritative delivered evidence", async () => {
+    const response = await fixture({ customerAccessConfirmed: true }).handle(
+      authenticated("GET", "/admin/orders"),
+    );
+
+    expect(response.body).toContain("Kundenabruf bestätigt");
+    expect(response.body).not.toContain("Kein Abrufnachweis");
   });
 
   it("renders the shared operational shell without fake active controls", async () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.9");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
-    expect(response.body).toContain("Sichere Admin-Sitzung");
+    expect(response.body).toContain('id="icon-home"');
+    expect(response.body).toContain('id="icon-brand"');
+    expect(response.body).toContain(
+      '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-cart"></use></svg>',
+    );
+    expect(response.body).toContain('href="/admin/" aria-current="page"');
+    expect(response.body).toContain('href="#icon-cart"');
     expect(response.body).toContain('href="/admin/orders"');
     expect(response.body).toContain('href="/admin/staff"');
     expect(response.body).toContain('href="/admin/audit"');
-    expect(response.body).toContain(
-      'aria-disabled="true" title="Noch nicht als sicherer Admin-Bereich verfügbar"',
-    );
+    expect(response.body).toContain('href="/admin/discounts"');
+    expect(response.body).toContain('class="environment-badge">STAGING');
+    expect(response.body).not.toMatch(/>\s*(BE|AU|IB|FG)\s*</u);
     expect(response.body).not.toMatch(/onclick=|alert\(/u);
   });
 
@@ -245,6 +580,7 @@ describe("AdminHttpController", () => {
       ["/admin/customers", "customer-a@example.test"],
       ["/admin/catalog", "Neonpfad: Berlin"],
       ["/admin/suppliers", "Synthetic Supplier"],
+      ["/admin/discounts", "Noch keine Rabattverwaltung verfügbar"],
       ["/admin/support", "Bestellstatus"],
       ["/admin/fraud", "Manuelle Prüfungen"],
       ["/admin/finance", "Erfasstes Zahlungsvolumen (EUR)"],
@@ -277,7 +613,36 @@ describe("AdminHttpController", () => {
     expect(report.body).toContain("Gesamtsicht ohne Datumsfilter");
     const dashboard = await controller.handle(authenticated("GET", "/admin/"));
     expect(dashboard.body).toContain("Erfasstes Zahlungsvolumen");
+    expect(dashboard.body).toContain("Serverstatus");
+    expect(dashboard.body).toContain("PostgreSQL");
+    expect(dashboard.body).toContain("Top-Produkte");
+    expect(dashboard.body).toContain("Neonpfad: Berlin");
+    expect(dashboard.body).toContain("Operative Bestellzustände");
+    expect(dashboard.body).toContain("Gleiche Definition wie Schnellfilter");
+    expect(dashboard.body).toContain('class="recent-orders-table"');
+    expect(dashboard.body).toContain(
+      'class="metric-card" href="/admin/orders"',
+    );
+    expect(dashboard.body).toContain("/admin/orders?view=PROCESSING");
     expect(dashboard.body).not.toContain("Erfasster Umsatz");
+    expect(dashboard.body).not.toContain("Kinguin API: Online");
+    expect(dashboard.body).not.toContain("Kleinunternehmerstatus");
+
+    const processingRequest = authenticated("GET", "/admin/orders");
+    processingRequest.query.set("view", "PROCESSING");
+    const processing = await controller.handle(processingRequest);
+    expect(processing.statusCode).toBe(200);
+    expect(processing.body).toContain("Aktive Schnellansicht: In Bearbeitung");
+    expect(processing.body).toContain('name="view" value="PROCESSING"');
+
+    const discounts = await controller.handle(
+      authenticated("GET", "/admin/discounts"),
+    );
+    expect(discounts.body).toContain('aria-disabled="true"');
+    expect(discounts.body).toContain(
+      "keine autoritative Rabatt- oder Kampagnen-Domain",
+    );
+    expect(discounts.body).not.toContain('<button type="submit">Rabatt');
 
     const customerDetail = await controller.handle(
       authenticated("GET", `/admin/customers/${targetOrderId}`),
@@ -301,6 +666,152 @@ describe("AdminHttpController", () => {
     await expect(
       support.handle(authenticated("GET", "/admin/catalog")),
     ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      support.handle(authenticated("GET", "/admin/discounts")),
+    ).resolves.toMatchObject({ statusCode: 403 });
+  });
+
+  it("renders the authoritative customer workspace and privacy-bounded detail", async () => {
+    const controller = fixture();
+    const request = authenticated("GET", "/admin/customers");
+    request.query.set("status", "VERIFIED");
+    request.query.set("orders", "WITH_ORDERS");
+    request.query.set("registered_from", "2026-08-01");
+    request.query.set("registered_to", "2026-09-30");
+    request.query.set("sort", "EMAIL_ASC");
+    const list = await controller.handle(request);
+
+    expect(list.statusCode).toBe(200);
+    expect(list.body).toContain('class="metric-grid customer-metrics"');
+    expect(list.body).toContain("Gesamtkunden");
+    expect(list.body).toContain("Kunden mit Bestellungen");
+    expect(list.body).toContain("Zahlungsvolumen (Kunden)");
+    expect(list.body).toContain("21,99 EUR");
+    expect(list.body).toContain("Neukunden (30 Tage)");
+    expect(list.body).toContain(
+      'href="/admin/customers?registered=LAST_30_DAYS"',
+    );
+    expect(list.body).toContain(
+      'href="/admin/customers?orders=WITH_CAPTURED_PAYMENT"',
+    );
+    expect(list.body).toContain("1 E-Mail bestätigt");
+    expect(list.body).toContain('href="#icon-user-plus"');
+    expect(list.body).not.toContain("Kunde hinzufügen");
+    expect(list.body).toContain('id="customer-search"');
+    expect(list.body).toContain('class="filter-panel customer-filter-panel"');
+    expect(list.body).toContain('name="orders"');
+    expect(list.body).toContain('name="registered_from"');
+    expect(list.body).toContain('value="EMAIL_ASC" selected');
+    expect(list.body).toContain('type="hidden" name="sort" value="EMAIL_ASC"');
+    expect(list.body).toContain('type="hidden" name="status" value="VERIFIED"');
+    expect(list.body).toContain("customer-a@example.test");
+    expect(list.body).toContain("KR-100001");
+    expect(list.body).toContain(`/admin/orders?customer_id=${targetOrderId}`);
+    expect(list.body).toContain(`/admin/customers/${targetOrderId}`);
+    expect(list.body).not.toContain("Max Mustermann");
+    expect(list.body).not.toMatch(
+      /password|session_hash|verification_token|claim_code/iu,
+    );
+
+    const allCustomers = await controller.handle(
+      authenticated("GET", "/admin/customers"),
+    );
+    expect(allCustomers.body).toContain(
+      '<a class="metric-card" href="/admin/customers" aria-current="true">',
+    );
+    const recentRequest = authenticated("GET", "/admin/customers");
+    recentRequest.query.set("registered", "LAST_30_DAYS");
+    const recentCustomers = await controller.handle(recentRequest);
+    expect(recentCustomers.body).toContain(
+      'href="/admin/customers?registered=LAST_30_DAYS" aria-current="true"',
+    );
+    expect(recentCustomers.body).toContain(
+      'name="registered" value="LAST_30_DAYS"',
+    );
+    const paymentRequest = authenticated("GET", "/admin/customers");
+    paymentRequest.query.set("orders", "WITH_CAPTURED_PAYMENT");
+    const paymentCustomers = await controller.handle(paymentRequest);
+    expect(paymentCustomers.body).toContain(
+      'href="/admin/customers?orders=WITH_CAPTURED_PAYMENT" aria-current="true"',
+    );
+    expect(paymentCustomers.body).toContain("Mit erfasstem Zahlungsvolumen");
+
+    const detail = await controller.handle(
+      authenticated("GET", `/admin/customers/${targetOrderId}`),
+    );
+    expect(detail.statusCode).toBe(200);
+    expect(detail.body).toContain("Kundendetail");
+    expect(detail.body).toContain(`Kunden-ID ${targetOrderId}`);
+    expect(detail.body).toContain("Maximal 10 aktuelle Einträge");
+    expect(detail.body).toContain(`/admin/orders?customer_id=${targetOrderId}`);
+    expect(detail.body).not.toMatch(
+      /password|session_hash|verification_token|claim_code|provider_subject/iu,
+    );
+  });
+
+  it("renders the authoritative product workspace and bounded read-only detail", async () => {
+    const controller = fixture();
+    const request = authenticated("GET", "/admin/catalog");
+    request.query.set("platform", "PC");
+    request.query.set("availability", "AVAILABLE");
+    request.query.set("sort", "UPDATED_DESC");
+    request.query.set("limit", "25");
+    const list = await controller.handle(request);
+
+    expect(list.statusCode).toBe(200);
+    expect(list.body).toContain('class="metric-grid product-metrics"');
+    expect(list.body).toContain("Gesamtprodukte");
+    expect(list.body).toContain("Mit Lieferantenangebot");
+    expect(list.body).toContain('href="/admin/catalog?view=ACTIVE"');
+    expect(list.body).not.toContain(
+      'href="/admin/catalog?platform=PC&amp;availability=AVAILABLE&amp;sort=UPDATED_DESC&amp;limit=25&amp;view=ACTIVE"',
+    );
+    expect(list.body).toContain('id="product-search"');
+    expect(list.body).toContain('class="filter-panel product-filter-panel"');
+    expect(list.body).toContain('name="publication"');
+    expect(list.body).toContain('<option value="PC" selected>PC</option>');
+    expect(list.body).toContain('<option value="WINDOWS">Windows</option>');
+    expect(list.body).toContain(">Verfügbares Lieferantenangebot</small>");
+    expect(list.body).not.toContain("In Stock oder limitiert");
+    expect(list.body).not.toContain("Unbekannter Status");
+    for (const name of ["status", "platform", "type"]) {
+      const select = new RegExp(
+        `<select name="${name}">([\\s\\S]*?)</select>`,
+        "u",
+      ).exec(list.body)?.[1];
+      expect(select).toBeDefined();
+      const options = [
+        ...(select ?? "").matchAll(
+          /<option value="([^"]*)"[^>]*>([^<]+)<\/option>/gu,
+        ),
+      ];
+      expect(new Set(options.map((option) => option[1])).size).toBe(
+        options.length,
+      );
+      expect(new Set(options.map((option) => option[2])).size).toBe(
+        options.length,
+      );
+    }
+    expect(list.body).toContain('name="offers"');
+    expect(list.body).toContain('name="availability"');
+    expect(list.body).toContain('name="publication"');
+    expect(list.body).toContain('value="UPDATED_DESC" selected');
+    expect(list.body).toContain("Neonpfad: Berlin");
+    expect(list.body).toContain("Veröffentlicht");
+    expect(list.body).toContain(`/admin/catalog/${targetOrderId}`);
+    expect(list.body).not.toContain("Produkt hinzufügen");
+
+    const detail = await controller.handle(
+      authenticated("GET", `/admin/catalog/${targetOrderId}`),
+    );
+    expect(detail.statusCode).toBe(200);
+    expect(detail.body).toContain("Produktdetail");
+    expect(detail.body).toContain("Kanonische Kennungen");
+    expect(detail.body).toContain("4000000000001");
+    expect(detail.body).toContain("Synthetic Supplier");
+    expect(detail.body).toContain("<dt>Plattform</dt><dd>PC</dd>");
+    expect(detail.body).toContain("<dt>Produkttyp</dt><dd>Spiel</dd>");
+    expect(detail.body).not.toMatch(/product.?key|raw_metadata|credential/iu);
   });
 
   it("builds the notification center from live states and filters it by capability", async () => {
@@ -414,7 +925,7 @@ describe("AdminHttpController", () => {
     ).exec(detail.body)?.[1];
 
     expect(detail.statusCode).toBe(200);
-    expect(detail.body).toContain("Supportfalldetail");
+    expect(detail.body).toContain("Supportfall ");
     expect(detail.body).toContain("Für Kunden sichtbar");
     expect(detail.body).toContain("Interne Notiz");
     expect(detail.body).toContain("Status ändern");
@@ -691,10 +1202,13 @@ const fixture = (
     };
     readonly backendUnavailable?: boolean;
     readonly controlMutation?: AdminOperationsControlMutationPort;
+    readonly customerAccessConfirmed?: boolean;
     readonly supportOperations?: AdminSupportOperationsPort;
     readonly delayed?: StagingDelayedFulfillmentPort;
     readonly delayedEligible?: boolean;
     readonly role?: "PROJECT_OWNER" | "SUPPORT";
+    readonly passwordResetResult?:
+      "COMPLETED" | "INVALID_OR_EXPIRED" | "PASSWORD_INVALID";
   } = {},
 ): AdminHttpController => {
   const audit = new MemoryAudit();
@@ -728,6 +1242,19 @@ const fixture = (
     revoke: async () => undefined,
     touch: async () => undefined,
   };
+  const passwordAuthentication: AdminPasswordLoginPort = {
+    login: async (email, password) =>
+      email === adminEmail && password === adminPassword
+        ? { authenticated: true, rawSession }
+        : { authenticated: false },
+  };
+  const passwordReset: AdminPasswordResetPort = {
+    request: async () => ({ accepted: true }),
+    reset: async (_token, password, confirmation) =>
+      password !== confirmation
+        ? { status: "PASSWORD_MISMATCH" }
+        : { status: options.passwordResetResult ?? "COMPLETED" },
+  };
   const orders: AdminOrderReadRepository = {
     dashboard: async () => {
       if (options.backendUnavailable)
@@ -736,8 +1263,22 @@ const fixture = (
         attentionOrders: 0,
         failedOrders: 0,
         processingOrders: 1,
-        recentOrders: [summary()],
+        recentOrders: [
+          {
+            ...summary(),
+            customerAccessConfirmed:
+              options.customerAccessConfirmed ??
+              summary().customerAccessConfirmed,
+          },
+        ],
         revenueByCurrency: [],
+        topProducts: [
+          {
+            productId: "10000000-0000-4000-8000-000000000001",
+            productTitle: "Neonpfad: Berlin",
+            purchasedQuantity: 1,
+          },
+        ],
         totalOrders: 1,
       };
     },
@@ -755,7 +1296,23 @@ const fixture = (
       retrievalState: "RETRIEVED",
       supplierId: "supplier-reference",
     }),
-    list: async () => ({ orders: [summary()] }),
+    list: async () => ({
+      metrics: {
+        attentionOrders: 0,
+        failedOrders: 0,
+        processingOrders: 1,
+        totalOrders: 1,
+      },
+      orders: [
+        {
+          ...summary(),
+          customerAccessConfirmed:
+            options.customerAccessConfirmed ??
+            summary().customerAccessConfirmed,
+        },
+      ],
+      totalCount: 1,
+    }),
   };
   const staff: AdminStaffRepository = {
     changeRole: async () => "UPDATED",
@@ -845,10 +1402,35 @@ const fixture = (
           customerId: targetOrderId,
           email: "customer-a@example.test",
           lastOrderAt: new Date("2026-09-02T09:00:00.000Z"),
+          lastOrderReference: "KR-100001",
+          lastOrderStatus: "COMPLETED",
           orderCount: 1,
           verificationState: "VERIFIED",
         },
       ],
+      metrics: {
+        capturedPaymentVolumes: [
+          {
+            amountMinor: "2199",
+            currency: "EUR",
+          },
+        ],
+        customersWithOrders: 1,
+        newCustomersLast30Days: 1,
+        totalCustomers: 1,
+        verifiedCustomers: 1,
+      },
+      totalCount: 1,
+    }),
+    findCustomer: async () => ({
+      createdAt: new Date("2026-09-01T09:00:00.000Z"),
+      customerId: targetOrderId,
+      email: "customer-a@example.test",
+      lastOrderAt: new Date("2026-09-02T09:00:00.000Z"),
+      lastOrderReference: "KR-100001",
+      lastOrderStatus: "COMPLETED",
+      orderCount: 1,
+      verificationState: "VERIFIED",
     }),
     listFraudReviews: async () => ({
       items: [
@@ -876,14 +1458,50 @@ const fixture = (
         {
           active: true,
           availableOfferCount: 1,
-          lifecycle: "ACTIVE_CANDIDATE",
+          lifecycle: "IN_STOCK",
           offerCount: 2,
-          platform: "WINDOWS",
+          platform: "PC",
           productId: targetOrderId,
           productType: "GAME",
+          publicationState: "PUBLISHED" as const,
+          supplierCount: 1,
           title: "Neonpfad: Berlin",
+          updatedAt: new Date("2026-09-02T09:00:00.000Z"),
         },
       ],
+      metrics: {
+        activeProducts: 1,
+        availableProducts: 1,
+        productsWithOffers: 1,
+        totalProducts: 1,
+      },
+      totalCount: 1,
+    }),
+    findProduct: async () => ({
+      active: true,
+      availableOfferCount: 1,
+      createdAt: new Date("2026-09-01T09:00:00.000Z"),
+      identifiers: [{ type: "EAN", value: "4000000000001", verified: true }],
+      lifecycle: "IN_STOCK",
+      offerCount: 2,
+      offers: [
+        {
+          active: true,
+          availability: "IN_STOCK",
+          offerId: targetOrderId,
+          supplierName: "Synthetic Supplier",
+          supplierOfferReference: "SYNTHETIC-OFFER",
+          updatedAt: new Date("2026-09-02T09:00:00.000Z"),
+        },
+      ],
+      platform: "PC",
+      productId: targetOrderId,
+      productType: "GAME",
+      publicationState: "PUBLISHED" as const,
+      publicationStorefronts: ["KEYRANO"],
+      supplierCount: 1,
+      title: "Neonpfad: Berlin",
+      updatedAt: new Date("2026-09-02T09:00:00.000Z"),
     }),
     listSuppliers: async () => ({
       items: [
@@ -920,6 +1538,8 @@ const fixture = (
       "STAGING",
       () => new Date("2026-09-02T10:00:00.000Z"),
     ),
+    passwordAuthentication,
+    passwordReset,
     new AdminOrderService(orders, audit, hmacMaterial, "STAGING"),
     new AdminStaffService(staff, audit, hmacMaterial, "STAGING"),
     { allowedOrigin: origin, csrfSecret: hmacMaterial, secureCookies: true },
@@ -1064,11 +1684,14 @@ const summary = () => ({
   amountMinor: "2199",
   createdAt: new Date("2026-09-02T09:00:00.000Z"),
   currency: "EUR",
+  customerAccessConfirmed: false,
   customerEmail: "customer@example.test",
   fulfillmentStatus: "PENDING",
   orderId: targetOrderId,
+  operatorReference: "KR0000001",
   paymentStatus: "CAPTURED",
   procurementStatus: "SUCCEEDED",
+  productPlatform: "WINDOWS",
   productTitle: "Arena Eleven",
   quantity: 1,
   riskStatus: "APPROVED",
