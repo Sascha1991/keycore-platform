@@ -119,7 +119,7 @@ describe("PostgresAdminOperationsRepository query contracts", () => {
         statement: string,
       ) => {
         sql.push(statement);
-        const rows = statement.includes("FROM suppliers supplier WHERE")
+        const rows = statement.includes("FROM suppliers supplier")
           ? [
               {
                 available_offer_count: "0",
@@ -128,6 +128,13 @@ describe("PostgresAdminOperationsRepository query contracts", () => {
                 current_offer_count: "0",
                 display_name: "Synthetic Supplier",
                 id: "20000000-0000-4000-8000-000000000001",
+                integration_adapter_type: "SYNTHETIC",
+                integration_capabilities: { catalog: true },
+                integration_created_at: new Date("2026-09-01T00:00:00.000Z"),
+                integration_id: "30000000-0000-4000-8000-000000000001",
+                integration_record_version: 1,
+                integration_status: "CONFIGURED",
+                integration_updated_at: new Date("2026-09-01T00:00:00.000Z"),
                 last_successful_sync_at: null,
                 latest_sync_at: null,
                 latest_sync_status: null,
@@ -154,7 +161,15 @@ describe("PostgresAdminOperationsRepository query contracts", () => {
       new PostgresAdminOperationsRepository(database).findSupplier(
         "20000000-0000-4000-8000-000000000001",
       ),
-    ).resolves.toMatchObject({ capabilities: ["catalog"] });
+    ).resolves.toMatchObject({
+      capabilities: ["catalog"],
+      integration: {
+        adapterType: "SYNTHETIC",
+        credentialsConfigured: false,
+        supportsConnectionTest: false,
+        supportsManualSync: false,
+      },
+    });
     expect(sql.join("\n")).toContain("LIMIT 10");
     expect(sql.join("\n")).toContain("LIMIT 25");
     expect(sql.join("\n")).not.toMatch(

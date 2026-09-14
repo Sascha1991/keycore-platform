@@ -14,8 +14,7 @@ const context = {
 const input = {
   displayName: "Zweiter Testlieferant",
   operationId: "30000000-0000-4000-8000-000000000001",
-  providerType: "SYNTHETIC" as const,
-  supplierCode: "synthetic-admin-30000000-0000-4000-8000-000000000001",
+  supplierCode: "admin-supplier-30000000-0000-4000-8000-000000000001",
   supplierId: "40000000-0000-4000-8000-000000000001",
 };
 
@@ -33,12 +32,40 @@ describe("PostgresAdminSupplierMutationRepository", () => {
     expect(database.calls[1]?.sql).not.toMatch(
       /credential|secret|sync|offer|product/iu,
     );
-    expect(database.calls[2]).toMatchObject({
-      values: expect.arrayContaining([
-        "ADMIN_SUPPLIER_CREATED",
-        expect.stringContaining('"providerType":"SYNTHETIC"'),
-      ]),
-    });
+    expect(database.calls[2]?.values).toEqual(
+      expect.arrayContaining(["ADMIN_SUPPLIER_CREATED"]),
+    );
+    expect(JSON.stringify(database.calls)).not.toMatch(/providerType/iu);
+  });
+
+  it("configures one credential-less integration and audits it atomically", async () => {
+    const integration = {
+      adapterType: "SYNTHETIC" as const,
+      capabilities: { catalog: true },
+      integrationId: "50000000-0000-4000-8000-000000000001",
+      operationId: "60000000-0000-4000-8000-000000000001",
+      supplierId: input.supplierId,
+    };
+    const database = new CapturingTransaction([
+      [{ id: input.supplierId }],
+      [],
+      [],
+      [],
+    ]);
+    const repository = new PostgresAdminSupplierMutationRepository(database);
+
+    await expect(
+      repository.configureIntegration(integration, context),
+    ).resolves.toBe("CREATED");
+    expect(database.transactions).toBe(1);
+    expect(database.calls[2]?.sql).toContain("supplier_integrations");
+    expect(database.calls[2]?.sql).toContain("'{}'::jsonb");
+    expect(database.calls[3]?.values).toEqual(
+      expect.arrayContaining(["ADMIN_SUPPLIER_INTEGRATION_CONFIGURED"]),
+    );
+    expect(JSON.stringify(database.calls)).not.toMatch(
+      /password|secret|token/iu,
+    );
   });
 
   it("makes a repeated operation id idempotent without another write", async () => {

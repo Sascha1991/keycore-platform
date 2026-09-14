@@ -560,6 +560,13 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       readonly latest_sync_at: Date | null;
       readonly last_successful_sync_at: Date | null;
       readonly updated_at: Date;
+      readonly integration_id: string | null;
+      readonly integration_adapter_type: string | null;
+      readonly integration_status: string | null;
+      readonly integration_capabilities: Record<string, unknown> | null;
+      readonly integration_record_version: number | null;
+      readonly integration_created_at: Date | null;
+      readonly integration_updated_at: Date | null;
     }>(
       `
       WITH selected_suppliers AS (
@@ -574,8 +581,13 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
         mapping_stats.mapped_product_count, mapping_stats.review_required_count,
         offer_stats.current_offer_count, offer_stats.available_offer_count,
         latest_sync.status AS latest_sync_status, latest_sync.started_at AS latest_sync_at,
-        last_success.started_at AS last_successful_sync_at
+        last_success.started_at AS last_successful_sync_at,
+        integration.id::text AS integration_id, integration.adapter_type AS integration_adapter_type,
+        integration.status AS integration_status, integration.capabilities AS integration_capabilities,
+        integration.record_version AS integration_record_version,
+        integration.created_at AS integration_created_at, integration.updated_at AS integration_updated_at
       FROM selected_suppliers supplier
+      LEFT JOIN supplier_integrations integration ON integration.supplier_id = supplier.id
       LEFT JOIN LATERAL (
         SELECT count(*)::text AS product_count
         FROM supplier_products supplier_product
@@ -643,6 +655,7 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
         supplierCode: row.supplier_code,
         supplierId: row.id,
         updatedAt: row.updated_at,
+        integration: supplierIntegration(row),
       }),
       (row) => ({
         id: row.id,
@@ -686,6 +699,13 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       readonly latest_sync_status: string | null;
       readonly latest_sync_at: Date | null;
       readonly last_successful_sync_at: Date | null;
+      readonly integration_id: string | null;
+      readonly integration_adapter_type: string | null;
+      readonly integration_status: string | null;
+      readonly integration_capabilities: Record<string, unknown> | null;
+      readonly integration_record_version: number | null;
+      readonly integration_created_at: Date | null;
+      readonly integration_updated_at: Date | null;
     }>(
       `
       SELECT supplier.id::text, supplier.supplier_code, supplier.display_name, supplier.record_version,
@@ -697,8 +717,14 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
         (SELECT count(*)::text FROM supplier_offers supplier_offer JOIN offers canonical_offer ON canonical_offer.supplier_offer_id = supplier_offer.id WHERE supplier_offer.supplier_id = supplier.id AND supplier_offer.active = true AND canonical_offer.availability IN ('IN_STOCK', 'LIMITED')) AS available_offer_count,
         (SELECT run.status FROM catalog_sync_runs run WHERE run.supplier_id = supplier.id ORDER BY run.started_at DESC, run.id DESC LIMIT 1) AS latest_sync_status,
         (SELECT run.started_at FROM catalog_sync_runs run WHERE run.supplier_id = supplier.id ORDER BY run.started_at DESC, run.id DESC LIMIT 1) AS latest_sync_at,
-        (SELECT run.started_at FROM catalog_sync_runs run WHERE run.supplier_id = supplier.id AND run.status = 'SUCCEEDED' ORDER BY run.started_at DESC, run.id DESC LIMIT 1) AS last_successful_sync_at
-      FROM suppliers supplier WHERE supplier.id = $1::uuid
+        (SELECT run.started_at FROM catalog_sync_runs run WHERE run.supplier_id = supplier.id AND run.status = 'SUCCEEDED' ORDER BY run.started_at DESC, run.id DESC LIMIT 1) AS last_successful_sync_at,
+        integration.id::text AS integration_id, integration.adapter_type AS integration_adapter_type,
+        integration.status AS integration_status, integration.capabilities AS integration_capabilities,
+        integration.record_version AS integration_record_version,
+        integration.created_at AS integration_created_at, integration.updated_at AS integration_updated_at
+      FROM suppliers supplier
+      LEFT JOIN supplier_integrations integration ON integration.supplier_id = supplier.id
+      WHERE supplier.id = $1::uuid
     `,
       [supplierId],
     );
@@ -774,6 +800,7 @@ export class PostgresAdminOperationsRepository implements AdminOperationsReposit
       supplierCode: supplier.supplier_code,
       supplierId: supplier.id,
       updatedAt: supplier.updated_at,
+      integration: supplierIntegration(supplier),
     };
   }
 
@@ -1048,6 +1075,44 @@ const supplierSort = (
     comparator: ">",
     direction: "ASC",
     expression: "lower(supplier.display_name)",
+  };
+};
+
+interface SupplierIntegrationRow {
+  readonly integration_id: string | null;
+  readonly integration_adapter_type: string | null;
+  readonly integration_status: string | null;
+  readonly integration_capabilities: Record<string, unknown> | null;
+  readonly integration_record_version: number | null;
+  readonly integration_created_at: Date | null;
+  readonly integration_updated_at: Date | null;
+}
+
+const supplierIntegration = (row: SupplierIntegrationRow) => {
+  if (
+    !row.integration_id ||
+    !row.integration_adapter_type ||
+    !row.integration_status ||
+    !row.integration_record_version ||
+    !row.integration_created_at ||
+    !row.integration_updated_at
+  )
+    return null;
+  const capabilities = Object.entries(row.integration_capabilities ?? {})
+    .filter(([, enabled]) => enabled === true)
+    .map(([capability]) => capability)
+    .sort();
+  return {
+    adapterType: row.integration_adapter_type,
+    capabilities,
+    createdAt: row.integration_created_at,
+    credentialsConfigured: false,
+    integrationId: row.integration_id,
+    recordVersion: row.integration_record_version,
+    status: row.integration_status,
+    supportsConnectionTest: false,
+    supportsManualSync: false,
+    updatedAt: row.integration_updated_at,
   };
 };
 

@@ -211,6 +211,20 @@ export interface AdminSupplierSummary {
   readonly latestSyncAt: Date | null;
   readonly lastSuccessfulSyncAt: Date | null;
   readonly updatedAt: Date;
+  readonly integration: AdminSupplierIntegrationSummary | null;
+}
+
+export interface AdminSupplierIntegrationSummary {
+  readonly integrationId: string;
+  readonly adapterType: string;
+  readonly status: string;
+  readonly capabilities: readonly string[];
+  readonly credentialsConfigured: boolean;
+  readonly supportsConnectionTest: boolean;
+  readonly supportsManualSync: boolean;
+  readonly recordVersion: number;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
 }
 
 export type AdminSupplierSort =

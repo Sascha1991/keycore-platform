@@ -476,6 +476,7 @@ const supplier = {
   createdAt: new Date("2026-09-01T09:00:00.000Z"),
   currentOfferCount: 0,
   displayName: "Synthetic Supplier",
+  integration: null,
   lastSuccessfulSyncAt: null,
   latestSyncAt: null,
   latestSyncStatus: null,

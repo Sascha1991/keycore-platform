@@ -25,11 +25,12 @@ platform and Product-type labels, removes duplicate fallback options and makes
 platform filtering capitalization-insensitive for existing `PC`, `Xbox` and
 `PlayStation` data without rewriting stored Product values.
 
-Category 05/13 extends the Human-reviewed Supplier workspace with authoritative
-Supplier creation and display-name editing. Both operations use the capability,
-service and PostgreSQL boundaries rather than browser-local rows. The existing
-synthetic Supplier, its Products, mappings, offers and synchronization evidence
-remain unchanged.
+Category 05/13 now separates authoritative Supplier master data from optional
+technical integrations. Supplier creation is name-only and persists a neutral
+record without credentials, capabilities, sync runs, Products, mappings or
+offers. A distinct protected workflow can attach the one actually supported
+staging adapter. The existing synthetic Supplier, its four Products, mappings,
+offers and synchronization evidence remain unchanged.
 
 ## Functional changes
 
@@ -46,16 +47,19 @@ remain unchanged.
 - Customer, supplier, support and fraud lists retain their established search,
   filter, KPI and table presentation. The Product workspace now uses global
   Product aggregates independently from its bounded filtered result page.
-- Authorized `PROJECT_OWNER` users can create a Supplier with a normalized
-  display name and an allowlisted provider. The only current provider choice is
-  `SYNTHETIC`, exposed only in `STAGING`; the canonical UUID and idempotent
-  integration code are generated server-side.
+- Authorized `PROJECT_OWNER` users can create a Supplier with only a normalized
+  display name. Canonical UUID, internal code and idempotency identity are
+  generated server-side; no provider or adapter is selected during creation.
 - A new Supplier starts registered with empty capabilities and no fabricated
   synchronization, Product, mapping, offer, health or publication state. The
   existing list, global KPI, search, filters and sorting reflect the persisted
   record directly.
+- A separate `Integration einrichten` workflow is available only for a Supplier
+  without an integration. Its adapter registry exposes only the credential-less
+  `Synthetischer Testadapter` in `STAGING`. Saving it does not test a connection
+  or start synchronization, and unsupported actions are absent.
 - Authorized users can rename only the Supplier display name from its detail.
-  Supplier ID, provider, integration code, derived states, timestamps and
+  Supplier ID, integration, internal code, derived states, timestamps and
   aggregates remain immutable in that workflow.
 - Product search covers title, Product UUID and verified canonical identifiers.
   Lifecycle, platform, type, current-offer, deliverability and publication
@@ -91,14 +95,19 @@ remain unchanged.
   remain unchanged.
 - Supplier viewing does not imply mutation authority. `SUPPLIER_MANAGE` is
   checked independently, and denied attempts are safely audited.
-- Supplier create/edit POSTs require exact fields, exact Origin and path-bound
-  CSRF. Creation is idempotent by the server-generated operation identity;
-  renames use optimistic record versions. Successful persistence and its safe
-  audit event share one PostgreSQL transaction.
+- Supplier create, integration and edit POSTs require exact fields, exact Origin
+  and path-bound CSRF. Creation and integration setup are idempotent by their
+  server-generated operation identities; renames use optimistic record
+  versions. Each successful persistence operation and its safe audit event share
+  one PostgreSQL transaction.
 - Migration `034_supplier_admin_version` adds only the positive,
   default-initialized `suppliers.record_version` column and preserves all
-  existing Supplier, catalog and offer data. No dependency or production
-  configuration change is required.
+  existing Supplier, catalog and offer data.
+- Reversible migration `035_supplier_integrations` adds the optional one-to-one
+  integration boundary and backfills only known legacy synthetic Supplier
+  records. Its rollback drops integration metadata while preserving Suppliers,
+  catalog records, mappings, offers and synchronization history. No dependency
+  or production configuration change is required.
 
 ## Reference review
 
@@ -109,7 +118,7 @@ remain unchanged.
 | Einstellungen                | `PARTIALLY_ALIGNED`: tabbed hierarchy and real Operations Controls; unsupported settings remain unavailable                                   |
 | Bestellungen                 | `ALIGNED`: action bar, real filters, state-rich bounded table and detail path                                                                 |
 | Finanzen                     | `PARTIALLY_ALIGNED`: authoritative payment/refund metrics; no invented net profit, tax or margin                                              |
-| Lieferanten                  | `READY_FOR_HUMAN_BROWSER_REVIEW`: real bounded workspace plus audited Supplier creation and display-name editing                              |
+| Lieferanten                  | `READY_FOR_HUMAN_BROWSER_REVIEW`: Supplier master data, optional staging integration, audited creation and display-name editing               |
 | Kunden                       | `ALIGNED_WITH_DOMAIN_LIMIT`: account/order summaries; no invented names, onboarding or authentication mutation                                |
 | Mitarbeiter & Rollen         | `ALIGNED`: real staff lifecycle and permission actions retained in the denser layout                                                          |
 | Produkte / Katalog           | `READY_FOR_HUMAN_BROWSER_REVIEW`: global KPIs, real filters, bounded detail and semantic fallback media; no unsafe write or invented price    |
@@ -152,15 +161,16 @@ remain unchanged.
   unknown labels, the `Verfügbares Lieferantenangebot` KPI text and consistent
   `PC`, `Xbox` and `PlayStation` presentation. An `XBOX` filter matched the
   existing mixed-case `Xbox` row, and its detail retained the same label.
-- Credential management, connection testing and manual synchronization remain
-  deployment-controlled because no safe existing Admin operation supports
-  them. Basic Supplier creation truthfully leaves the integration unconfigured
-  and does not depend on any of those operations.
-- Local browser validation of Supplier Create and Edit covered approximately
-  1600 x 950, 1280 x 720 and 1025 x 826. It exercised a harmless validation
-  error, creation of a second synthetic Supplier, PRG detail redirect, both
-  name sort directions, search, versioned rename and search by the new name.
-  No page-wide horizontal overflow or browser console warning was observed.
+- Credential management, connection testing and manual synchronization are not
+  offered because no safe existing Admin operation supports them. Basic Supplier
+  creation truthfully leaves the integration unconfigured and independent from
+  any of those operations.
+- Local browser validation of the final Supplier correction covered 1600 x 950,
+  1280 x 720 and 1025 x 826. It exercised name-only Supplier creation, the
+  neutral no-integration state, the separate synthetic-adapter workflow and its
+  PRG detail redirect. The configured state rendered `Konfiguriert`; unsupported
+  connection and synchronization actions and credential inputs remained absent.
+  No page-wide horizontal overflow or browser console error was observed.
 - After an Admin service restart, normal email/password login still succeeded
   and both the existing and newly created Suppliers remained visible. The
   existing `Staging Synthetic Mock` retained four Supplier Products and four
@@ -178,14 +188,14 @@ remains `NOT_APPROVED`, and `SECURITY-READINESS` remains `NOT_APPROVED`.
 
 Category 05 Supplier Extension validation:
 
-- Focused Supplier service, Admin HTTP and PostgreSQL query contracts: 37 tests
-  passed.
-- Real PostgreSQL Admin persistence and staging migration/seed validation: 9
-  tests passed against isolated schemas, including migration `034`, create,
-  idempotency, rename, stale-write denial, list/Search/KPI reflection and audit.
-- `npm run check`: 856 passed, 145 service-gated tests skipped; format, lint,
-  typecheck and secret scan passed. One unrelated random-token substring flake
-  in the existing Kinguin suite passed on focused rerun and the complete rerun.
+- Focused Supplier service, Admin HTTP, presentation and PostgreSQL contracts:
+  72 tests passed across eight files.
+- The focused PostgreSQL group contributed 18 passing tests against PostgreSQL
+  16.10, including migrations `034` and `035`, neutral create, separate
+  integration setup, idempotency, rollback preservation, rename, stale-write
+  denial, list/search/KPI reflection, seed preservation and audit.
+- `npm run check`: 95 test files and 1,004 tests passed; format, lint, typecheck
+  and secret scan passed.
 - Security assessment: 60 passed with 345 focused exclusions.
 - E2E acceptance: 16/16 passed with PostgreSQL enabled.
 - UAT structure: 18 scenarios and five omission-first evidence artifacts valid.
@@ -214,11 +224,12 @@ Earlier V1.1 validation before this extension:
 
 ## Deployment classification
 
-The Category 05 extension is `MIGRATION_REQUIRED` because it adds reversible
-migration `034_supplier_admin_version`. Existing volumes and Supplier data must
-be preserved; no reset or reseed is required. After merge, apply the supported
-staging migration with the ignored hosted environment loaded, then rebuild only
-the Admin application and verify its health:
+The Category 05 final correction is `MIGRATION_REQUIRED` because it adds
+reversible migration `035_supplier_integrations`. Existing volumes and Supplier
+data must be preserved; no reset or reseed is required. The migration backfills
+the existing synthetic integration. After merge, apply the supported staging
+migration with the ignored hosted environment loaded, then rebuild only the
+Admin application and verify its health:
 
 ```bash
 cd ~/keyrano/keycore-platform

@@ -1818,6 +1818,12 @@ td:first-child {
 .supplier-form label small { color: var(--muted); font-size: .7rem; font-weight: 400; }
 .supplier-form-boundary { border-left: 3px solid #7a5cff; background: #101d2a; padding: .8rem 1rem; }
 .supplier-form-boundary p { margin: .3rem 0 0; color: var(--muted); font-size: .78rem; line-height: 1.5; }
+.supplier-adapter-description { display: grid; gap: .3rem; border: 1px solid var(--border); border-radius: 6px; background: var(--muted-surface); padding: .85rem; }
+.supplier-adapter-description p { margin: 0; color: var(--muted); line-height: 1.5; }
+.supplier-adapter-description span { color: #8bc8ff; font-size: .72rem; }
+.supplier-integration-empty { display: flex; align-items: flex-start; gap: .85rem; padding: .85rem; border: 1px dashed #38536c; border-radius: 7px; background: var(--muted-surface); }
+.supplier-integration-empty > .icon { flex: 0 0 auto; width: 1.5rem; height: 1.5rem; color: #8bc8ff; }
+.supplier-integration-empty p { margin: .3rem 0 .8rem; color: var(--muted); line-height: 1.5; }
 .supplier-form .form-actions { display: flex; justify-content: flex-end; align-items: center; gap: .65rem; padding-top: .25rem; }
 .supplier-immutable-context { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin: 0 0 1rem; }
 .supplier-immutable-context > div { min-width: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--muted-surface); padding: .75rem; }

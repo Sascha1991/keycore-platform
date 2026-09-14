@@ -14,6 +14,7 @@ import {
 } from "./admin-repositories.js";
 import { PostgresAdminOperationsRepository } from "./admin-operations-repository.js";
 import { PostgresAdminSupplierMutationRepository } from "./admin-supplier-repository.js";
+import { loadMigrations } from "./migrations.js";
 import { PostgresTestDatabase } from "./test-database.js";
 
 const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
@@ -580,8 +581,7 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       const createInput = {
         displayName: "Zweiter Testlieferant",
         operationId,
-        providerType: "SYNTHETIC" as const,
-        supplierCode: `synthetic-admin-${operationId}`,
+        supplierCode: `admin-supplier-${operationId}`,
         supplierId,
       };
 
@@ -627,6 +627,7 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         items: [
           {
             displayName: "Umbenannter Testlieferant",
+            integration: null,
             productCount: 0,
             recordVersion: 2,
             supplierId,
@@ -638,6 +639,49 @@ describePostgres("secure admin PostgreSQL persistence", () => {
           totalSuppliers: 1,
         },
         totalCount: 1,
+      });
+      await expect(
+        database.query(
+          `SELECT id FROM supplier_integrations WHERE supplier_id = $1::uuid`,
+          [supplierId],
+        ),
+      ).resolves.toMatchObject({ rowCount: 0 });
+
+      const integrationId = randomUUID();
+      const integrationOperationId = randomUUID();
+      await expect(
+        repository.configureIntegration(
+          {
+            adapterType: "SYNTHETIC",
+            capabilities: { catalog: true },
+            integrationId,
+            operationId: integrationOperationId,
+            supplierId,
+          },
+          context,
+        ),
+      ).resolves.toBe("CREATED");
+      await expect(
+        repository.configureIntegration(
+          {
+            adapterType: "SYNTHETIC",
+            capabilities: { catalog: true },
+            integrationId: randomUUID(),
+            operationId: integrationOperationId,
+            supplierId,
+          },
+          context,
+        ),
+      ).resolves.toBe("IDEMPOTENT");
+      await expect(operations.findSupplier(supplierId)).resolves.toMatchObject({
+        integration: {
+          adapterType: "SYNTHETIC",
+          capabilities: ["catalog"],
+          credentialsConfigured: false,
+          integrationId,
+          supportsConnectionTest: false,
+          supportsManualSync: false,
+        },
       });
 
       await expect(
@@ -666,6 +710,7 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       ).resolves.toMatchObject({
         rows: [
           { reason_code: "ADMIN_SUPPLIER_CREATED" },
+          { reason_code: "ADMIN_SUPPLIER_INTEGRATION_CONFIGURED" },
           { reason_code: "ADMIN_SUPPLIER_RENAMED" },
         ],
       });
@@ -677,6 +722,55 @@ describePostgres("secure admin PostgreSQL persistence", () => {
           ),
         ),
       ).not.toMatch(/credential|secret|token|password/iu);
+    } finally {
+      await database.cleanup();
+    }
+  }, 30_000);
+
+  it("backfills only legacy synthetic integrations and preserves suppliers on rollback", async () => {
+    const database = await initDatabase();
+    try {
+      const migration = (await loadMigrations()).find(
+        (candidate) => candidate.version === "035",
+      );
+      if (!migration) throw new Error("Migration 035 is required");
+      await database.query(migration.downSql);
+      const legacySupplierId = randomUUID();
+      const neutralSupplierId = randomUUID();
+      await database.query(
+        `INSERT INTO suppliers(id, supplier_code, display_name, capabilities)
+         VALUES
+           ($1::uuid, 'synthetic-admin-legacy', 'Legacy Synthetic', '{"catalog":true}'::jsonb),
+           ($2::uuid, 'ordinary-supplier', 'Ordinary Supplier', '{}'::jsonb)`,
+        [legacySupplierId, neutralSupplierId],
+      );
+
+      await database.query(migration.upSql);
+      await expect(
+        database.query<{
+          readonly adapter_type: string;
+          readonly supplier_id: string;
+        }>(
+          `SELECT supplier_id::text, adapter_type
+           FROM supplier_integrations
+           WHERE supplier_id IN ($1::uuid, $2::uuid)
+           ORDER BY supplier_id`,
+          [legacySupplierId, neutralSupplierId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [{ adapter_type: "SYNTHETIC", supplier_id: legacySupplierId }],
+      });
+
+      await database.query(migration.downSql);
+      await expect(
+        database.query<{ readonly count: string }>(
+          `SELECT count(*)::text AS count
+           FROM suppliers
+           WHERE id IN ($1::uuid, $2::uuid)`,
+          [legacySupplierId, neutralSupplierId],
+        ),
+      ).resolves.toMatchObject({ rows: [{ count: "2" }] });
+      await database.query(migration.upSql);
     } finally {
       await database.cleanup();
     }

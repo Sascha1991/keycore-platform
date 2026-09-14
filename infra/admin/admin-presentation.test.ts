@@ -82,6 +82,7 @@ describe("German Admin presentation labels", () => {
     );
     expect(adminAuditCodeLabel("FUTURE_REASON")).toBe("Unbekannter Vorgang");
     expect(adminStatusLabel("GRANTED")).toBe("Erteilt");
+    expect(adminStatusLabel("CONFIGURED")).toBe("Konfiguriert");
     expect(adminStatusLabel("UNKNOWN")).toBe("Unbekannt");
     expect(adminStatusLabel("FUTURE_STATUS")).toBe("Unbekannter Status");
   });

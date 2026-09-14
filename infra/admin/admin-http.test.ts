@@ -674,7 +674,7 @@ describe("AdminHttpController", () => {
   });
 
   it("renders the supplier workspace and bounded detail with authorized management actions", async () => {
-    const controller = fixture();
+    const controller = fixture({ supplierIntegrated: true });
     const listRequest = authenticated("GET", "/admin/suppliers");
     listRequest.query.set("panel", "filters");
     listRequest.query.set("sync", "NEVER");
@@ -684,7 +684,7 @@ describe("AdminHttpController", () => {
     expect(list.body).toContain("Globale Lieferantenkennzahlen");
     expect(list.body).toContain("Lieferantenfilter");
     expect(list.body).toContain('name="sync"');
-    expect(list.body).toContain("Keine aktuellen Daten");
+    expect(list.body).toContain("Integration konfiguriert");
     expect(list.body).toContain(`/admin/suppliers/${targetOrderId}`);
     expect(list.body).toContain("Lieferant hinzufügen");
     expect(list.body).not.toMatch(
@@ -696,8 +696,8 @@ describe("AdminHttpController", () => {
     );
     expect(detail.statusCode).toBe(200);
     expect(detail.body).toContain("Lieferantendetail");
-    expect(detail.body).toContain("Deployment-gesteuert");
-    expect(detail.body).toContain("Nicht im Browser verfügbar");
+    expect(detail.body).toContain("Synthetischer Testadapter");
+    expect(detail.body).toContain("Konfiguriert");
     expect(detail.body).toContain("Katalog");
     expect(detail.body).not.toContain("Unbekannter Status");
     expect(detail.body).toContain("Maximal 10 aktuelle Läufe");
@@ -708,14 +708,15 @@ describe("AdminHttpController", () => {
     );
   });
 
-  it("protects real supplier create and edit forms with RBAC, exact fields, Origin and CSRF", async () => {
+  it("protects name-only supplier, integration and edit forms with RBAC, exact fields, Origin and CSRF", async () => {
     const mutations = new CapturingSupplierMutations();
     const controller = fixture({ supplierMutations: mutations });
     const createPage = await controller.handle(
       authenticated("GET", "/admin/suppliers/new"),
     );
     expect(createPage.statusCode).toBe(200);
-    expect(createPage.body).toContain("Synthetischer Testanbieter");
+    expect(createPage.body).toContain("Lieferantenstammdaten");
+    expect(createPage.body).not.toContain('name="provider_type"');
     expect(createPage.body).not.toMatch(/api.?key|credential|password/iu);
     const createCsrf = required(
       /action="\/admin\/suppliers\/new"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"/u.exec(
@@ -729,7 +730,6 @@ describe("AdminHttpController", () => {
       csrf: createCsrf,
       display_name: "  Prüflieferant  ",
       operation_id: operationId,
-      provider_type: "SYNTHETIC",
     };
     await expect(
       controller.handle(
@@ -772,8 +772,62 @@ describe("AdminHttpController", () => {
     expect(mutations.creates[0]).toMatchObject({
       displayName: "Prüflieferant",
       operationId,
-      providerType: "SYNTHETIC",
     });
+
+    const integrationPage = await controller.handle(
+      authenticated("GET", `/admin/suppliers/${targetOrderId}/integration/new`),
+    );
+    expect(integrationPage.statusCode).toBe(200);
+    expect(integrationPage.body).toContain("Synthetischer Testadapter");
+    expect(integrationPage.body).not.toMatch(
+      /name="(?:api.?key|password|credential)[^"]*"/iu,
+    );
+    const integrationCsrf = required(
+      /action="\/admin\/suppliers\/20000000-0000-4000-8000-000000000001\/integration\/new"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"/u.exec(
+        integrationPage.body,
+      )?.[1],
+    );
+    const integrationOperationId = required(
+      /name="operation_id" value="([0-9a-f-]{36})"/u.exec(
+        integrationPage.body,
+      )?.[1],
+    );
+    const integrationForm = {
+      adapter_type: "SYNTHETIC",
+      csrf: integrationCsrf,
+      operation_id: integrationOperationId,
+    };
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          `/admin/suppliers/${targetOrderId}/integration/new`,
+          { origin },
+          { ...integrationForm, unexpected_field: "forbidden" },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    const integrated = await controller.handle(
+      authenticated(
+        "POST",
+        `/admin/suppliers/${targetOrderId}/integration/new`,
+        { origin },
+        integrationForm,
+      ),
+    );
+    expect(integrated).toMatchObject({
+      headers: {
+        Location: `/admin/suppliers/${targetOrderId}?integration=created`,
+      },
+      statusCode: 303,
+    });
+    expect(mutations.integrations).toEqual([
+      expect.objectContaining({
+        adapterType: "SYNTHETIC",
+        operationId: integrationOperationId,
+        supplierId: targetOrderId,
+      }),
+    ]);
 
     const editPage = await controller.handle(
       authenticated("GET", `/admin/suppliers/${targetOrderId}/edit`),
@@ -1364,6 +1418,7 @@ const fixture = (
     readonly customerAccessConfirmed?: boolean;
     readonly supportOperations?: AdminSupportOperationsPort;
     readonly supplierMutations?: AdminSupplierMutationRepository;
+    readonly supplierIntegrated?: boolean;
     readonly delayed?: StagingDelayedFulfillmentPort;
     readonly delayedEligible?: boolean;
     readonly role?: "PROJECT_OWNER" | "SUPPORT";
@@ -1669,6 +1724,9 @@ const fixture = (
           availableOfferCount: 1,
           currentOfferCount: 1,
           displayName: "Synthetic Supplier",
+          integration: options.supplierIntegrated
+            ? supplierIntegrationFixture()
+            : null,
           lastSuccessfulSyncAt: null,
           latestSyncAt: null,
           latestSyncStatus: null,
@@ -1695,6 +1753,9 @@ const fixture = (
       createdAt: new Date("2026-09-01T09:00:00.000Z"),
       currentOfferCount: 1,
       displayName: "Synthetic Supplier",
+      integration: options.supplierIntegrated
+        ? supplierIntegrationFixture()
+        : null,
       lastSuccessfulSyncAt: null,
       latestSyncAt: null,
       latestSyncStatus: null,
@@ -1754,12 +1815,28 @@ const fixture = (
   );
 };
 
+const supplierIntegrationFixture = () => ({
+  adapterType: "SYNTHETIC",
+  capabilities: ["catalog"],
+  createdAt: new Date("2026-09-01T09:00:00.000Z"),
+  credentialsConfigured: false,
+  integrationId: "30000000-0000-4000-8000-000000000001",
+  recordVersion: 1,
+  status: "CONFIGURED",
+  supportsConnectionTest: false,
+  supportsManualSync: false,
+  updatedAt: new Date("2026-09-02T09:00:00.000Z"),
+});
+
 class CapturingSupplierMutations implements AdminSupplierMutationRepository {
   public readonly creates: Parameters<
     AdminSupplierMutationRepository["create"]
   >[0][] = [];
   public readonly renames: Parameters<
     AdminSupplierMutationRepository["rename"]
+  >[0][] = [];
+  public readonly integrations: Parameters<
+    AdminSupplierMutationRepository["configureIntegration"]
   >[0][] = [];
 
   public async create(
@@ -1774,6 +1851,15 @@ class CapturingSupplierMutations implements AdminSupplierMutationRepository {
   ) {
     this.renames.push(input);
     return "UPDATED" as const;
+  }
+
+  public async configureIntegration(
+    input: Parameters<
+      AdminSupplierMutationRepository["configureIntegration"]
+    >[0],
+  ) {
+    this.integrations.push(input);
+    return "CREATED" as const;
   }
 }
 

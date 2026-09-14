@@ -11,7 +11,7 @@ import { PostgresTestDatabase, quoteIdentifier } from "./test-database.js";
 const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
 
 describe.skipIf(!connectionString)("staging deployment persistence", () => {
-  it("initializes through migration 034 and seeds only a small synthetic dataset idempotently", async () => {
+  it("initializes through migration 035 and seeds only a small synthetic dataset idempotently", async () => {
     await withDatabase(async (database) => {
       const expectedVersions = (await loadMigrations()).map(
         (migration) => migration.version,
@@ -20,7 +20,7 @@ describe.skipIf(!connectionString)("staging deployment persistence", () => {
         "SELECT version FROM keycore_migrations ORDER BY version",
       );
       expect(applied.rows.map((row) => row.version)).toEqual(expectedVersions);
-      expect(applied.rows.at(-1)?.version).toBe("034");
+      expect(applied.rows.at(-1)?.version).toBe("035");
 
       const boundary = new TestTransactionBoundary(database);
       const input = {
@@ -46,6 +46,23 @@ describe.skipIf(!connectionString)("staging deployment persistence", () => {
       await expect(count(database, "keycore_orders")).resolves.toBe(0);
       await expect(count(database, "encrypted_key_records")).resolves.toBe(0);
       await expect(count(database, "fulfillment_secrets")).resolves.toBe(0);
+      await expect(count(database, "supplier_integrations")).resolves.toBe(1);
+      await expect(
+        database.query(
+          `SELECT adapter_type, capabilities, configuration, status
+           FROM supplier_integrations
+           WHERE supplier_id = '00000000-0000-4000-8000-000000110001'::uuid`,
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            adapter_type: "SYNTHETIC",
+            capabilities: { catalog: true },
+            configuration: {},
+            status: "CONFIGURED",
+          },
+        ],
+      });
     });
   });
 });

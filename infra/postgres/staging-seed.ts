@@ -53,6 +53,18 @@ INSERT INTO suppliers(id, supplier_code, display_name, capabilities)
 VALUES ('00000000-0000-4000-8000-000000110001', 'STAGING_MOCK', 'Staging Synthetic Mock', '{"catalog":true,"purchase":false}'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
+INSERT INTO supplier_integrations(
+  id, supplier_id, adapter_type, configuration, capabilities, status,
+  operation_id, record_version
+)
+VALUES (
+  '00000000-0000-4000-8000-000000110011',
+  '00000000-0000-4000-8000-000000110001',
+  'SYNTHETIC', '{}'::jsonb, '{"catalog":true}'::jsonb, 'CONFIGURED',
+  '00000000-0000-4000-8000-000000110012', 1
+)
+ON CONFLICT (supplier_id) DO NOTHING;
+
 INSERT INTO products(id, product_type, title, platform, lifecycle, active, canonical_metadata_confidence, canonical_metadata)
 VALUES
   ('00000000-0000-4000-8000-000000110101', 'GAME', 'STAGING SYNTHETIC DE ALLOWED', 'PC', 'ACTIVE', true, 'HIGH', '{"synthetic":true}'::jsonb),

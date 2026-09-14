@@ -96,6 +96,7 @@ type AdminPresentationStatus =
   | "ALLOW"
   | "CURRENT"
   | "CUSTOM"
+  | "CONFIGURED"
   | "DEFAULT"
   | "DENY"
   | "GRANTED"
@@ -122,6 +123,7 @@ export const adminStatusLabels = {
   CAPTURED: "Erfasst",
   CLAIMED: "Zugeordnet",
   COMPLETED: "Abgeschlossen",
+  CONFIGURED: "Konfiguriert",
   CREATED: "Angelegt",
   CURRENT: "Aktuell",
   CUSTOM: "Individuell",

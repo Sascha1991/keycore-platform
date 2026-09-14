@@ -13,12 +13,14 @@ import {
 } from "./admin-orders.js";
 import type { AdminMutationContext } from "./admin-staff.js";
 
-export const adminSupplierProviderTypes = ["SYNTHETIC"] as const;
-export type AdminSupplierProviderType =
-  (typeof adminSupplierProviderTypes)[number];
+export const adminSupplierAdapterTypes = ["SYNTHETIC"] as const;
+export type AdminSupplierAdapterType =
+  (typeof adminSupplierAdapterTypes)[number];
 
-export interface AdminSupplierProviderOption {
-  readonly type: AdminSupplierProviderType;
+export interface AdminSupplierAdapterOption {
+  readonly capabilities: readonly string[];
+  readonly description: string;
+  readonly type: AdminSupplierAdapterType;
   readonly label: string;
 }
 
@@ -28,7 +30,6 @@ export interface AdminSupplierMutationRepository {
       readonly supplierId: string;
       readonly supplierCode: string;
       readonly displayName: string;
-      readonly providerType: AdminSupplierProviderType;
       readonly operationId: string;
     },
     context: AdminMutationContext,
@@ -45,6 +46,16 @@ export interface AdminSupplierMutationRepository {
     },
     context: AdminMutationContext,
   ): Promise<"UPDATED" | "UNCHANGED" | "STALE" | "NOT_FOUND">;
+  configureIntegration(
+    input: {
+      readonly adapterType: AdminSupplierAdapterType;
+      readonly capabilities: Readonly<Record<string, boolean>>;
+      readonly integrationId: string;
+      readonly operationId: string;
+      readonly supplierId: string;
+    },
+    context: AdminMutationContext,
+  ): Promise<"CREATED" | "IDEMPOTENT" | "CONFLICT" | "NOT_FOUND">;
 }
 
 export class AdminSupplierConflictError extends Error {
@@ -62,13 +73,21 @@ export class AdminSupplierService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  public async options(
+  public async integrationOptions(
     principal: AdminPrincipal,
     correlationId: CorrelationId,
-  ): Promise<readonly AdminSupplierProviderOption[]> {
+  ): Promise<readonly AdminSupplierAdapterOption[]> {
     await this.requireManage(principal, correlationId);
     return this.environment === "STAGING"
-      ? [{ type: "SYNTHETIC", label: "Synthetischer Testanbieter" }]
+      ? [
+          {
+            capabilities: ["Katalogintegration"],
+            description:
+              "Sichere lokale und Staging-Integration für synthetische Katalogdaten.",
+            label: "Synthetischer Testadapter",
+            type: "SYNTHETIC",
+          },
+        ]
       : [];
   }
 
@@ -79,14 +98,12 @@ export class AdminSupplierService {
   ): Promise<string> {
     await this.requireManage(principal, correlationId);
     const displayName = supplierDisplayName(input.displayName ?? "");
-    const providerType = this.providerType(input.providerType ?? "");
     const operationId = canonicalUuid(input.operationId ?? "");
     const result = await this.repository.create(
       {
         displayName,
         operationId,
-        providerType,
-        supplierCode: `synthetic-admin-${operationId}`,
+        supplierCode: `admin-supplier-${operationId}`,
         supplierId: randomUUID(),
       },
       this.context(principal, correlationId),
@@ -94,6 +111,34 @@ export class AdminSupplierService {
     if (result.status === "CONFLICT")
       throw new AdminAccessError("ADMIN_INPUT_INVALID");
     return result.supplierId;
+  }
+
+  public async configureIntegration(
+    principal: AdminPrincipal,
+    supplierIdValue: string,
+    input: Readonly<Record<string, string>>,
+    correlationId: CorrelationId,
+  ): Promise<void> {
+    await this.requireManage(principal, correlationId);
+    const supplierId = canonicalUuid(supplierIdValue);
+    const operationId = canonicalUuid(input.operationId ?? "");
+    const adapter = (
+      await this.integrationOptions(principal, correlationId)
+    ).find((option) => option.type === input.adapterType);
+    if (!adapter) throw new AdminAccessError("ADMIN_INPUT_INVALID");
+    const result = await this.repository.configureIntegration(
+      {
+        adapterType: adapter.type,
+        capabilities: { catalog: true },
+        integrationId: randomUUID(),
+        operationId,
+        supplierId,
+      },
+      this.context(principal, correlationId),
+    );
+    if (result === "NOT_FOUND")
+      throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    if (result === "CONFLICT") throw new AdminSupplierConflictError();
   }
 
   public async rename(
@@ -113,12 +158,6 @@ export class AdminSupplierService {
     if (result === "STALE") throw new AdminSupplierConflictError();
     if (result === "NOT_FOUND")
       throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
-  }
-
-  private providerType(value: string): AdminSupplierProviderType {
-    if (value !== "SYNTHETIC" || this.environment !== "STAGING")
-      throw new AdminAccessError("ADMIN_INPUT_INVALID");
-    return value;
   }
 
   private async requireManage(

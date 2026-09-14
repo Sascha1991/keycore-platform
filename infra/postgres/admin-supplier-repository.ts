@@ -35,9 +35,57 @@ export class PostgresAdminSupplierMutationRepository implements AdminSupplierMut
         context,
         input.supplierId,
         "ADMIN_SUPPLIER_CREATED",
-        { providerType: input.providerType },
+        {},
       );
       return { status: "CREATED", supplierId: input.supplierId };
+    });
+  }
+
+  public async configureIntegration(
+    input: Parameters<
+      AdminSupplierMutationRepository["configureIntegration"]
+    >[0],
+    context: AdminMutationContext,
+  ): ReturnType<AdminSupplierMutationRepository["configureIntegration"]> {
+    return this.database.transaction(async (client) => {
+      const supplier = await client.query<{ readonly id: string }>(
+        `SELECT id::text FROM suppliers WHERE id = $1::uuid FOR UPDATE`,
+        [input.supplierId],
+      );
+      if (!supplier.rows[0]) return "NOT_FOUND";
+      const existing = await client.query<{
+        readonly adapter_type: string;
+        readonly operation_id: string;
+      }>(
+        `SELECT adapter_type, operation_id::text FROM supplier_integrations WHERE supplier_id = $1::uuid FOR UPDATE`,
+        [input.supplierId],
+      );
+      const row = existing.rows[0];
+      if (row)
+        return row.operation_id === input.operationId &&
+          row.adapter_type === input.adapterType
+          ? "IDEMPOTENT"
+          : "CONFLICT";
+      await client.query(
+        `INSERT INTO supplier_integrations(id, supplier_id, adapter_type, configuration, capabilities, status, operation_id, record_version, created_at, updated_at)
+         VALUES ($1::uuid, $2::uuid, $3, '{}'::jsonb, $4::jsonb, 'CONFIGURED', $5::uuid, 1, $6, $6)`,
+        [
+          input.integrationId,
+          input.supplierId,
+          input.adapterType,
+          JSON.stringify(input.capabilities),
+          input.operationId,
+          context.at,
+        ],
+      );
+      await appendSupplierAudit(
+        client,
+        context,
+        input.supplierId,
+        "ADMIN_SUPPLIER_INTEGRATION_CONFIGURED",
+        { adapterType: input.adapterType, integrationId: input.integrationId },
+      );
+      return "CREATED";
     });
   }
 
