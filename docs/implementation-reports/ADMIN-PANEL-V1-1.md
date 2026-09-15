@@ -30,7 +30,8 @@ technical integrations. Supplier creation is name-only and persists a neutral
 record without credentials, capabilities, sync runs, Products, mappings or
 offers. A distinct protected workflow can attach the one actually supported
 staging adapter. The existing synthetic Supplier, its four Products, mappings,
-offers and synchronization evidence remain unchanged.
+offers and synchronization evidence remain unchanged. The final Human browser
+review accepted Category 05/13 with this boundary intact.
 
 ## Functional changes
 
@@ -118,7 +119,7 @@ offers and synchronization evidence remain unchanged.
 | Einstellungen                | `PARTIALLY_ALIGNED`: tabbed hierarchy and real Operations Controls; unsupported settings remain unavailable                                   |
 | Bestellungen                 | `ALIGNED`: action bar, real filters, state-rich bounded table and detail path                                                                 |
 | Finanzen                     | `PARTIALLY_ALIGNED`: authoritative payment/refund metrics; no invented net profit, tax or margin                                              |
-| Lieferanten                  | `READY_FOR_HUMAN_BROWSER_REVIEW`: Supplier master data, optional staging integration, audited creation and display-name editing               |
+| Lieferanten                  | `HUMAN_ACCEPTED`: Supplier master data, optional staging integration, audited creation and display-name editing                               |
 | Kunden                       | `ALIGNED_WITH_DOMAIN_LIMIT`: account/order summaries; no invented names, onboarding or authentication mutation                                |
 | Mitarbeiter & Rollen         | `ALIGNED`: real staff lifecycle and permission actions retained in the denser layout                                                          |
 | Produkte / Katalog           | `READY_FOR_HUMAN_BROWSER_REVIEW`: global KPIs, real filters, bounded detail and semantic fallback media; no unsafe write or invented price    |
@@ -175,10 +176,18 @@ offers and synchronization evidence remain unchanged.
   and both the existing and newly created Suppliers remained visible. The
   existing `Staging Synthetic Mock` retained four Supplier Products and four
   current and available offers.
+- Final Human browser review accepted Supplier creation independently from
+  integration, the truthful no-integration state, the separate staging-only
+  synthetic-adapter workflow, credential omission, master-data editing,
+  search, filters, KPIs, detail and multiple-Supplier rendering. The adjacent
+  Product workspace remained intact with 10 total and active Products, four
+  Products with Supplier offers and four deliverable Products.
 
 ## UAT and approval
 
-No Human-UAT result changed. The authoritative total remains 11/18 PASS.
+Category 05/13 Human browser review is `HUMAN_ACCEPTED`. This category review
+does not constitute a KS-11-07 scenario result. No Human-UAT result changed;
+the authoritative total remains 11/18 PASS.
 UAT-014 and UAT-017 remain technically ready but not Human-PASS. UAT-008,
 UAT-010, UAT-011, UAT-013 and UAT-016 remain blocked at their documented UI or
 identity boundaries. Human Acceptance remains `IN_REVIEW`, Human Approval

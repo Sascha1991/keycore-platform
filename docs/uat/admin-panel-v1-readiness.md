@@ -4,6 +4,22 @@ This document records technical browser readiness introduced by Admin Panel
 V1. It is not Human-UAT evidence and does not change the authoritative results
 in `artifacts/user-acceptance/uat-results.json`.
 
+## V1.1 category review
+
+Category 05/13, `Lieferanten`, is `HUMAN_ACCEPTED`. Human browser review
+confirmed Supplier creation independently from integration, a truthful
+no-integration state, separate staging-only synthetic-adapter setup without
+fabricated credential fields, distinct master-data editing, functional search,
+filters, KPIs and detail, and correct rendering of multiple Suppliers. The
+existing `Staging Synthetic Mock` data remained intact. The adjacent Product
+workspace remained at 10 total and active Products, four Products with Supplier
+offers and four deliverable Products.
+
+This category acceptance is not a KS-11-07 Human-UAT scenario result. The
+authoritative Human-UAT total remains 11/18 PASS; Human Acceptance remains
+`IN_REVIEW`, Human Approval remains `NOT_APPROVED`, and `SECURITY-READINESS`
+remains `NOT_APPROVED`.
+
 | Scenario | Post-deployment readiness   | Admin Panel V1 contribution                                                                                 | Remaining gate                                                                                          |
 | -------- | --------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | UAT-008  | `BLOCKED`                   | Order and supplier state are visible                                                                        | No approved synthetic ambiguous trigger, reconciliation action or customer-safe reconciliation state    |
