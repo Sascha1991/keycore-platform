@@ -172,6 +172,20 @@ abstract class Checkout_Gateway extends \WC_Payment_Gateway
             'productReference' => $reference,
             'quantity' => 1,
         ];
+        $coupon_items = array_values($order->get_items('coupon'));
+        if (count($coupon_items) > 1) {
+            return null;
+        }
+        if (1 === count($coupon_items)) {
+            $coupon = $coupon_items[0];
+            $code = $coupon instanceof \WC_Order_Item_Coupon
+                ? strtoupper(trim((string) $coupon->get_code()))
+                : '';
+            if (1 !== preg_match('/^[A-Z0-9][A-Z0-9_-]{2,31}$/', $code)) {
+                return null;
+            }
+            $command['promotionCode'] = $code;
+        }
         if ($is_guest) {
             $email = strtolower(trim((string) $order->get_billing_email()));
             $configured = strtolower(trim((string) getenv('KEYRANO_STAGING_GUEST_CHECKOUT_EMAIL')));

@@ -32,6 +32,7 @@ export * from "./ports/core.js";
 export * from "./ports/supplier.js";
 export * from "./pricing/pricing-margin.js";
 export * from "./pricing/price-locks.js";
+export * from "./promotions/promotions.js";
 export * from "./orders/order-orchestration.js";
 export * from "./operations/operations-controls.js";
 export * from "./operations/observability.js";

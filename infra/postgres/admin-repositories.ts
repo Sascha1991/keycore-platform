@@ -922,6 +922,16 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
         readonly retrieval_state: string | null;
         readonly delivery_state: string | null;
         readonly encrypted_secret_available: boolean;
+        readonly promotion_campaign_id: string | null;
+        readonly promotion_campaign_name: string | null;
+        readonly promotion_code: string | null;
+        readonly promotion_discount_type: "PERCENTAGE" | "FIXED_AMOUNT" | null;
+        readonly promotion_discount_value: string | null;
+        readonly promotion_base_amount_minor: string | null;
+        readonly promotion_discount_amount_minor: string | null;
+        readonly promotion_final_amount_minor: string | null;
+        readonly promotion_currency: string | null;
+        readonly promotion_consumed_at: Date | null;
       }
     >(
       `
@@ -961,7 +971,17 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
           fulfillment.status AS fulfillment_operation_status,
           fulfillment.retrieval_state,
           fulfillment.delivery_state,
-          (fulfillment.encrypted_secret_id IS NOT NULL) AS encrypted_secret_available
+          (fulfillment.encrypted_secret_id IS NOT NULL) AS encrypted_secret_available,
+          promotion.campaign_id AS promotion_campaign_id,
+          promotion.campaign_name_snapshot AS promotion_campaign_name,
+          promotion.code_snapshot AS promotion_code,
+          promotion.discount_type_snapshot AS promotion_discount_type,
+          promotion.discount_value_snapshot::text AS promotion_discount_value,
+          promotion.base_amount_minor::text AS promotion_base_amount_minor,
+          promotion.discount_amount_minor::text AS promotion_discount_amount_minor,
+          promotion.final_amount_minor::text AS promotion_final_amount_minor,
+          promotion.currency AS promotion_currency,
+          promotion.consumed_at AS promotion_consumed_at
         FROM keycore_orders orders
         JOIN products product ON product.id = orders.product_id
         LEFT JOIN keycore_customers customer ON customer.id = orders.customer_id
@@ -1004,6 +1024,30 @@ export class PostgresAdminOrderReadRepository implements AdminOrderReadRepositor
         toStatus: item.to_status,
       })),
       invoiceStatus: "NOT_AVAILABLE",
+      promotion:
+        row.promotion_campaign_id &&
+        row.promotion_campaign_name &&
+        row.promotion_code &&
+        row.promotion_discount_type &&
+        row.promotion_discount_value &&
+        row.promotion_base_amount_minor &&
+        row.promotion_discount_amount_minor &&
+        row.promotion_final_amount_minor &&
+        row.promotion_currency &&
+        row.promotion_consumed_at
+          ? {
+              baseAmountMinor: row.promotion_base_amount_minor,
+              campaignId: row.promotion_campaign_id,
+              campaignName: row.promotion_campaign_name,
+              code: row.promotion_code,
+              consumedAt: row.promotion_consumed_at,
+              currency: row.promotion_currency,
+              discountAmountMinor: row.promotion_discount_amount_minor,
+              discountType: row.promotion_discount_type,
+              discountValue: row.promotion_discount_value,
+              finalAmountMinor: row.promotion_final_amount_minor,
+            }
+          : null,
       retrievalState: row.retrieval_state,
       supplierId: row.supplier_id,
     };
@@ -1066,6 +1110,23 @@ const detailJoins = `
     ORDER BY challenge.created_at DESC, challenge.id DESC
     LIMIT 1
   ) claim ON true
+  LEFT JOIN LATERAL (
+    SELECT
+      redemption.campaign_id::text,
+      redemption.campaign_name_snapshot,
+      redemption.code_snapshot,
+      redemption.discount_type_snapshot,
+      redemption.discount_value_snapshot,
+      redemption.base_amount_minor,
+      redemption.discount_amount_minor,
+      redemption.final_amount_minor,
+      redemption.currency,
+      redemption.consumed_at
+    FROM promotion_redemptions redemption
+    WHERE redemption.order_id = orders.id
+      AND redemption.state = 'CONSUMED'
+    LIMIT 1
+  ) promotion ON true
 `;
 
 const orderFilterSql = (

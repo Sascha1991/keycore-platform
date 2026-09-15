@@ -36,6 +36,8 @@ export const adminCapabilities = [
   "CATALOG_VIEW",
   "SUPPLIER_VIEW",
   "SUPPLIER_MANAGE",
+  "PROMOTION_VIEW",
+  "PROMOTION_MANAGE",
   "SUPPORT_VIEW",
   "SUPPORT_MANAGE",
   "FINANCE_VIEW",
@@ -51,7 +53,13 @@ export type AdminCapability = (typeof adminCapabilities)[number];
 const roleCapabilities: Readonly<
   Record<AdminRole, readonly AdminCapability[]>
 > = {
-  FINANCE: ["ADMIN_ACCESS", "ORDER_VIEW", "FINANCE_VIEW", "REPORT_VIEW"],
+  FINANCE: [
+    "ADMIN_ACCESS",
+    "ORDER_VIEW",
+    "PROMOTION_VIEW",
+    "FINANCE_VIEW",
+    "REPORT_VIEW",
+  ],
   OPERATIONS: [
     "ADMIN_ACCESS",
     "ORDER_VIEW",
@@ -59,6 +67,7 @@ const roleCapabilities: Readonly<
     "CUSTOMER_VIEW",
     "CATALOG_VIEW",
     "SUPPLIER_VIEW",
+    "PROMOTION_VIEW",
     "SUPPORT_VIEW",
     "SUPPORT_MANAGE",
     "FRAUD_REVIEW_VIEW",
@@ -265,6 +274,19 @@ export interface AdminOrderHistoryEntry {
   readonly occurredAt: Date;
 }
 
+export interface AdminOrderPromotionEvidence {
+  readonly campaignId: string;
+  readonly campaignName: string;
+  readonly code: string;
+  readonly discountType: "PERCENTAGE" | "FIXED_AMOUNT";
+  readonly discountValue: string;
+  readonly baseAmountMinor: string;
+  readonly discountAmountMinor: string;
+  readonly finalAmountMinor: string;
+  readonly currency: string;
+  readonly consumedAt: Date;
+}
+
 export interface AdminOrderDetail extends AdminOrderSummary {
   readonly customerId: string | null;
   readonly correlationId: string;
@@ -277,6 +299,7 @@ export interface AdminOrderDetail extends AdminOrderSummary {
   readonly retrievalState: string | null;
   readonly deliveryState: string | null;
   readonly encryptedSecretAvailable: boolean;
+  readonly promotion: AdminOrderPromotionEvidence | null;
   readonly history: readonly AdminOrderHistoryEntry[];
 }
 

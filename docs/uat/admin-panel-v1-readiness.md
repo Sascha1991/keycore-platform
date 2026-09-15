@@ -20,6 +20,23 @@ authoritative Human-UAT total remains 11/18 PASS; Human Acceptance remains
 `IN_REVIEW`, Human Approval remains `NOT_APPROVED`, and `SECURITY-READINESS`
 remains `NOT_APPROVED`.
 
+Category 06/13, `Rabatte & Kampagnen`, is
+`READY_FOR_HUMAN_BROWSER_REVIEW`. Technical evidence covers Draft-first
+Campaign management, percentage and fixed EUR rules, code normalization,
+bounded Product eligibility, schedule/lifecycle behavior, concurrency-safe
+global limits, Storefront application, failure/cancellation release and
+immutable Price-Lock/Order snapshots. Automatic Campaigns, per-customer limits,
+mixed carts, zero-payable Orders and refund restoration are explicitly outside
+the supported initial boundary. Category 06 is not Human accepted and does not
+change any KS-11-07 scenario result or approval state.
+
+Local technical browser evidence covered 1600 x 950, 1280 x 720 and 1025 x 826,
+including Draft creation, bounded Product assignment, explicit activation and
+the real WooCommerce code/checkout path. One synthetic captured checkout
+produced a consumed Campaign use with zero remaining reservations and immutable
+Order evidence; a later Campaign rename did not alter that evidence. This is
+technical readiness evidence only and is not Human acceptance.
+
 | Scenario | Post-deployment readiness   | Admin Panel V1 contribution                                                                                 | Remaining gate                                                                                          |
 | -------- | --------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | UAT-008  | `BLOCKED`                   | Order and supplier state are visible                                                                        | No approved synthetic ambiguous trigger, reconciliation action or customer-safe reconciliation state    |

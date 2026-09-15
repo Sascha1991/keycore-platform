@@ -1846,3 +1846,180 @@ td:first-child {
   .supplier-form .form-actions { align-items: stretch; flex-direction: column-reverse; }
   .supplier-form .form-actions > * { justify-content: center; width: 100%; }
 }
+
+/* Category 06: bounded campaign workspace and lifecycle controls. */
+.promotion-search {
+  grid-template-columns: minmax(240px, 1fr) auto;
+  min-width: min(100%, 560px);
+}
+.promotion-filter-grid {
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+}
+.promotion-metrics article:nth-child(1)::after {
+  background: var(--blue);
+}
+.promotion-metrics article:nth-child(2)::after {
+  background: var(--green);
+}
+.promotion-metrics article:nth-child(3)::after {
+  background: var(--purple);
+}
+.promotion-metrics article:nth-child(4)::after {
+  background: var(--orange);
+}
+.promotions-table code,
+.promotion-detail-identity code,
+.promotion-product-list code {
+  color: #b9d5ff;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.promotion-form-section {
+  max-width: 920px;
+}
+.promotion-form textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+.promotion-boundary {
+  border-left: 3px solid var(--purple);
+  padding: 0.85rem 1rem;
+  background: rgb(111 73 207 / 10%);
+}
+.promotion-boundary p {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+}
+.promotion-detail-identity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.promotion-detail-identity h2,
+.promotion-detail-identity p {
+  margin: 0;
+}
+.promotion-detail-identity p {
+  margin-top: 0.3rem;
+  color: var(--muted);
+}
+.promotion-detail-media {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: #fff;
+  background: #5b32b4;
+}
+.promotion-detail-media svg {
+  width: 22px;
+  height: 22px;
+}
+.promotion-lifecycle {
+  margin: 1rem 0;
+}
+.promotion-lifecycle-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+.promotion-lifecycle-actions details {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--muted-surface);
+  padding: 0.8rem;
+}
+.promotion-lifecycle-actions summary {
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 700;
+}
+.promotion-lifecycle-actions p {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.promotion-lifecycle-actions form {
+  display: flex;
+  justify-content: flex-end;
+}
+.promotion-products .page-search {
+  margin: 1rem 0;
+}
+.promotion-product-list,
+.promotion-product-results {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.promotion-product-list li,
+.promotion-product-results li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 2%);
+}
+.promotion-product-list span,
+.promotion-product-list small,
+.promotion-product-results span,
+.promotion-product-results small {
+  display: block;
+}
+.promotion-product-list small,
+.promotion-product-results small {
+  margin-top: 0.25rem;
+  color: var(--muted);
+}
+@media (max-width: 1400px) {
+  .page-action-bar:has(.promotion-search) {
+    grid-template-columns: 1fr;
+  }
+  .page-action-bar:has(.promotion-search) .page-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 1180px) {
+  .promotion-metrics { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
+}
+@media (max-width: 1024px) {
+  .promotion-filter-grid {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  .promotion-search,
+  .promotion-filter-grid {
+    grid-template-columns: 1fr;
+    min-width: 100%;
+  }
+  .promotion-detail-identity {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .promotion-detail-identity > .status {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .promotion-lifecycle-actions {
+    grid-template-columns: 1fr;
+  }
+  .promotion-product-list li,
+  .promotion-product-results li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

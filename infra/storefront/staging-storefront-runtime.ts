@@ -25,6 +25,7 @@ import {
   type KeyAccessAuthorizationPort,
   SupportCaseService,
   type SupportCaseRepository,
+  type PromotionRepository,
 } from "../../packages/platform/src/contracts.js";
 import { InMemoryCustomerAccountReadRepository } from "../customers/in-memory-customer-account-repository.js";
 import { DevelopmentKeyManagementProvider } from "../key-management/development-provider.js";
@@ -82,6 +83,7 @@ export interface StagingStorefrontRuntimeDependencies {
   readonly guestOrderClaim?: StagingGuestOrderClaimPort;
   readonly invoiceDocumentProvider?: CustomerInvoiceDocumentProvider;
   readonly supportRepository?: SupportCaseRepository;
+  readonly promotions?: Pick<PromotionRepository, "quote">;
 }
 
 export const createStagingStorefrontRuntime = async (
@@ -176,6 +178,9 @@ export const createStagingStorefrontRuntime = async (
       checkout: dependencies.checkout ?? new FailClosedStagingCheckout(),
       guestOrderClaim:
         dependencies.guestOrderClaim ?? new FailClosedStagingGuestOrderClaim(),
+      ...(dependencies.promotions
+        ? { promotions: dependencies.promotions }
+        : {}),
       identityMappings: new Map([
         [config.customerAWpUserId, stagingCustomerAId],
         [config.customerBWpUserId, stagingCustomerBId],

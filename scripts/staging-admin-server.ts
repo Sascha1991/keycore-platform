@@ -6,6 +6,7 @@ import {
   AdminPasswordAuthenticationService,
   AdminPasswordResetService,
   AdminOperationsService,
+  AdminPromotionService,
   AdminSupplierService,
   AdminOrderService,
   AdminStaffService,
@@ -26,6 +27,7 @@ import {
 } from "../infra/postgres/admin-repositories.js";
 import { PostgresAdminOperationsRepository } from "../infra/postgres/admin-operations-repository.js";
 import { PostgresAdminSupplierMutationRepository } from "../infra/postgres/admin-supplier-repository.js";
+import { PostgresPromotionRepository } from "../infra/postgres/promotion-repository.js";
 import { PostgresOperationsControlRepository } from "../infra/postgres/operations-control-repositories.js";
 import { PostgresSupportCaseRepository } from "../infra/postgres/support-case-repositories.js";
 import { PostgresAuditEventRepository } from "../infra/postgres/repositories.js";
@@ -142,6 +144,11 @@ const controller = new AdminHttpController(
     ),
   ),
   new AdminSupplierService(supplierMutations, audit, "STAGING"),
+  new AdminPromotionService(
+    new PostgresPromotionRepository(database),
+    audit,
+    "STAGING",
+  ),
 );
 const css = await readFile(
   new URL("../apps/admin/assets/admin.css", import.meta.url),

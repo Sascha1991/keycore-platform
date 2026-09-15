@@ -12,6 +12,8 @@ interface Bridge
     /** @param array<string, int|string> $command @return array<string, mixed>|null */
     public function checkout(?int $wp_user_id, ?string $customer_id, array $command): ?array;
 
+    public function promotion_quote(string $code, string $product_reference, string $base_amount_minor): ?array;
+
     /** @return array<string, mixed>|null */
     public function orders(int $wp_user_id, string $customer_id): ?array;
 

@@ -303,6 +303,74 @@ describe("staging storefront browser adapter", () => {
     );
   });
 
+  it("quotes an applicable promotion only through the signed exact staging bridge contract", async () => {
+    const quotes: unknown[] = [];
+    const runtime = await harness(undefined, {
+      promotions: {
+        quote: async (input) => {
+          quotes.push(input);
+          return {
+            baseAmountMinor: input.baseAmountMinor,
+            campaignId: "71000000-0000-4000-8000-000000000001",
+            code: "STAGING20",
+            configuredValue: 2_000n,
+            currency: "EUR",
+            discountAmountMinor: 259n,
+            discountType: "PERCENTAGE",
+            finalAmountMinor: 1_040n,
+          };
+        },
+      },
+    });
+    const body = JSON.stringify({
+      baseAmountMinor: "1299",
+      code: "staging20",
+      currency: "EUR",
+      productReference: "synthetic-de-adventure",
+    });
+    const response = await runtime.bridge.handle(
+      signed({
+        body,
+        csrfVerified: true,
+        method: "POST",
+        path: "/v1/promotions/quote",
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(json(response.body)).toEqual({
+      code: "STAGING20",
+      discountAmountMinor: "259",
+      finalAmountMinor: "1040",
+      status: "APPLICABLE",
+    });
+    expect(quotes).toEqual([
+      expect.objectContaining({
+        baseAmountMinor: 1_299n,
+        maximumDiscountMinor: 299n,
+      }),
+    ]);
+    for (const invalid of [
+      signed({ body, method: "POST", path: "/v1/promotions/quote" }),
+      signed({
+        body: JSON.stringify({ ...JSON.parse(body), baseAmountMinor: "1" }),
+        csrfVerified: true,
+        method: "POST",
+        path: "/v1/promotions/quote",
+      }),
+      signed({
+        body: JSON.stringify({ ...JSON.parse(body), extra: "no" }),
+        csrfVerified: true,
+        method: "POST",
+        path: "/v1/promotions/quote",
+      }),
+    ]) {
+      expect(
+        (await runtime.bridge.handle(invalid)).statusCode,
+      ).toBeGreaterThanOrEqual(400);
+    }
+  });
+
   it("accepts only an authenticated CSRF-protected exact checkout command", async () => {
     const checkout = new CapturingCheckout();
     const runtime = await harness(checkout);
@@ -336,6 +404,31 @@ describe("staging storefront browser adapter", () => {
       expect.objectContaining({ customerId: stagingCustomerAId }),
     ]);
     expect(response.body).not.toContain(syntheticValue);
+
+    const promotionBody = JSON.stringify({
+      ...JSON.parse(body),
+      checkoutToken: "p".repeat(64),
+      expectedTotalMinor: "1040",
+      promotionCode: "STAGING20",
+    });
+    expect(
+      (
+        await runtime.bridge.handle(
+          signed({
+            body: promotionBody,
+            csrfVerified: true,
+            customerId: stagingCustomerAId,
+            method: "POST",
+            path: "/v1/checkout",
+            wpUserId: "20",
+          }),
+        )
+      ).statusCode,
+    ).toBe(200);
+    expect(checkout.commands[1]).toMatchObject({
+      expectedTotalMinor: "1040",
+      promotionCode: "STAGING20",
+    });
 
     for (const invalid of [
       signed({

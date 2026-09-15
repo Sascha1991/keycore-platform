@@ -36,6 +36,7 @@ final class Plugin
         add_action('admin_post_keyrano_support_reply', [$account, 'handle_support_reply']);
         add_action('admin_post_nopriv_keyrano_support_reply', [$account, 'handle_support_reply']);
         add_filter('woocommerce_payment_gateways', [Checkout_Registration_Loader::class, 'gateways']);
+        add_filter('woocommerce_get_shop_coupon_data', [self::class, 'promotion_coupon_data'], 10, 2);
         add_filter('woocommerce_thankyou_order_received_title', [self::class, 'terminal_order_received_title'], 10, 2);
         add_filter('woocommerce_thankyou_order_received_text', [self::class, 'terminal_order_received_text'], 10, 2);
         add_filter('render_block_woocommerce/order-confirmation-status', [self::class, 'terminal_order_confirmation_block']);
@@ -176,6 +177,55 @@ final class Plugin
                 'notice'
             );
         }
+    }
+
+    /** @return array<string, mixed>|false */
+    public static function promotion_coupon_data(mixed $coupon_data, string $code): array|false
+    {
+        if ('staging' !== wp_get_environment_type() || false !== $coupon_data || ! function_exists('WC')) {
+            return false === $coupon_data ? false : $coupon_data;
+        }
+        $cart = WC()->cart ?? null;
+        if (! $cart instanceof \WC_Cart) {
+            return false;
+        }
+        $items = array_values($cart->get_cart());
+        if (1 !== count($items) || 1 !== (int) ($items[0]['quantity'] ?? 0)) {
+            return false;
+        }
+        $product = $items[0]['data'] ?? null;
+        if (! $product instanceof \WC_Product || '1' !== $product->get_meta('_keyrano_managed', true)) {
+            return false;
+        }
+        $reference = sanitize_key((string) $product->get_meta('_keyrano_public_reference', true));
+        $base_minor = self::minor_units((string) $product->get_price());
+        if ('' === $reference || null === $base_minor) {
+            return false;
+        }
+        $quote = (new Bridge_Client())->promotion_quote(strtoupper(trim($code)), $reference, $base_minor);
+        $discount_minor = is_array($quote) ? (string) ($quote['discountAmountMinor'] ?? '') : '';
+        if ('APPLICABLE' !== ($quote['status'] ?? '') || 1 !== preg_match('/^[1-9][0-9]{0,9}$/', $discount_minor)) {
+            return false;
+        }
+        $amount = number_format(((int) $discount_minor) / 100, 2, '.', '');
+        return [
+            'amount' => $amount,
+            'description' => __('Autoritativer KeyRaNo-Staging-Rabatt', 'keycore-platform'),
+            'discount_type' => 'fixed_cart',
+            'free_shipping' => false,
+            'individual_use' => true,
+            'usage_limit' => 0,
+        ];
+    }
+
+    private static function minor_units(string $amount): ?string
+    {
+        $normalized = wc_format_decimal($amount, 2);
+        if (1 !== preg_match('/^(0|[1-9][0-9]{0,7})\.[0-9]{2}$/', $normalized)) {
+            return null;
+        }
+        [$whole, $fraction] = explode('.', $normalized, 2);
+        return ltrim($whole . $fraction, '0') ?: '0';
     }
 
     public static function terminal_order_received_title(string $title, mixed $order): string

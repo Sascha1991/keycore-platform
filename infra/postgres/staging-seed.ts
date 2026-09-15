@@ -51,7 +51,7 @@ export const seedSyntheticStagingData = async (
 const stagingSeedSql = `
 INSERT INTO suppliers(id, supplier_code, display_name, capabilities)
 VALUES ('00000000-0000-4000-8000-000000110001', 'STAGING_MOCK', 'Staging Synthetic Mock', '{"catalog":true,"purchase":false}'::jsonb)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 INSERT INTO supplier_integrations(
   id, supplier_id, adapter_type, configuration, capabilities, status,
@@ -72,6 +72,39 @@ VALUES
   ('00000000-0000-4000-8000-000000110103', 'GAME', 'STAGING SYNTHETIC BLOCKED', 'PC', 'ACTIVE', true, 'HIGH', '{"synthetic":true}'::jsonb),
   ('00000000-0000-4000-8000-000000110104', 'GAME', 'STAGING SYNTHETIC REVIEW', 'PC', 'ACTIVE', true, 'LOW', '{"synthetic":true}'::jsonb)
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO promotion_campaigns(
+  id, operation_id, name, internal_description, code, lifecycle,
+  discount_type, discount_value, currency, product_scope, starts_at, ends_at,
+  usage_limit, record_version
+)
+VALUES
+  (
+    '00000000-0000-4000-8000-000000116001',
+    '00000000-0000-4000-8000-000000116101',
+    'Staging Willkommensrabatt',
+    'Synthetische codegebundene Testkampagne für den lokalen Browserpfad.',
+    'STAGING10', 'ENABLED', 'PERCENTAGE', 1000, 'EUR',
+    'ALL_ELIGIBLE_PRODUCTS', NULL, NULL, 25, 1
+  ),
+  (
+    '00000000-0000-4000-8000-000000116002',
+    '00000000-0000-4000-8000-000000116102',
+    'Geplante Staging-Aktion',
+    'Synthetisches Planungsbeispiel ohne aktuelle Kundenwirkung.',
+    'STAGINGPLAN', 'ENABLED', 'FIXED_AMOUNT', 100, 'EUR',
+    'ALL_ELIGIBLE_PRODUCTS', statement_timestamp() + interval '30 days',
+    statement_timestamp() + interval '60 days', NULL, 1
+  ),
+  (
+    '00000000-0000-4000-8000-000000116003',
+    '00000000-0000-4000-8000-000000116103',
+    'Staging Entwurf',
+    'Synthetischer sicherer Entwurf für die Admin-Prüfung.',
+    'STAGINGDRAFT', 'DRAFT', 'PERCENTAGE', 500, 'EUR',
+    'SELECTED_PRODUCTS', NULL, NULL, NULL, 1
+  )
+ON CONFLICT DO NOTHING;
 
 INSERT INTO supplier_products(id, supplier_id, supplier_product_id, title, raw_metadata, product_id, lifecycle, active)
 SELECT

@@ -26,6 +26,7 @@ import {
   type PricingService,
   type ProductId,
   type ProductPriceSelection,
+  type PromotionRepository,
   type SellPriceQuote,
 } from "../../packages/platform/src/contracts.js";
 import {
@@ -46,6 +47,7 @@ import { PostgresOperationsControlRepository } from "../postgres/operations-cont
 import { PostgresOrderRepository } from "../postgres/order-repositories.js";
 import { PostgresPaymentRepository } from "../postgres/payment-repositories.js";
 import { PostgresPriceLockRepository } from "../postgres/price-lock-repositories.js";
+import { PostgresPromotionRepository } from "../postgres/promotion-repository.js";
 import { PostgresAuditEventRepository } from "../postgres/repositories.js";
 import { PersistedGuestOrderClaimIssuanceAuthority } from "../../packages/platform/src/contracts.js";
 import { stagingCheckoutCustomers } from "../postgres/staging-checkout-seed.js";
@@ -63,6 +65,7 @@ interface StagingCheckoutCommandCommon {
   readonly currency: string;
   readonly outcome: StagingPaymentOutcome;
   readonly productReference: string;
+  readonly promotionCode?: string;
   readonly quantity: number;
 }
 
@@ -105,6 +108,7 @@ export const createPostgresStagingCheckout = (
   const audit = new PostgresAuditEventRepository(database);
   const priceLockRepository = new PostgresPriceLockRepository(database);
   const { orders, priceLocks } = createStagingOrderOrchestration(database, now);
+  const promotions = new PostgresPromotionRepository(database);
   const identityRepository = new PostgresCustomerOrderIdentityRepository(
     database,
   );
@@ -159,6 +163,7 @@ export const createPostgresStagingCheckout = (
     payments,
     priceLockRepository,
     priceLocks,
+    promotions,
     verifier,
   });
 };
@@ -174,6 +179,7 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
       readonly payments: StripePaymentService;
       readonly priceLockRepository: PostgresPriceLockRepository;
       readonly priceLocks: PriceLockService;
+      readonly promotions: PromotionRepository;
       readonly verifier: SyntheticStripeWebhookVerifier;
     },
   ) {}
@@ -208,21 +214,85 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
     const requestCorrelationId = correlationId(
       `staging-checkout-${command.checkoutToken}`,
     );
+    const baseAmountMinor = BigInt(product.priceMinor);
     const priceLockKey = `staging:checkout:price-lock:${command.checkoutToken}`;
     let lock =
       await this.dependencies.priceLockRepository.findByIdempotencyKey(
         priceLockKey,
       );
+    const lockExpiresAt = new Date(
+      Date.parse(command.checkoutCreatedAt) + checkoutLifetimeMs,
+    );
+    let promotion = command.promotionCode
+      ? await this.dependencies.promotions.findReservation(
+          command.checkoutToken,
+          this.dependencies.now(),
+        )
+      : null;
+    if (
+      (promotion && promotion.code !== command.promotionCode) ||
+      (!command.promotionCode && promotion)
+    ) {
+      return { reasonCode: "CHECKOUT_PROMOTION_CONFLICT", status: "DENIED" };
+    }
+    if (!lock && command.promotionCode && !promotion) {
+      const quote = await this.dependencies.promotions.quote(
+        {
+          baseAmountMinor,
+          code: command.promotionCode,
+          currency: "EUR",
+          maximumDiscountMinor: syntheticMarginMinor - 1n,
+          productId: product.productId,
+        },
+        this.dependencies.now(),
+      );
+      if (
+        !quote ||
+        command.expectedTotalMinor !== quote.finalAmountMinor.toString()
+      ) {
+        return { reasonCode: "CHECKOUT_PROMOTION_INVALID", status: "DENIED" };
+      }
+      promotion = await this.dependencies.promotions.reserve(
+        {
+          baseAmountMinor,
+          checkoutToken: command.checkoutToken,
+          code: command.promotionCode,
+          currency: "EUR",
+          expiresAt: lockExpiresAt,
+          maximumDiscountMinor: syntheticMarginMinor - 1n,
+          productId: product.productId,
+        },
+        this.dependencies.now(),
+      );
+      if (!promotion || promotion.finalAmountMinor !== quote.finalAmountMinor) {
+        return {
+          reasonCode: "CHECKOUT_PROMOTION_UNAVAILABLE",
+          status: "DENIED",
+        };
+      }
+    }
+    const expectedAmountMinor = promotion?.finalAmountMinor ?? baseAmountMinor;
+    if (command.expectedTotalMinor !== expectedAmountMinor.toString()) {
+      if (!lock && promotion)
+        await this.dependencies.promotions.release(
+          command.checkoutToken,
+          this.dependencies.now(),
+        );
+      return { reasonCode: "CHECKOUT_TOTAL_CONFLICT", status: "DENIED" };
+    }
     if (!lock) {
       const created = await this.dependencies.priceLocks.createPriceLock({
         correlationId: requestCorrelationId,
-        expiresAt: new Date(
-          Date.parse(command.checkoutCreatedAt) + checkoutLifetimeMs,
-        ),
+        expiresAt: lockExpiresAt,
         idempotencyKey: priceLockKey,
-        quote: quoteFor(product, this.dependencies.now()),
+        quote: quoteFor(product, expectedAmountMinor, this.dependencies.now()),
       });
       if (!created.lock) {
+        if (promotion)
+          await this.dependencies.promotions.release(
+            command.checkoutToken,
+            this.dependencies.now(),
+          );
         return {
           reasonCode: created.reasonCode ?? "CHECKOUT_PRICE_LOCK_BLOCKED",
           status:
@@ -236,7 +306,7 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
     if (
       lock.productId !== product.productId ||
       lock.currency !== "EUR" ||
-      lock.lockedSellPrice.amountMinor !== BigInt(product.priceMinor)
+      lock.lockedSellPrice.amountMinor !== expectedAmountMinor
     ) {
       return { reasonCode: "CHECKOUT_PRICE_LOCK_CONFLICT", status: "DENIED" };
     }
@@ -245,16 +315,18 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
       checkoutEmailNormalized,
       correlationId: requestCorrelationId,
       expectedCurrency: currency("EUR"),
-      expectedCustomerAmount: money(
-        BigInt(product.priceMinor),
-        currency("EUR"),
-      ),
+      expectedCustomerAmount: money(expectedAmountMinor, currency("EUR")),
       idempotencyKey: `staging:checkout:order:${command.checkoutToken}`,
       priceLockId: lock.id,
       productId: productId(product.productId),
       quantity: 1,
     });
     if (!creation.order || creation.status === "CONFLICT") {
+      if (promotion && creation.status !== "CONFLICT")
+        await this.dependencies.promotions.release(
+          command.checkoutToken,
+          this.dependencies.now(),
+        );
       return {
         reasonCode: creation.reasonCode,
         status:
@@ -268,6 +340,11 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
         creation.order.customerId !== command.customerId) ||
       (command.checkoutMode === "GUEST" && creation.order.customerId !== null)
     ) {
+      if (promotion)
+        await this.dependencies.promotions.release(
+          command.checkoutToken,
+          this.dependencies.now(),
+        );
       return { reasonCode: "CHECKOUT_OWNERSHIP_CONFLICT", status: "DENIED" };
     }
 
@@ -282,6 +359,11 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
         ownership.status !== "BOUND" &&
         ownership.status !== "ALREADY_BOUND"
       ) {
+        if (promotion)
+          await this.dependencies.promotions.release(
+            command.checkoutToken,
+            this.dependencies.now(),
+          );
         return {
           reasonCode: "CHECKOUT_OWNERSHIP_UNAVAILABLE",
           status: "RECONCILIATION_REQUIRED",
@@ -303,6 +385,23 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
     }
     const terminal = terminalResult(current, command.outcome);
     if (terminal) {
+      if (promotion) {
+        if (current.paymentStatus === "CAPTURED") {
+          const consumption = await this.dependencies.promotions.consume(
+            { checkoutToken: command.checkoutToken, orderId: current.id },
+            this.dependencies.now(),
+          );
+          if (consumption === "UNAVAILABLE")
+            return {
+              reasonCode: "CHECKOUT_PROMOTION_RECONCILIATION_REQUIRED",
+              status: "RECONCILIATION_REQUIRED",
+            };
+        } else
+          await this.dependencies.promotions.release(
+            command.checkoutToken,
+            this.dependencies.now(),
+          );
+      }
       return command.checkoutMode === "GUEST" &&
         terminal.status === "IDEMPOTENT"
         ? this.withGuestClaim(
@@ -322,6 +421,11 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
       initialized.status === "BLOCKED" ||
       initialized.status === "RECONCILIATION_REQUIRED"
     ) {
+      if (promotion && initialized.status === "BLOCKED")
+        await this.dependencies.promotions.release(
+          command.checkoutToken,
+          this.dependencies.now(),
+        );
       return {
         reasonCode: initialized.reasonCode,
         status:
@@ -368,6 +472,23 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
       };
     }
     const result = resultFor(riskApproved, creation.status === "IDEMPOTENT");
+    if (promotion) {
+      if (result.status === "CAPTURED" || result.status === "IDEMPOTENT") {
+        const consumption = await this.dependencies.promotions.consume(
+          { checkoutToken: command.checkoutToken, orderId: latest.id },
+          this.dependencies.now(),
+        );
+        if (consumption === "UNAVAILABLE")
+          return {
+            reasonCode: "CHECKOUT_PROMOTION_RECONCILIATION_REQUIRED",
+            status: "RECONCILIATION_REQUIRED",
+          };
+      } else
+        await this.dependencies.promotions.release(
+          command.checkoutToken,
+          this.dependencies.now(),
+        );
+    }
     if (
       command.checkoutMode === "GUEST" &&
       (result.status === "CAPTURED" || result.status === "IDEMPOTENT")
@@ -449,7 +570,8 @@ class PostgresStagingCheckout implements StagingCheckoutPort {
       (candidate) => candidate.publicReference === command.productReference,
     );
     return product &&
-      command.expectedTotalMinor === product.priceMinor.toString()
+      (command.promotionCode !== undefined ||
+        command.expectedTotalMinor === product.priceMinor.toString())
       ? product
       : null;
   }
@@ -502,7 +624,7 @@ class StagingCatalogPricingService {
         status: "BLOCKED",
       };
     }
-    const quote = quoteFor(product, this.now());
+    const quote = quoteFor(product, BigInt(product.priceMinor), this.now());
     return {
       productId: input.productId,
       quotes: [quote],
@@ -661,10 +783,15 @@ class SyntheticStripeWebhookVerifier implements StripeWebhookVerifier {
 
 const quoteFor = (
   product: StagingCatalogProduct,
+  amountMinor: bigint,
   calculatedAt: Date,
 ): SellPriceQuote => {
-  const sellPrice = BigInt(product.priceMinor);
-  const acquisition = sellPrice > 300n ? sellPrice - 300n : 1n;
+  const sellPrice = amountMinor;
+  const baseSellPrice = BigInt(product.priceMinor);
+  const acquisition =
+    baseSellPrice > syntheticMarginMinor
+      ? baseSellPrice - syntheticMarginMinor
+      : 1n;
   const profit = sellPrice - acquisition;
   const eur = currency("EUR");
   return {
@@ -685,7 +812,7 @@ const quoteFor = (
     sellPrice: money(sellPrice, eur),
     sourceFingerprint: createHash("sha256")
       .update(
-        `${product.productId}:${product.publicReference}:${product.priceMinor}:EUR`,
+        `${product.productId}:${product.publicReference}:${amountMinor}:EUR`,
       )
       .digest("hex"),
     status: "QUOTED",
@@ -693,6 +820,8 @@ const quoteFor = (
     taxPolicyVersion: "staging-synthetic-tax-v1",
   };
 };
+
+const syntheticMarginMinor = 300n;
 
 const terminalResult = (
   order: KeyCoreOrder,

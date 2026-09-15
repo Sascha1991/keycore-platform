@@ -18,6 +18,7 @@ import {
   type CustomerId,
   type OrderId,
   type ProductKeyVaultService,
+  type PromotionRepository,
   type SupportCaseCategory,
   type SupportCaseService,
 } from "../../packages/platform/src/contracts.js";
@@ -60,6 +61,7 @@ export interface StagingStorefrontBridgeOptions {
   readonly vaultService: ProductKeyVaultService;
   readonly checkout: StagingCheckoutPort;
   readonly guestOrderClaim: StagingGuestOrderClaimPort;
+  readonly promotions?: Pick<PromotionRepository, "quote">;
   readonly supportService?: SupportCaseService;
   readonly sharedSecret: string;
   readonly allowedOrigin: string;
@@ -140,6 +142,40 @@ export class StagingStorefrontBridge {
         })),
         status: "OK",
       });
+    }
+
+    if (request.method === "POST" && request.path === "/v1/promotions/quote") {
+      if (!request.csrfVerified || !this.options.promotions)
+        return respond(403, { code: "ACCESS_DENIED", status: "ERROR" });
+      const input = parsePromotionQuoteBody(request.body);
+      const product = input
+        ? publishableStagingCatalog().find(
+            (candidate) => candidate.publicReference === input.productReference,
+          )
+        : undefined;
+      if (!input || !product || input.baseAmountMinor !== product.priceMinor)
+        return respond(400, {
+          code: "PROMOTION_REQUEST_INVALID",
+          status: "ERROR",
+        });
+      const quote = await this.options.promotions.quote(
+        {
+          baseAmountMinor: BigInt(input.baseAmountMinor),
+          code: input.code,
+          currency: "EUR",
+          maximumDiscountMinor: 299n,
+          productId: product.productId,
+        },
+        this.now(),
+      );
+      return quote
+        ? respond(200, {
+            code: quote.code,
+            discountAmountMinor: quote.discountAmountMinor.toString(),
+            finalAmountMinor: quote.finalAmountMinor.toString(),
+            status: "APPLICABLE",
+          })
+        : respond(422, { code: "PROMOTION_NOT_APPLICABLE", status: "ERROR" });
     }
 
     if (request.method === "POST" && request.path === "/v1/checkout") {
@@ -733,6 +769,7 @@ const parseCheckoutBody = (
       "expectedTotalMinor",
       "outcome",
       "productReference",
+      ...(typeof value.promotionCode === "string" ? ["promotionCode"] : []),
       "quantity",
     ];
     if (
@@ -764,6 +801,9 @@ const parseCheckoutBody = (
       expectedTotalMinor: value.expectedTotalMinor,
       outcome: value.outcome,
       productReference: value.productReference,
+      ...(typeof value.promotionCode === "string"
+        ? { promotionCode: value.promotionCode }
+        : {}),
       quantity: value.quantity,
     };
     if (value.checkoutMode === "ACCOUNT") {
@@ -774,6 +814,38 @@ const parseCheckoutBody = (
       ...common,
       checkoutEmailNormalized: value.checkoutEmailNormalized,
       checkoutMode: "GUEST",
+    };
+  } catch {
+    return null;
+  }
+};
+
+const parsePromotionQuoteBody = (
+  body: string,
+): {
+  readonly code: string;
+  readonly productReference: string;
+  readonly baseAmountMinor: number;
+} | null => {
+  try {
+    const value = JSON.parse(body) as unknown;
+    if (
+      !isRecord(value) ||
+      Object.keys(value).sort().join("\n") !==
+        ["baseAmountMinor", "code", "currency", "productReference"].join(
+          "\n",
+        ) ||
+      typeof value.code !== "string" ||
+      typeof value.productReference !== "string" ||
+      value.currency !== "EUR" ||
+      typeof value.baseAmountMinor !== "string" ||
+      !/^[1-9][0-9]{0,9}$/u.test(value.baseAmountMinor)
+    )
+      return null;
+    return {
+      baseAmountMinor: Number(value.baseAmountMinor),
+      code: value.code,
+      productReference: value.productReference,
     };
   } catch {
     return null;

@@ -33,6 +33,15 @@ staging adapter. The existing synthetic Supplier, its four Products, mappings,
 offers and synchronization evidence remain unchanged. The final Human browser
 review accepted Category 05/13 with this boundary intact.
 
+Category 06/13 adds an authoritative, staging-safe Campaign workspace and a
+real code-required discount path through KeyCore pricing, immutable Price Locks,
+WooCommerce checkout and captured Orders. Campaigns are created as Drafts,
+support percentage or fixed EUR reductions, bounded Product eligibility,
+optional minimum subtotal and a concurrency-safe global usage limit. Failed or
+cancelled payment attempts release their reservation; confirmed capture consumes
+it and preserves an immutable Order snapshot. This category is technically ready
+for Human browser review, not Human accepted.
+
 ## Functional changes
 
 - Dashboard KPI cards are accessible links. `Aufmerksamkeit`, `In Bearbeitung`
@@ -78,10 +87,26 @@ review accepted Category 05/13 with this boundary intact.
   deployment-controlled or unavailable configuration areas.
 - Staff keeps the existing audited create, role, permission and lifecycle
   operations while presenting useful status cards and a clearer create entry.
-- `Rabatte & Kampagnen` is now a permission-protected route. Because no
-  authoritative discount domain exists, all write and search controls are
-  explicitly unavailable and no WooCommerce coupon data is presented as
-  KeyCore authority.
+- `Rabatte & Kampagnen` is a permission-protected management workspace with
+  global KPIs, bounded search, structured filters, stable sort/pagination,
+  Campaign detail, Draft-first creation, versioned editing, bounded Product
+  selection and explicit lifecycle confirmations.
+- Code-required Campaigns share one uppercase normalization contract between
+  Admin, Storefront and persistence. The initial policy allows one non-combinable
+  code per checkout. Automatic Campaigns, multiple codes and per-customer limits
+  are intentionally not exposed.
+- Percentage and fixed-amount discounts use integer arithmetic. A Campaign can
+  apply to all eligible Products or canonical selected Product IDs. The optional
+  minimum is the single eligible Product subtotal; mixed carts and quantities
+  above one remain unsupported by this bounded initial integration.
+- Checkout validates the original authoritative Product price, creates one
+  promotion reservation, writes the discounted amount into the existing Price
+  Lock and consumes usage only after payment capture. Failed, cancelled or
+  blocked attempts release usage; replay uses the consumed snapshot even after
+  later Campaign disablement.
+- Campaign detail shows recent bounded usage and safe monetary evidence. The
+  corresponding Admin Order detail renders the immutable Campaign name, code,
+  rule and original/discounted/final amounts without customer secrets.
 
 ## Security and data boundaries
 
@@ -109,6 +134,14 @@ review accepted Category 05/13 with this boundary intact.
   records. Its rollback drops integration metadata while preserving Suppliers,
   catalog records, mappings, offers and synchronization history. No dependency
   or production configuration change is required.
+- Reversible migration `036_promotion_campaigns` adds Campaigns, canonical
+  Product eligibility and reservation/consumption snapshots. Database
+  constraints enforce normalized unique codes, valid schedules and positive
+  non-zero payable totals; a trigger prevents mutation or deletion of consumed
+  Order evidence. No existing Order, Product, Supplier or UAT fixture is reset.
+- `PROMOTION_VIEW` and `PROMOTION_MANAGE` are enforced independently of hidden
+  controls. All Admin mutations retain exact Origin, path-bound CSRF, exact-field
+  parsing, optimistic versions, transactional audit and no state-changing GET.
 
 ## Reference review
 
@@ -123,16 +156,25 @@ review accepted Category 05/13 with this boundary intact.
 | Kunden                       | `ALIGNED_WITH_DOMAIN_LIMIT`: account/order summaries; no invented names, onboarding or authentication mutation                                |
 | Mitarbeiter & Rollen         | `ALIGNED`: real staff lifecycle and permission actions retained in the denser layout                                                          |
 | Produkte / Katalog           | `READY_FOR_HUMAN_BROWSER_REVIEW`: global KPIs, real filters, bounded detail and semantic fallback media; no unsafe write or invented price    |
-| Rabatte & Kampagnen          | `BLOCKED_BY_DOMAIN`: navigable professional unavailable state; no authoritative discount domain exists                                        |
+| Rabatte & Kampagnen          | `READY_FOR_HUMAN_BROWSER_REVIEW`: authoritative code-required Campaign management, checkout application and immutable Order evidence          |
 | Support                      | `ALIGNED`: real cases, priorities, customer-visible/internal messages and transitions                                                         |
 | Admin-Panel Gesamt           | `PARTIALLY_ALIGNED`: shared visual language and operational modules; deep workflows remain constrained by existing authority                  |
 | Markierte Produkt-Action-Bar | `ALIGNED`: reusable title/description/search/filter/action composition implemented                                                            |
 
 ## Accepted limitations
 
-- There is no authoritative discount/campaign engine, customer admin onboarding,
-  catalog import/create mutation, supplier credential onboarding, fraud
+- There is no customer admin onboarding, catalog import/create mutation,
+  supplier credential onboarding, fraud
   resolution, refund initiation or production-shaped identity transport.
+- Category 06 intentionally omits automatic Campaigns, multiple codes per
+  Campaign, code generation, per-customer limits, audience targeting, category/
+  Supplier scope, mixed carts, quantities above one and zero-payable Orders.
+  Only EUR is supported. These controls are absent rather than cosmetic.
+- Existing Product pricing and profitability selection remains authoritative
+  before the Campaign reduction. The bounded Storefront adapter caps the accepted
+  discount and never trusts a browser-submitted amount. Full and partial refund
+  restoration is not implemented; a consumed use remains consumed because the
+  current refund domain has no authoritative reversal event for promotions.
 - A historical Dashboard capture series cannot use the established conservative
   `CAPTURED + REFUNDED + PARTIALLY_REFUNDED` contract with one consistent,
   immutable capture timestamp in the current model. The payment-volume panel
@@ -182,12 +224,26 @@ review accepted Category 05/13 with this boundary intact.
   search, filters, KPIs, detail and multiple-Supplier rendering. The adjacent
   Product workspace remained intact with 10 total and active Products, four
   Products with Supplier offers and four deliverable Products.
+- Local Category 06 browser validation covered the Campaign overview and detail
+  at 1600 x 950, 1280 x 720 and 1025 x 826 without page-wide horizontal
+  overflow. It exercised Draft creation, bounded Product search and assignment,
+  explicit activation, optimistic version progression and editable master data.
+  At 1025 px the four Campaign KPIs render as a stable two-column grid.
+- The real local WooCommerce browser path applied the active code-required
+  Campaign to `Neonpfad: Berlin`, showed the authoritative 1,94 EUR reduction
+  from 12,99 EUR to 11,05 EUR and completed one synthetic successful payment.
+  The confirmation exposed no Product Key. Admin then showed one consumed use,
+  zero reservations and immutable Order evidence. Renaming the Campaign after
+  capture did not alter the stored Campaign name, code, rule, base amount,
+  discount or final amount on that Order.
 
 ## UAT and approval
 
 Category 05/13 Human browser review is `HUMAN_ACCEPTED`. This category review
 does not constitute a KS-11-07 scenario result. No Human-UAT result changed;
 the authoritative total remains 11/18 PASS.
+Category 06/13 is `READY_FOR_HUMAN_BROWSER_REVIEW` and is not yet Human
+accepted. Its technical completion does not add or change a KS-11-07 result.
 UAT-014 and UAT-017 remain technically ready but not Human-PASS. UAT-008,
 UAT-010, UAT-011, UAT-013 and UAT-016 remain blocked at their documented UI or
 identity boundaries. Human Acceptance remains `IN_REVIEW`, Human Approval
@@ -195,7 +251,29 @@ remains `NOT_APPROVED`, and `SECURITY-READINESS` remains `NOT_APPROVED`.
 
 ## Validation
 
-Category 05 Supplier Extension validation:
+Category 06 Promotions validation:
+
+- Focused Campaign domain, Admin HTTP, browser adapter, checkout persistence,
+  Order presentation and PostgreSQL contracts: 74 tests passed across six
+  files. The focused PostgreSQL promotion and checkout group passed 12 tests,
+  including an independent-connection usage-limit race, idempotency, release,
+  immutable consumption evidence and the Admin Order projection.
+- `npm run check`: 97 test files and 1,017 tests passed; format, lint, typecheck
+  and secret scan passed.
+- Security assessment: 60 passed with 345 focused exclusions.
+- E2E acceptance: 16/16 passed with PostgreSQL enabled.
+- Catalog scale: 10/10 passed; Order concurrency: 38/38 passed.
+- Recovery harness: one local test passed and the PostgreSQL client-dependent
+  exercise was skipped on the Windows host; the CI runner remains responsible
+  for the complete recovery-client execution.
+- Migration `036` completed an isolated `up`, `down`, `up` cycle successfully.
+- UAT structure: 18 scenarios and five omission-first evidence artifacts valid.
+- Development and staging Compose rendering passed.
+- Composer validation, PHP 8.3 syntax and the WordPress adapter test passed.
+- `npm audit --audit-level=high`: zero vulnerabilities.
+- `git diff --check`: passed.
+
+Earlier Category 05 Supplier Extension validation:
 
 - Focused Supplier service, Admin HTTP, presentation and PostgreSQL contracts:
   72 tests passed across eight files.
@@ -233,12 +311,12 @@ Earlier V1.1 validation before this extension:
 
 ## Deployment classification
 
-The Category 05 final correction is `MIGRATION_REQUIRED` because it adds
-reversible migration `035_supplier_integrations`. Existing volumes and Supplier
-data must be preserved; no reset or reseed is required. The migration backfills
-the existing synthetic integration. After merge, apply the supported staging
-migration with the ignored hosted environment loaded, then rebuild only the
-Admin application and verify its health:
+The current V1.1 branch is `MIGRATION_REQUIRED`. Category 06 adds reversible
+migration `036_promotion_campaigns`; existing volumes and all established
+Supplier, Product, Order and UAT data must be preserved. No volume reset is
+required. After a separately authorized merge, the supported hosted-staging
+procedure must apply migrations, run the idempotent synthetic seed, and rebuild
+the Admin, Storefront and WordPress services:
 
 ```bash
 cd ~/keyrano/keycore-platform
@@ -249,8 +327,9 @@ set -a
 . ./.env.staging.server
 set +a
 npm run staging:migrate
-docker compose --env-file .env.staging.server -f infra/docker/compose.staging.yaml up -d --build keycore-admin
-docker compose --env-file .env.staging.server -f infra/docker/compose.staging.yaml ps keycore-admin
+npm run staging:seed
+docker compose --env-file .env.staging.server -f infra/docker/compose.staging.yaml up -d --build keycore-admin keycore-storefront wordpress
+docker compose --env-file .env.staging.server -f infra/docker/compose.staging.yaml ps keycore-admin keycore-storefront wordpress postgres redis mail
 ```
 
 No Hosted Staging or production deployment was performed by this task.

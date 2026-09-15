@@ -534,6 +534,7 @@ const detail = (): AdminOrderDetail => ({
   guestClaimStatus: "NOT_AVAILABLE",
   history: [],
   invoiceStatus: "NOT_AVAILABLE",
+  promotion: null,
   retrievalState: "RETRIEVED",
   supplierId: "supplier-reference",
 });

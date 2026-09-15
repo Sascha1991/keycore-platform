@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   AdminAuthenticationService,
   AdminOperationsService,
+  AdminPromotionService,
   AdminOrderService,
   AdminStaffService,
   AdminSupplierService,
@@ -17,6 +18,7 @@ import {
   type AdminOperationsControlMutationPort,
   type AdminSupportOperationsPort,
   type AdminSupplierMutationRepository,
+  type PromotionRepository,
   type AdminSessionRepository,
   type AdminStaffRepository,
   type AuditEvent,
@@ -553,11 +555,26 @@ describe("AdminHttpController", () => {
     expect(response.body).not.toContain("Kein Abrufnachweis");
   });
 
+  it("renders immutable consumed promotion evidence on the order detail", async () => {
+    const response = await fixture({ promotionEvidence: true }).handle(
+      authenticated("GET", `/admin/orders/${targetOrderId}`),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("Unveränderlicher Bestellnachweis");
+    expect(response.body).toContain("Staging 20");
+    expect(response.body).toContain("STAGING20");
+    expect(response.body).toContain("12,99 EUR");
+    expect(response.body).toContain("2,59 EUR");
+    expect(response.body).toContain("10,40 EUR");
+    expect(response.body).toContain("20 %");
+  });
+
   it("renders the shared operational shell without fake active controls", async () => {
     const response = await fixture().handle(authenticated("GET", "/admin/"));
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.11");
+    expect(response.body).toContain("/admin/assets/admin.css?v=1.1.13");
     expect(response.body).toContain('class="admin-shell"');
     expect(response.body).toContain('class="admin-toolbar"');
     expect(response.body).toContain('id="icon-home"');
@@ -582,7 +599,7 @@ describe("AdminHttpController", () => {
       ["/admin/customers", "customer-a@example.test"],
       ["/admin/catalog", "Neonpfad: Berlin"],
       ["/admin/suppliers", "Synthetic Supplier"],
-      ["/admin/discounts", "Noch keine Rabattverwaltung verfügbar"],
+      ["/admin/discounts", "Staging Rabatt"],
       ["/admin/support", "Bestellstatus"],
       ["/admin/fraud", "Manuelle Prüfungen"],
       ["/admin/finance", "Erfasstes Zahlungsvolumen (EUR)"],
@@ -640,11 +657,11 @@ describe("AdminHttpController", () => {
     const discounts = await controller.handle(
       authenticated("GET", "/admin/discounts"),
     );
-    expect(discounts.body).toContain('aria-disabled="true"');
+    expect(discounts.body).toContain("Staging Rabatt");
+    expect(discounts.body).toContain('href="/admin/discounts/new"');
     expect(discounts.body).toContain(
-      "keine autoritative Rabatt- oder Kampagnen-Domain",
+      "Einlösung wird erst nach bestätigter Zahlung verbraucht",
     );
-    expect(discounts.body).not.toContain('<button type="submit">Rabatt');
 
     const customerDetail = await controller.handle(
       authenticated("GET", `/admin/customers/${targetOrderId}`),
@@ -1404,6 +1421,134 @@ describe("AdminHttpController", () => {
       headers: { Location: detailPath },
     });
   });
+
+  it("renders the bounded campaign workspace and parses human discount values", async () => {
+    const promotions = new CapturingPromotionRepository();
+    const controller = fixture({ promotionRepository: promotions });
+    const overview = await controller.handle(
+      authenticated("GET", "/admin/discounts?status=ACTIVE&limit=10"),
+    );
+    expect(overview.statusCode).toBe(200);
+    expect(overview.body).toContain("Rabatte &amp; Kampagnen");
+    expect(overview.body).toContain("Staging Rabatt");
+    expect(overview.body).toContain("Handlungsbedarf");
+    expect(overview.body).not.toContain("Produkt-IDs");
+
+    const form = await controller.handle(
+      authenticated("GET", "/admin/discounts/new"),
+    );
+    const csrf =
+      /action="\/admin\/discounts\/new"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"/u.exec(
+        form.body,
+      )?.[1];
+    const operationId = /name="operation_id" value="([0-9a-f-]{36})"/u.exec(
+      form.body,
+    )?.[1];
+    expect(csrf).toBeTruthy();
+    expect(operationId).toBeTruthy();
+    const response = await controller.handle(
+      authenticated(
+        "POST",
+        "/admin/discounts/new",
+        { origin },
+        {
+          code: "staging20",
+          csrf: required(csrf),
+          discount_type: "PERCENTAGE",
+          discount_value: "20",
+          ends_at: "",
+          internal_description: "Interner Test",
+          minimum_subtotal: "5,00",
+          name: "Browser Test",
+          operation_id: required(operationId),
+          product_scope: "ALL_ELIGIBLE_PRODUCTS",
+          starts_at: "",
+          usage_limit: "12",
+        },
+      ),
+    );
+    expect(response.statusCode).toBe(303);
+    expect(promotions.creates[0]).toMatchObject({
+      code: "STAGING20",
+      discountValue: 2_000n,
+      minimumSubtotalMinor: 500n,
+      usageLimit: 12n,
+    });
+  });
+
+  it("keeps campaign mutations POST-only, exact-field, origin and CSRF protected", async () => {
+    const promotions = new CapturingPromotionRepository();
+    const controller = fixture({ promotionRepository: promotions });
+    const detailPath = `/admin/discounts/${targetOrderId}`;
+    const detail = await controller.handle(authenticated("GET", detailPath));
+    expect(detail.statusCode).toBe(200);
+    expect(detail.body).toContain("Kampagnendetail");
+    const action = `${detailPath}/lifecycle`;
+    const csrf = new RegExp(
+      `action="${action.replaceAll("/", "\\/")}"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"`,
+      "u",
+    ).exec(detail.body)?.[1];
+    expect(csrf).toBeTruthy();
+    await expect(
+      controller.handle(authenticated("GET", action)),
+    ).resolves.toMatchObject({ statusCode: 405 });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          action,
+          {},
+          {
+            csrf: required(csrf),
+            expected_version: "1",
+            lifecycle: "DISABLED",
+          },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          action,
+          { origin },
+          {
+            csrf: required(csrf),
+            expected_version: "1",
+            lifecycle: "DISABLED",
+            usage: "99",
+          },
+        ),
+      ),
+    ).resolves.toMatchObject({ statusCode: 403 });
+    await expect(
+      controller.handle(
+        authenticated(
+          "POST",
+          action,
+          { origin },
+          {
+            csrf: required(csrf),
+            expected_version: "1",
+            lifecycle: "DISABLED",
+          },
+        ),
+      ),
+    ).resolves.toMatchObject({
+      statusCode: 303,
+      headers: { Location: `${detailPath}?updated=1` },
+    });
+    expect(promotions.transitions).toHaveLength(1);
+
+    const denied = await fixture({ role: "SUPPORT" }).handle(
+      authenticated("GET", "/admin/discounts"),
+    );
+    expect(denied.statusCode).toBe(403);
+    const supportShell = await fixture({ role: "SUPPORT" }).handle(
+      authenticated("GET", "/admin/"),
+    );
+    expect(supportShell.body).not.toContain('href="/admin/discounts"');
+  });
 });
 
 const fixture = (
@@ -1419,6 +1564,8 @@ const fixture = (
     readonly supportOperations?: AdminSupportOperationsPort;
     readonly supplierMutations?: AdminSupplierMutationRepository;
     readonly supplierIntegrated?: boolean;
+    readonly promotionRepository?: PromotionRepository;
+    readonly promotionEvidence?: boolean;
     readonly delayed?: StagingDelayedFulfillmentPort;
     readonly delayedEligible?: boolean;
     readonly role?: "PROJECT_OWNER" | "SUPPORT";
@@ -1508,6 +1655,20 @@ const fixture = (
       guestClaimStatus: "NOT_AVAILABLE",
       history: [],
       invoiceStatus: "NOT_AVAILABLE",
+      promotion: options.promotionEvidence
+        ? {
+            baseAmountMinor: "1299",
+            campaignId: "71000000-0000-4000-8000-000000000001",
+            campaignName: "Staging 20",
+            code: "STAGING20",
+            consumedAt: new Date("2026-09-15T10:01:00.000Z"),
+            currency: "EUR",
+            discountAmountMinor: "259",
+            discountType: "PERCENTAGE",
+            discountValue: "2000",
+            finalAmountMinor: "1040",
+          }
+        : null,
       retrievalState: "RETRIEVED",
       supplierId: "supplier-reference",
     }),
@@ -1812,6 +1973,12 @@ const fixture = (
       "STAGING",
       () => new Date("2026-09-02T10:00:00.000Z"),
     ),
+    new AdminPromotionService(
+      options.promotionRepository ?? new CapturingPromotionRepository(),
+      audit,
+      "STAGING",
+      () => new Date("2026-09-02T10:00:00.000Z"),
+    ),
   );
 };
 
@@ -1826,6 +1993,110 @@ const supplierIntegrationFixture = () => ({
   supportsConnectionTest: false,
   supportsManualSync: false,
   updatedAt: new Date("2026-09-02T09:00:00.000Z"),
+});
+
+class CapturingPromotionRepository implements PromotionRepository {
+  public readonly creates: Parameters<PromotionRepository["create"]>[0][] = [];
+  public readonly updates: Parameters<PromotionRepository["update"]>[0][] = [];
+  public readonly transitions: Parameters<
+    PromotionRepository["transition"]
+  >[0][] = [];
+  public readonly productMutations: Parameters<
+    PromotionRepository["setProductEligibility"]
+  >[0][] = [];
+
+  public async list(input: Parameters<PromotionRepository["list"]>[0]) {
+    const campaign = promotionFixture();
+    return {
+      active: 1,
+      attention: 0,
+      campaigns: input.status && input.status !== "ACTIVE" ? [] : [campaign],
+      limit: input.limit,
+      page: input.page,
+      planned: 0,
+      total: 1,
+      totalCount: 1,
+    };
+  }
+
+  public async find() {
+    return { ...promotionFixture(), recentUsage: [], selectedProducts: [] };
+  }
+
+  public async create(input: Parameters<PromotionRepository["create"]>[0]) {
+    this.creates.push(input);
+    return { id: input.id, status: "CREATED" as const };
+  }
+
+  public async update(input: Parameters<PromotionRepository["update"]>[0]) {
+    this.updates.push(input);
+    return "UPDATED" as const;
+  }
+
+  public async setProductEligibility(
+    input: Parameters<PromotionRepository["setProductEligibility"]>[0],
+  ) {
+    this.productMutations.push(input);
+    return "UPDATED" as const;
+  }
+
+  public async searchProducts() {
+    return [
+      {
+        active: true,
+        id: targetOrderId,
+        platform: "PC",
+        title: "Neonpfad: Berlin",
+      },
+    ];
+  }
+
+  public async transition(
+    input: Parameters<PromotionRepository["transition"]>[0],
+  ) {
+    this.transitions.push(input);
+    return "UPDATED" as const;
+  }
+
+  public async quote() {
+    return null;
+  }
+  public async findReservation() {
+    return null;
+  }
+  public async reserve() {
+    return null;
+  }
+  public async consume() {
+    return "UNAVAILABLE" as const;
+  }
+  public async release() {
+    return undefined;
+  }
+}
+
+const promotionFixture = () => ({
+  code: "STAGING10",
+  consumedCount: 0n,
+  createdAt: new Date("2026-09-01T09:00:00.000Z"),
+  currency: "EUR" as const,
+  discountType: "PERCENTAGE" as const,
+  discountValue: 1_000n,
+  endsAt: null,
+  hasCommittedUsage: false,
+  id: targetOrderId,
+  internalDescription: "Synthetische Kampagne",
+  lifecycle: "ENABLED" as const,
+  minimumSubtotalMinor: null,
+  name: "Staging Rabatt",
+  operationId: "a2000000-0000-4000-8000-000000000001",
+  productIds: [] as readonly string[],
+  productScope: "ALL_ELIGIBLE_PRODUCTS" as const,
+  recordVersion: 1,
+  reservedCount: 0n,
+  startsAt: null,
+  updatedAt: new Date("2026-09-02T09:00:00.000Z"),
+  usageLimit: 25n,
 });
 
 class CapturingSupplierMutations implements AdminSupplierMutationRepository {
@@ -2016,13 +2287,16 @@ const request = (
   path: string,
   headers: Record<string, string> = {},
   form: Record<string, string> = {},
-): AdminHttpRequest => ({
-  form: new URLSearchParams(form),
-  headers,
-  method,
-  path,
-  query: new URLSearchParams(),
-});
+): AdminHttpRequest => {
+  const url = new URL(path, origin);
+  return {
+    form: new URLSearchParams(form),
+    headers,
+    method,
+    path: url.pathname,
+    query: url.searchParams,
+  };
+};
 const authenticated = (
   method: string,
   path: string,

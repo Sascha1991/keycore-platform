@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type {
   AdminAuthenticationService,
   AdminPasswordLoginPort,
@@ -33,6 +35,11 @@ import type {
   SupportCaseResolutionCode,
   SupportCaseStatus,
   SupportMessageVisibility,
+  AdminPromotionService,
+  PromotionDetail,
+  PromotionEffectiveStatus,
+  PromotionOverview,
+  PromotionProductOption,
 } from "../../packages/platform/src/contracts.js";
 import {
   AdminAccessError,
@@ -42,12 +49,14 @@ import {
   adminProductPlatformValues,
   adminRoles,
   createAdminCsrf,
+  effectivePromotionStatus,
   hasAdminCapability,
   newAdminCorrelationId,
   verifyAdminCsrf,
   orderId,
   operationsCapabilities,
   productTypes,
+  PromotionConflictError,
 } from "../../packages/platform/src/contracts.js";
 import type { StagingDelayedFulfillmentPort } from "../storefront/staging-delayed-fulfillment.js";
 import {
@@ -99,6 +108,7 @@ export class AdminHttpController {
     private readonly delayedFulfillment?: StagingDelayedFulfillmentPort,
     private readonly operations?: AdminOperationsService,
     private readonly supplierManagement?: AdminSupplierService,
+    private readonly promotionManagement?: AdminPromotionService,
   ) {}
 
   public async handle(request: AdminHttpRequest): Promise<AdminHttpResponse> {
@@ -155,7 +165,19 @@ export class AdminHttpController {
         );
       }
       if (request.method === "GET" && request.path === "/admin/discounts")
-        return this.discounts(principal);
+        return await this.discounts(principal, request);
+      if (request.path === "/admin/discounts/new") {
+        if (request.method === "GET")
+          return await this.promotionCreateForm(principal);
+        if (request.method === "POST")
+          return await this.promotionCreate(principal, request);
+        return this.render(
+          405,
+          errorContent("Anfrage nicht verfügbar."),
+          principal,
+          { Allow: "GET, POST" },
+        );
+      }
       if (request.method === "GET" && request.path === "/admin/support")
         return await this.supportList(principal, request);
       if (request.method === "GET" && request.path === "/admin/fraud")
@@ -228,6 +250,56 @@ export class AdminHttpController {
           errorContent("Anfrage nicht verfügbar."),
           principal,
           { Allow: "GET, POST" },
+        );
+      }
+      const promotionDetailMatch =
+        /^\/admin\/discounts\/([0-9a-f-]{36})$/iu.exec(request.path);
+      if (request.method === "GET" && promotionDetailMatch?.[1])
+        return await this.promotionDetail(
+          principal,
+          promotionDetailMatch[1],
+          request.query,
+        );
+      const promotionEditMatch =
+        /^\/admin\/discounts\/([0-9a-f-]{36})\/edit$/iu.exec(request.path);
+      if (promotionEditMatch?.[1]) {
+        if (request.method === "GET")
+          return await this.promotionEditForm(principal, promotionEditMatch[1]);
+        if (request.method === "POST")
+          return await this.promotionEdit(
+            principal,
+            promotionEditMatch[1],
+            request,
+          );
+        return this.render(
+          405,
+          errorContent("Anfrage nicht verfügbar."),
+          principal,
+          { Allow: "GET, POST" },
+        );
+      }
+      const promotionProductMatch =
+        /^\/admin\/discounts\/([0-9a-f-]{36})\/products$/iu.exec(request.path);
+      if (request.method === "POST" && promotionProductMatch?.[1])
+        return await this.promotionProductMutation(
+          principal,
+          promotionProductMatch[1],
+          request,
+        );
+      const promotionTransitionMatch =
+        /^\/admin\/discounts\/([0-9a-f-]{36})\/lifecycle$/iu.exec(request.path);
+      if (promotionTransitionMatch?.[1]) {
+        if (request.method === "POST")
+          return await this.promotionTransition(
+            principal,
+            promotionTransitionMatch[1],
+            request,
+          );
+        return this.render(
+          405,
+          errorContent("Anfrage nicht verfügbar."),
+          principal,
+          { Allow: "POST" },
         );
       }
       const controlMatch = /^\/admin\/settings\/controls\/([A-Z_]+)$/u.exec(
@@ -1013,10 +1085,329 @@ export class AdminHttpController {
     }
   }
 
-  private discounts(principal: AdminPrincipal): AdminHttpResponse {
-    if (!hasAdminCapability(principal, "CATALOG_VIEW"))
+  private async discounts(
+    principal: AdminPrincipal,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const queryFields = [
+      "search",
+      "status",
+      "discount_type",
+      "product_scope",
+      "usage",
+      "sort",
+      "page",
+      "limit",
+    ];
+    rejectDuplicateParameters(request.query, queryFields);
+    const result = await this.requirePromotionManagement().list(
+      principal,
+      {
+        discountType: request.query.get("discount_type") ?? undefined,
+        limit: request.query.get("limit") ?? undefined,
+        page: request.query.get("page") ?? undefined,
+        productScope: request.query.get("product_scope") ?? undefined,
+        search: request.query.get("search") ?? undefined,
+        sort: request.query.get("sort") ?? undefined,
+        status: request.query.get("status") ?? undefined,
+        usage: request.query.get("usage") ?? undefined,
+      },
+      newAdminCorrelationId(),
+    );
+    return this.render(
+      200,
+      discountsContent(result, request.query, principal),
+      principal,
+    );
+  }
+
+  private async promotionCreateForm(
+    principal: AdminPrincipal,
+  ): Promise<AdminHttpResponse> {
+    if (!hasAdminCapability(principal, "PROMOTION_MANAGE"))
       throw new AdminAccessError("ADMIN_ACCESS_DENIED");
-    return this.render(200, discountsContent(), principal);
+    const path = "/admin/discounts/new";
+    return this.render(
+      200,
+      promotionCreateContent(
+        createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
+        randomUUID(),
+      ),
+      principal,
+    );
+  }
+
+  private async promotionCreate(
+    principal: AdminPrincipal,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const path = "/admin/discounts/new";
+    const fields = [
+      "csrf",
+      "operation_id",
+      "name",
+      "internal_description",
+      "code",
+      "discount_type",
+      "discount_value",
+      "product_scope",
+      "starts_at",
+      "ends_at",
+      "minimum_subtotal",
+      "usage_limit",
+    ];
+    if (!this.validSensitivePost(request, principal, path, fields))
+      return this.render(
+        403,
+        errorContent("Anfrage nicht verfügbar."),
+        principal,
+      );
+    try {
+      const id = await this.requirePromotionManagement().create(
+        principal,
+        {
+          name: request.form.get("name") ?? "",
+          internalDescription: request.form.get("internal_description") ?? "",
+          operationId: request.form.get("operation_id") ?? "",
+          code: request.form.get("code") ?? "",
+          discountType: request.form.get("discount_type") ?? "",
+          discountValue: request.form.get("discount_value") ?? "",
+          productScope: request.form.get("product_scope") ?? "",
+          startsAt: request.form.get("starts_at") ?? "",
+          endsAt: request.form.get("ends_at") ?? "",
+          minimumSubtotal: request.form.get("minimum_subtotal") ?? "",
+          usageLimit: request.form.get("usage_limit") ?? "",
+        },
+        newAdminCorrelationId(),
+      );
+      return locationRedirect(`/admin/discounts/${id}?created=1`);
+    } catch (error) {
+      if (
+        error instanceof AdminAccessError &&
+        error.reasonCode === "ADMIN_INPUT_INVALID"
+      )
+        return this.render(
+          400,
+          promotionCreateContent(
+            createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
+            request.form.get("operation_id") ?? randomUUID(),
+            "Bitte prüfen Sie Code, Rabattwert, Zeitraum und Produktauswahl.",
+          ),
+          principal,
+        );
+      throw error;
+    }
+  }
+
+  private async promotionDetail(
+    principal: AdminPrincipal,
+    id: string,
+    query: URLSearchParams,
+  ): Promise<AdminHttpResponse> {
+    rejectDuplicateParameters(query, ["created", "updated", "product_search"]);
+    const campaign = await this.requirePromotionManagement().detail(
+      principal,
+      id,
+      newAdminCorrelationId(),
+    );
+    if (!campaign) throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    const productSearch = query.get("product_search") ?? "";
+    const productOptions =
+      campaign.productScope === "SELECTED_PRODUCTS" && productSearch
+        ? await this.requirePromotionManagement().searchProducts(
+            principal,
+            productSearch,
+            newAdminCorrelationId(),
+          )
+        : [];
+    const path = `/admin/discounts/${id}/lifecycle`;
+    return this.render(
+      200,
+      promotionDetailContent(
+        {
+          ...campaign,
+          productCsrf: createAdminCsrf(
+            principal,
+            "POST",
+            `/admin/discounts/${id}/products`,
+            this.config.csrfSecret,
+          ),
+        },
+        productOptions,
+        productSearch,
+        principal,
+        createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
+        query.has("created") || query.has("updated"),
+      ),
+      principal,
+    );
+  }
+
+  private async promotionTransition(
+    principal: AdminPrincipal,
+    id: string,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const path = `/admin/discounts/${id}/lifecycle`;
+    if (
+      !this.validSensitivePost(request, principal, path, [
+        "csrf",
+        "expected_version",
+        "lifecycle",
+      ])
+    )
+      return this.render(
+        403,
+        errorContent("Anfrage nicht verfügbar."),
+        principal,
+      );
+    await this.requirePromotionManagement().transition(
+      principal,
+      id,
+      {
+        expectedVersion: request.form.get("expected_version") ?? "",
+        lifecycle: request.form.get("lifecycle") ?? "",
+      },
+      newAdminCorrelationId(),
+    );
+    return locationRedirect(`/admin/discounts/${id}?updated=1`);
+  }
+
+  private async promotionEditForm(
+    principal: AdminPrincipal,
+    id: string,
+  ): Promise<AdminHttpResponse> {
+    if (!hasAdminCapability(principal, "PROMOTION_MANAGE"))
+      throw new AdminAccessError("ADMIN_ACCESS_DENIED");
+    const campaign = await this.requirePromotionManagement().detail(
+      principal,
+      id,
+      newAdminCorrelationId(),
+    );
+    if (!campaign) throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    const path = `/admin/discounts/${id}/edit`;
+    return this.render(
+      200,
+      promotionEditContent(
+        campaign,
+        createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
+      ),
+      principal,
+    );
+  }
+
+  private async promotionEdit(
+    principal: AdminPrincipal,
+    id: string,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const path = `/admin/discounts/${id}/edit`;
+    const fields = [
+      "csrf",
+      "expected_version",
+      "name",
+      "internal_description",
+      "code",
+      "discount_type",
+      "discount_value",
+      "product_scope",
+      "starts_at",
+      "ends_at",
+      "minimum_subtotal",
+      "usage_limit",
+    ];
+    if (!this.validSensitivePost(request, principal, path, fields))
+      return this.render(
+        403,
+        errorContent("Anfrage nicht verfügbar."),
+        principal,
+      );
+    try {
+      await this.requirePromotionManagement().update(
+        principal,
+        id,
+        {
+          code: request.form.get("code") ?? "",
+          discountType: request.form.get("discount_type") ?? "",
+          discountValue: request.form.get("discount_value") ?? "",
+          endsAt: request.form.get("ends_at") ?? "",
+          expectedVersion: request.form.get("expected_version") ?? "",
+          internalDescription: request.form.get("internal_description") ?? "",
+          minimumSubtotal: request.form.get("minimum_subtotal") ?? "",
+          name: request.form.get("name") ?? "",
+          productScope: request.form.get("product_scope") ?? "",
+          startsAt: request.form.get("starts_at") ?? "",
+          usageLimit: request.form.get("usage_limit") ?? "",
+        },
+        newAdminCorrelationId(),
+      );
+      return locationRedirect(`/admin/discounts/${id}?updated=1`);
+    } catch (error) {
+      const campaign = await this.requirePromotionManagement().detail(
+        principal,
+        id,
+        newAdminCorrelationId(),
+      );
+      if (!campaign) throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+      if (error instanceof PromotionConflictError)
+        return this.render(
+          409,
+          promotionEditContent(
+            campaign,
+            createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
+            error.reason === "IMMUTABLE"
+              ? "Code und Rabattregel sind nach der ersten Nutzung unveränderlich."
+              : "Die Kampagne wurde zwischenzeitlich geändert. Prüfen Sie den aktuellen Stand.",
+          ),
+          principal,
+        );
+      if (
+        error instanceof AdminAccessError &&
+        error.reasonCode === "ADMIN_INPUT_INVALID"
+      )
+        return this.render(
+          400,
+          promotionEditContent(
+            campaign,
+            createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
+            "Bitte prüfen Sie Rabattwert, Zeitraum und Eingaben.",
+          ),
+          principal,
+        );
+      throw error;
+    }
+  }
+
+  private async promotionProductMutation(
+    principal: AdminPrincipal,
+    id: string,
+    request: AdminHttpRequest,
+  ): Promise<AdminHttpResponse> {
+    const path = `/admin/discounts/${id}/products`;
+    if (
+      !this.validSensitivePost(request, principal, path, [
+        "csrf",
+        "expected_version",
+        "product_id",
+        "action",
+      ])
+    )
+      return this.render(
+        403,
+        errorContent("Anfrage nicht verfügbar."),
+        principal,
+      );
+    await this.requirePromotionManagement().setProductEligibility(
+      principal,
+      id,
+      {
+        action: request.form.get("action") ?? "",
+        expectedVersion: request.form.get("expected_version") ?? "",
+        productId: request.form.get("product_id") ?? "",
+      },
+      newAdminCorrelationId(),
+    );
+    return locationRedirect(`/admin/discounts/${id}?updated=1`);
   }
 
   private async supportList(
@@ -1505,6 +1896,12 @@ export class AdminHttpController {
     return this.supplierManagement;
   }
 
+  private requirePromotionManagement(): AdminPromotionService {
+    if (!this.promotionManagement)
+      throw new AdminAccessError("ADMIN_RESOURCE_UNAVAILABLE");
+    return this.promotionManagement;
+  }
+
   private render(
     statusCode: number,
     content: string,
@@ -1528,7 +1925,7 @@ const page = (
   additionalHeaders: Readonly<Record<string, string>> = {},
   csrfSecret?: string,
 ): AdminHttpResponse => ({
-  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.11"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
+  body: `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyRaNo Admin</title><link rel="stylesheet" href="/admin/assets/admin.css?v=1.1.13"></head><body>${principal ? shell(content, principal, requiredSecret(csrfSecret)) : `<main class="standalone">${content}</main>`}</body></html>`,
   headers: securityHeaders(additionalHeaders),
   statusCode,
 });
@@ -1596,10 +1993,13 @@ const shell = (
     label: string,
     iconName: AdminIconName,
   ): string =>
-    hasAdminCapability(principal, capability)
+    hasAdminCapability(
+      principal,
+      path === "/admin/discounts" ? "PROMOTION_VIEW" : capability,
+    )
       ? navigationLink(path, label, iconName, currentSection === path)
       : "";
-  return `${iconSprite()}<div class="admin-shell"><aside class="admin-sidebar"><a class="brand" href="/admin/" aria-label="KeyRaNo Admin Übersicht">${brandContent()}</a><nav aria-label="Admin-Navigation">${navigationLink("/admin/", "Übersicht", "home", currentSection === "/admin/")}${link("ORDER_VIEW", "/admin/orders", "Bestellungen", "cart")}${link("CUSTOMER_VIEW", "/admin/customers", "Kunden", "users")}${link("CATALOG_VIEW", "/admin/catalog", "Produkte / Katalog", "package")}${link("SUPPLIER_VIEW", "/admin/suppliers", "Lieferanten", "truck")}${link("CATALOG_VIEW", "/admin/discounts", "Rabatte &amp; Kampagnen", "tag")}${link("SUPPORT_VIEW", "/admin/support", "Support", "headset")}${link("FRAUD_REVIEW_VIEW", "/admin/fraud", "Betrugsprüfung", "shield")}${link("FINANCE_VIEW", "/admin/finance", "Finanzen", "euro")}${link("REPORT_VIEW", "/admin/reports", "Berichte &amp; Statistiken", "chart")}${hasAdminCapability(principal, "STAFF_VIEW") ? navigationLink("/admin/staff", "Mitarbeiter &amp; Rollen", "users", currentSection === "/admin/staff") : ""}${hasAdminCapability(principal, "AUDIT_VIEW") ? navigationLink("/admin/audit", "Audit-Protokoll", "file", currentSection === "/admin/audit") : ""}${link("OPERATIONS_CONTROL_VIEW", "/admin/settings", "Einstellungen", "settings")}</nav><div class="identity"><div class="identity-summary"><span class="avatar-icon">${icon("user")}</span><span><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.map(adminRoleLabel).join(", "))}</small></span></div><form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="${csrf}"><button type="submit">${icon("logout")} Abmelden</button></form></div></aside><main><header class="admin-toolbar"><span class="environment-badge">STAGING</span><a class="notification-link" href="/admin/notifications"${currentSection === "/admin/notifications" ? ' aria-current="page"' : ""}>${icon("bell")}<span>Benachrichtigungen</span></a><div class="toolbar-identity"><span class="avatar-icon">${icon("user")}</span><span><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.map(adminRoleLabel).join(", "))}</small></span></div></header>${content}</main></div>`;
+  return `${iconSprite()}<div class="admin-shell"><aside class="admin-sidebar"><a class="brand" href="/admin/" aria-label="KeyRaNo Admin Übersicht">${brandContent()}</a><nav aria-label="Admin-Navigation">${navigationLink("/admin/", "Übersicht", "home", currentSection === "/admin/")}${link("ORDER_VIEW", "/admin/orders", "Bestellungen", "cart")}${link("CUSTOMER_VIEW", "/admin/customers", "Kunden", "users")}${link("CATALOG_VIEW", "/admin/catalog", "Produkte / Katalog", "package")}${link("SUPPLIER_VIEW", "/admin/suppliers", "Lieferanten", "truck")}${link("PROMOTION_VIEW", "/admin/discounts", "Rabatte &amp; Kampagnen", "tag")}${link("SUPPORT_VIEW", "/admin/support", "Support", "headset")}${link("FRAUD_REVIEW_VIEW", "/admin/fraud", "Betrugsprüfung", "shield")}${link("FINANCE_VIEW", "/admin/finance", "Finanzen", "euro")}${link("REPORT_VIEW", "/admin/reports", "Berichte &amp; Statistiken", "chart")}${hasAdminCapability(principal, "STAFF_VIEW") ? navigationLink("/admin/staff", "Mitarbeiter &amp; Rollen", "users", currentSection === "/admin/staff") : ""}${hasAdminCapability(principal, "AUDIT_VIEW") ? navigationLink("/admin/audit", "Audit-Protokoll", "file", currentSection === "/admin/audit") : ""}${link("OPERATIONS_CONTROL_VIEW", "/admin/settings", "Einstellungen", "settings")}</nav><div class="identity"><div class="identity-summary"><span class="avatar-icon">${icon("user")}</span><span><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.map(adminRoleLabel).join(", "))}</small></span></div><form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="${csrf}"><button type="submit">${icon("logout")} Abmelden</button></form></div></aside><main><header class="admin-toolbar"><span class="environment-badge">STAGING</span><a class="notification-link" href="/admin/notifications"${currentSection === "/admin/notifications" ? ' aria-current="page"' : ""}>${icon("bell")}<span>Benachrichtigungen</span></a><div class="toolbar-identity"><span class="avatar-icon">${icon("user")}</span><span><strong>${escapeHtml(principal.displayName)}</strong><small>${escapeHtml(principal.roles.map(adminRoleLabel).join(", "))}</small></span></div></header>${content}</main></div>`;
 };
 
 type AdminIconName =
@@ -2716,8 +3116,236 @@ const supplierDetailContent = (
   return `${pageActionBar("Lieferantendetail", "Lieferantenstammdaten, Integration und Katalogbeziehungen.", actions)}${success ? `<div class="notice notice-success"><strong>${escapeHtml(success)}</strong><p>Der autoritative Lieferantenstand wurde gespeichert.</p></div>` : ""}<section class="supplier-detail-identity"><span class="supplier-detail-media">${icon("truck")}</span><div><span class="eyebrow">Lieferant</span><h2>${escapeHtml(supplier.displayName)}</h2><p>${escapeHtml(supplier.supplierCode)} · ID ${escapeHtml(supplier.supplierId)}</p></div><span class="status status-${!integration ? "unknown" : attention ? "warning" : supplier.latestSyncStatus === "SUCCEEDED" ? "active" : "info"}">${escapeHtml(!integration ? "Keine Integration" : (attention ?? (supplier.latestSyncStatus === "SUCCEEDED" ? "Betriebsbereit" : "Integration konfiguriert")))}</span></section><section class="state-strip supplier-state-strip" aria-label="Lieferantenzustand"><div><span>Integration</span><strong>${integration ? supplierAdapterLabel(integration.adapterType) : "Nicht eingerichtet"}</strong><small>${integration ? "Konfiguriert, nicht verifiziert" : "Normaler neutraler Zustand"}</small></div><div><span>Synchronisierung</span><strong>${escapeHtml(!integration ? "Nicht verfügbar" : supplier.latestSyncStatus ? operationalLabel(supplier.latestSyncStatus) : "Noch nicht synchronisiert")}</strong>${supplier.latestSyncAt ? `<small>${escapeHtml(formatDate(supplier.latestSyncAt))}</small>` : ""}</div><div><span>Letzter Erfolg</span><strong>${supplier.lastSuccessfulSyncAt ? escapeHtml(formatDate(supplier.lastSuccessfulSyncAt)) : "Keiner"}</strong></div><div><span>Handlungsbedarf</span><strong>${escapeHtml(attention ?? "Keiner erkannt")}</strong></div></section><section class="detail-grid supplier-detail-grid"><article><h2>Lieferantenstammdaten</h2>${detailRow("Lieferanten-ID", supplier.supplierId)}${detailRow("Interner Code", supplier.supplierCode)}${detailRow("Erstellt", formatDate(supplier.createdAt))}${detailRow("Aktualisiert", formatDate(supplier.updatedAt))}</article><article><h2>Integration</h2>${integrationPanel}</article></section><section class="content-section supplier-catalog-section"><div class="section-heading"><div><h2>Katalog & Zuordnungen</h2><span>Autoritative aktuelle Bestände</span></div></div><div class="supplier-summary-grid"><div><span>Lieferantenprodukte</span><strong>${formatCount(supplier.productCount)}</strong></div><div><span>Zugeordnet</span><strong>${formatCount(supplier.mappedProductCount)}</strong></div><div><span>Prüfung erforderlich</span><strong>${formatCount(supplier.reviewRequiredCount)}</strong></div><div><span>Aktuelle Angebote</span><strong>${formatCount(supplier.currentOfferCount)}</strong></div><div><span>Verfügbare Angebote</span><strong>${formatCount(supplier.availableOfferCount)}</strong></div></div></section><section class="content-section supplier-detail-section"><div class="section-heading"><div><h2>Synchronisierung</h2><span>${integration ? "Maximal 10 aktuelle Läufe" : "Keine Integration eingerichtet"}</span></div></div>${syncRows}</section><section class="content-section supplier-detail-section"><div class="section-heading"><div><h2>Angebote</h2><span>Maximal 25 aktuelle Datensätze</span></div></div>${offerRows}</section><p class="page-note">Lieferant, Integration und Zugangsdaten sind getrennte Sicherheitsgrenzen. Der synthetische Adapter benötigt keine Zugangsdaten; Verbindungstest und manueller Sync sind in dieser Admin-Oberfläche nicht unterstützt.</p>`;
 };
 
-const discountsContent = (): string =>
-  `${pageActionBar("Rabatte & Kampagnen", "Rabatte, Gutscheine und Kampagnen innerhalb der freigegebenen Plattformgrenzen.", '<form class="page-search"><label for="discount-search">Rabatte durchsuchen</label><input id="discount-search" type="search" placeholder="Code, Name oder Beschreibung" disabled><span class="button-disabled" aria-disabled="true" title="Es besteht noch keine autoritative Rabatt-Domain">Rabatt erstellen</span></form>')}<section class="metric-grid" aria-label="Rabattkennzahlen">${metric("Aktive Rabatte", 0, { icon: "RA", detail: "Keine Domain angebunden" })}${metric("Geplante Kampagnen", 0, { icon: "KA", detail: "Keine Domain angebunden" })}${metric("Einlösungen", 0, { icon: "EI", detail: "Nicht verfügbar" })}</section><nav class="section-tabs" aria-label="Rabattansichten"><a href="/admin/discounts" aria-current="page">Alle</a><span aria-disabled="true">Aktiv</span><span aria-disabled="true">Geplant</span><span aria-disabled="true">Abgelaufen</span></nav><section class="content-section">${emptyState("Noch keine Rabattverwaltung verfügbar", "Das aktuelle Plattformmodell enthält keine autoritative Rabatt- oder Kampagnen-Domain. Anlage und Bearbeitung bleiben deshalb sicher deaktiviert.")}</section><p class="page-note">Es werden keine WooCommerce-Gutscheine oder erfundenen Kampagnendaten als KeyCore-Autorität dargestellt.</p>`;
+const discountsContent = (
+  result: PromotionOverview,
+  query: URLSearchParams,
+  principal: AdminPrincipal,
+): string => {
+  const actions = `<form class="page-search promotion-search" method="get" action="/admin/discounts"><label for="discount-search">Rabatte durchsuchen</label><span class="search-field">${icon("search")}<input id="discount-search" type="search" name="search" maxlength="120" placeholder="Name, Code oder ID" value="${escapeHtml(query.get("search") ?? "")}"></span><button class="button-quiet" type="submit">Suchen</button></form>${hasAdminCapability(principal, "PROMOTION_MANAGE") ? `<a class="button" href="/admin/discounts/new">${icon("tag")} Kampagne erstellen</a>` : ""}`;
+  const rows =
+    result.campaigns.length === 0
+      ? emptyState(
+          "Keine Kampagnen gefunden",
+          query.size > 0
+            ? "Die aktuelle Suche oder Filterauswahl liefert keine Ergebnisse."
+            : "Legen Sie die erste Kampagne als sicheren Entwurf an.",
+        )
+      : `<div class="table-wrap"><table class="operations-table promotions-table"><thead><tr><th>Kampagne</th><th>Rabatt</th><th>Code</th><th>Umfang</th><th>Nutzung</th><th>Status</th><th><span class="sr-only">Aktion</span></th></tr></thead><tbody>${result.campaigns
+          .map((campaign) => {
+            const effective = effectivePromotionStatus(campaign, new Date());
+            return `<tr><td data-label="Kampagne"><span class="cell-stack"><strong>${escapeHtml(campaign.name)}</strong><small>${escapeHtml(campaign.internalDescription || `ID ${campaign.id}`)}</small></span></td><td data-label="Rabatt">${escapeHtml(promotionDiscountLabel(campaign))}</td><td data-label="Code"><code>${escapeHtml(campaign.code)}</code></td><td data-label="Umfang">${campaign.productScope === "ALL_ELIGIBLE_PRODUCTS" ? "Alle berechtigten Produkte" : `${campaign.productIds.length} ausgewählt`}</td><td data-label="Nutzung">${campaign.consumedCount.toString()}${campaign.usageLimit === null ? " · unbegrenzt" : ` / ${campaign.usageLimit.toString()}`}</td><td data-label="Status"><span class="status status-${promotionStatusTone(effective)}">${promotionStatusLabel(effective)}</span></td><td data-label="Aktion"><a class="row-action" href="/admin/discounts/${encodeURIComponent(campaign.id)}">Öffnen ${icon("arrow")}</a></td></tr>`;
+          })
+          .join("")}</tbody></table></div>`;
+  return `${pageActionBar("Rabatte & Kampagnen", "Rabattcodes sicher planen, begrenzen und nachvollziehen.", actions)}<section class="metric-grid promotion-metrics" aria-label="Rabattkennzahlen">${metric("Kampagnen", result.total, { href: "/admin/discounts", iconName: "tag", detail: "Gesamt" })}${metric("Aktiv", result.active, { href: "/admin/discounts?status=ACTIVE", iconName: "tag", detail: "Jetzt anwendbar" })}${metric("Geplant", result.planned, { href: "/admin/discounts?status=PLANNED", iconName: "calendar", detail: "Beginnt später" })}${metric("Handlungsbedarf", result.attention, { href: "/admin/discounts?usage=LIMIT_REACHED", iconName: "alert", detail: "Nutzungslimit erreicht" })}</section>${promotionFilters(query)}<section class="content-section operations-section flush"><div class="section-heading"><div><h2>Kampagnen</h2><span>${result.totalCount} Treffer</span></div></div>${rows}${promotionPagination(result, query)}</section><p class="page-note">Rabatte sind nicht kombinierbar. Einlösung wird erst nach bestätigter Zahlung verbraucht; fehlgeschlagene und abgebrochene Zahlungen geben die Reservierung frei.</p>`;
+};
+
+const promotionFilters = (query: URLSearchParams): string =>
+  `<details class="filter-panel"${["status", "discount_type", "product_scope", "usage"].some((key) => query.has(key)) ? " open" : ""}><summary>Filter und Sortierung</summary><form class="filter-grid promotion-filter-grid" method="get" action="/admin/discounts">${query.get("search") ? `<input type="hidden" name="search" value="${escapeHtml(query.get("search") ?? "")}">` : ""}${selectFilter(
+    "Status",
+    "status",
+    query.get("status") ?? "",
+    [
+      ["", "Alle Status"],
+      ["ACTIVE", "Aktiv"],
+      ["PLANNED", "Geplant"],
+      ["DRAFT", "Entwurf"],
+      ["DISABLED", "Deaktiviert"],
+      ["EXPIRED", "Abgelaufen"],
+      ["ARCHIVED", "Archiviert"],
+    ],
+  )}${selectFilter(
+    "Rabattart",
+    "discount_type",
+    query.get("discount_type") ?? "",
+    [
+      ["", "Alle Rabattarten"],
+      ["PERCENTAGE", "Prozent"],
+      ["FIXED_AMOUNT", "Fester Betrag"],
+    ],
+  )}${selectFilter(
+    "Produktumfang",
+    "product_scope",
+    query.get("product_scope") ?? "",
+    [
+      ["", "Alle Umfänge"],
+      ["ALL_ELIGIBLE_PRODUCTS", "Alle berechtigten Produkte"],
+      ["SELECTED_PRODUCTS", "Ausgewählte Produkte"],
+    ],
+  )}${selectFilter("Nutzung", "usage", query.get("usage") ?? "", [
+    ["", "Alle Nutzungen"],
+    ["UNLIMITED", "Unbegrenzt"],
+    ["LIMITED", "Begrenzt"],
+    ["LIMIT_REACHED", "Limit erreicht"],
+  ])}${selectFilter("Sortierung", "sort", query.get("sort") ?? "UPDATED_DESC", [
+    ["UPDATED_DESC", "Zuletzt geändert"],
+    ["UPDATED_ASC", "Älteste Änderung"],
+    ["NAME_ASC", "Name A–Z"],
+    ["NAME_DESC", "Name Z–A"],
+  ])}${selectFilter("Pro Seite", "limit", query.get("limit") ?? "10", [
+    ["10", "10"],
+    ["25", "25"],
+    ["50", "50"],
+  ])}<div class="filter-actions"><a class="button-quiet" href="/admin/discounts">Zurücksetzen</a><button type="submit">Anwenden</button></div></form></details>`;
+
+const selectFilter = (
+  label: string,
+  name: string,
+  selected: string,
+  options: readonly (readonly [string, string])[],
+): string =>
+  `<label>${escapeHtml(label)}<select name="${escapeHtml(name)}">${options.map(([value, text]) => `<option value="${escapeHtml(value)}"${selected === value ? " selected" : ""}>${escapeHtml(text)}</option>`).join("")}</select></label>`;
+
+const promotionPagination = (
+  result: PromotionOverview,
+  query: URLSearchParams,
+): string => {
+  const pages = Math.max(1, Math.ceil(result.totalCount / result.limit));
+  if (pages <= 1) return "";
+  const link = (page: number, label: string): string => {
+    const next = new URLSearchParams(query);
+    next.set("page", String(page));
+    return `<a class="button-quiet" href="/admin/discounts?${escapeHtml(next.toString())}">${label}</a>`;
+  };
+  return `<nav class="pagination" aria-label="Kampagnenseiten">${result.page > 1 ? link(result.page - 1, "Zurück") : ""}<span>Seite ${result.page} von ${pages}</span>${result.page < pages ? link(result.page + 1, "Weiter") : ""}</nav>`;
+};
+
+const promotionCreateContent = (
+  csrf: string,
+  operationId: string,
+  error?: string,
+): string =>
+  `${pageActionBar("Kampagne erstellen", "Eine codegebundene Rabattaktion als sicheren Entwurf anlegen.", '<a class="button-quiet" href="/admin/discounts">Abbrechen</a>')}<section class="content-section promotion-form-section">${error ? `<div class="form-error" role="alert">${escapeHtml(error)}</div>` : ""}<form class="admin-form promotion-form" method="post" action="/admin/discounts/new"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="operation_id" value="${escapeHtml(operationId)}">${promotionFields()}<div class="promotion-boundary"><strong>Sicherer Entwurf</strong><p>Erstellen aktiviert keine Kundenpreise. Bei ausgewählten Produkten erfolgt die Zuordnung nach dem Anlegen über die begrenzte Produktsuche.</p></div><div class="form-actions"><a class="button-quiet" href="/admin/discounts">Abbrechen</a><button type="submit">Entwurf anlegen</button></div></form></section>`;
+
+const promotionEditContent = (
+  campaign: PromotionDetail,
+  csrf: string,
+  error?: string,
+): string =>
+  `${pageActionBar("Kampagne bearbeiten", "Konfiguration für künftige Preis-Locks ändern.", `<a class="button-quiet" href="/admin/discounts/${encodeURIComponent(campaign.id)}">Abbrechen</a>`)}<section class="content-section promotion-form-section">${error ? `<div class="form-error" role="alert">${escapeHtml(error)}</div>` : ""}<form class="admin-form promotion-form" method="post" action="/admin/discounts/${encodeURIComponent(campaign.id)}/edit"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="expected_version" value="${campaign.recordVersion}">${promotionFields(campaign)}${campaign.hasCommittedUsage ? '<div class="promotion-boundary"><strong>Historische Integrität</strong><p>Code und Rabattregel sind nach der ersten bestätigten Nutzung gesperrt. Stammdaten und künftige Gültigkeit bleiben kontrolliert änderbar.</p></div>' : ""}<div class="form-actions"><a class="button-quiet" href="/admin/discounts/${encodeURIComponent(campaign.id)}">Abbrechen</a><button type="submit">Änderungen speichern</button></div></form></section>`;
+
+const promotionFields = (campaign?: PromotionDetail): string => {
+  const percentage = campaign?.discountType !== "FIXED_AMOUNT";
+  const value = campaign
+    ? percentage
+      ? formatPercentage(campaign.discountValue)
+      : formatMoneyInput(campaign.discountValue)
+    : "";
+  const discountTypeField = campaign?.hasCommittedUsage
+    ? `<input type="hidden" name="discount_type" value="${campaign.discountType}"><select disabled aria-label="Rabattart (nach Nutzung unveränderlich)"><option selected>${percentage ? "Prozent" : "Fester Betrag"}</option></select>`
+    : `<select name="discount_type"><option value="PERCENTAGE"${percentage ? " selected" : ""}>Prozent</option><option value="FIXED_AMOUNT"${!percentage ? " selected" : ""}>Fester Betrag</option></select>`;
+  return `<label>Name<input name="name" maxlength="120" required value="${escapeHtml(campaign?.name ?? "")}"></label><label>Interne Beschreibung<textarea name="internal_description" maxlength="500">${escapeHtml(campaign?.internalDescription ?? "")}</textarea></label><div class="form-grid"><label>Aktionscode<input name="code" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_-]{2,31}" required value="${escapeHtml(campaign?.code ?? "")}"${campaign?.hasCommittedUsage ? " readonly" : ""}><small>3–32 Zeichen; Groß-/Kleinschreibung wird vereinheitlicht.</small></label><label>Rabattart${discountTypeField}</label></div><div class="form-grid"><label>Rabattwert<input name="discount_value" inputmode="decimal" required value="${escapeHtml(value)}"${campaign?.hasCommittedUsage ? " readonly" : ""}><small>Beispiele: 20 für 20 % oder 5,00 für 5,00 EUR.</small></label><label>Mindest-Zwischensumme (optional)<input name="minimum_subtotal" inputmode="decimal" value="${campaign?.minimumSubtotalMinor === null || campaign?.minimumSubtotalMinor === undefined ? "" : escapeHtml(formatMoneyInput(campaign.minimumSubtotalMinor))}"><small>Zwischensumme des einzelnen berechtigten Produkts vor Rabatt.</small></label></div><label>Produktumfang<select name="product_scope"><option value="ALL_ELIGIBLE_PRODUCTS"${campaign?.productScope !== "SELECTED_PRODUCTS" ? " selected" : ""}>Alle berechtigten Produkte</option><option value="SELECTED_PRODUCTS"${campaign?.productScope === "SELECTED_PRODUCTS" ? " selected" : ""}>Ausgewählte Produkte</option></select></label><div class="form-grid"><label>Start (optional)<input type="datetime-local" name="starts_at" value="${dateTimeInput(campaign?.startsAt ?? null)}"></label><label>Ende (optional)<input type="datetime-local" name="ends_at" value="${dateTimeInput(campaign?.endsAt ?? null)}"></label></div><label>Globales Nutzungslimit (optional)<input name="usage_limit" inputmode="numeric" pattern="[1-9][0-9]{0,14}" value="${campaign?.usageLimit?.toString() ?? ""}"><small>Leer bedeutet unbegrenzt; Null ist kein gültiges Limit.</small></label>`;
+};
+
+const promotionDetailContent = (
+  campaign: PromotionDetail & { readonly productCsrf: string },
+  productOptions: readonly PromotionProductOption[],
+  productSearch: string,
+  principal: AdminPrincipal,
+  csrf: string,
+  success: boolean,
+): string => {
+  const effective = effectivePromotionStatus(campaign, new Date());
+  const canManage = hasAdminCapability(principal, "PROMOTION_MANAGE");
+  const transitions =
+    campaign.lifecycle === "ENABLED"
+      ? ["DISABLED"]
+      : campaign.lifecycle === "DRAFT" || campaign.lifecycle === "DISABLED"
+        ? ["ENABLED", "ARCHIVED"]
+        : [];
+  const action =
+    canManage && transitions.length > 0
+      ? `<section class="content-section promotion-lifecycle"><div class="section-heading"><div><h2>Status ändern</h2><span>Jede Änderung erfordert eine bewusste Bestätigung</span></div></div><div class="promotion-lifecycle-actions">${transitions
+          .map((value) => {
+            const label =
+              value === "ENABLED"
+                ? "Aktivieren"
+                : value === "DISABLED"
+                  ? "Deaktivieren"
+                  : "Archivieren";
+            const consequence =
+              value === "ENABLED"
+                ? "Die Kampagne wird entsprechend ihrer Gültigkeit für neue Preisabfragen anwendbar."
+                : value === "DISABLED"
+                  ? "Neue Preisabfragen erhalten keinen Rabatt; vorhandene Preis-Locks und Nutzungshistorie bleiben erhalten."
+                  : "Die Kampagne verschwindet aus der normalen Arbeitsansicht; Konfiguration und Historie bleiben erhalten.";
+            return `<details><summary>${label}</summary><p>${consequence}</p><form method="post" action="/admin/discounts/${encodeURIComponent(campaign.id)}/lifecycle"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="expected_version" value="${campaign.recordVersion}"><input type="hidden" name="lifecycle" value="${value}"><button type="submit">${label} bestätigen</button></form></details>`;
+          })
+          .join("")}</div></section>`
+      : "";
+  const attention =
+    campaign.usageLimit !== null &&
+    campaign.consumedCount + campaign.reservedCount >= campaign.usageLimit
+      ? "Nutzungslimit erreicht"
+      : "Keiner erkannt";
+  const headerActions = `<a class="button-quiet" href="/admin/discounts">Zurück zu Kampagnen</a>${canManage && campaign.lifecycle !== "ARCHIVED" ? `<a class="button" href="/admin/discounts/${encodeURIComponent(campaign.id)}/edit">Bearbeiten</a>` : ""}`;
+  return `${pageActionBar("Kampagnendetail", "Regel, Gültigkeit und Nutzung nachvollziehen.", headerActions)}${success ? '<div class="notice notice-success"><strong>Kampagne gespeichert.</strong></div>' : ""}<section class="promotion-detail-identity"><span class="promotion-detail-media">${icon("tag")}</span><div><span class="eyebrow">Kampagne</span><h2>${escapeHtml(campaign.name)}</h2><p><code>${escapeHtml(campaign.code)}</code> · ID ${escapeHtml(campaign.id)}</p></div><span class="status status-${promotionStatusTone(effective)}">${promotionStatusLabel(effective)}</span></section><section class="state-strip"><div><span>Effektiver Status</span><strong>${promotionStatusLabel(effective)}</strong></div><div><span>Handlungsbedarf</span><strong>${attention}</strong></div><div><span>Verbraucht</span><strong>${campaign.consumedCount.toString()}</strong></div><div><span>Reserviert</span><strong>${campaign.reservedCount.toString()}</strong></div></section><section class="detail-grid"><article><h2>Rabattregel</h2>${detailRow("Rabatt", promotionDiscountLabel(campaign))}${detailRow("Anwendung", "Code erforderlich")}${detailRow("Kombination", "Nicht kombinierbar")}${detailRow("Mindest-Zwischensumme", campaign.minimumSubtotalMinor === null ? "Keine" : formatMinor(campaign.minimumSubtotalMinor.toString(), campaign.currency))}</article><article><h2>Gültigkeit & Umfang</h2>${detailRow("Start", campaign.startsAt ? formatDate(campaign.startsAt) : "Sofort")}${detailRow("Ende", campaign.endsAt ? formatDate(campaign.endsAt) : "Ohne Enddatum")}${detailRow("Produktumfang", campaign.productScope === "ALL_ELIGIBLE_PRODUCTS" ? "Alle berechtigten Produkte" : `${campaign.productIds.length} ausgewählte Produkte`)}${detailRow("Nutzungslimit", campaign.usageLimit?.toString() ?? "Unbegrenzt")}</article></section>${campaign.internalDescription ? `<section class="content-section"><div class="section-heading"><h2>Interne Beschreibung</h2></div><p>${escapeHtml(campaign.internalDescription)}</p></section>` : ""}${campaign.productScope === "SELECTED_PRODUCTS" ? promotionProductPicker(campaign, productOptions, productSearch, principal) : ""}${action}${promotionUsageContent(campaign)}<p class="page-note">Gültige Preis-Locks behalten ihren Rabatt-Snapshot auch nach späterer Änderung oder Deaktivierung. Null-Euro-Bestellungen und Rabattkombinationen sind nicht unterstützt.</p>`;
+};
+
+const promotionProductPicker = (
+  campaign: PromotionDetail & { readonly productCsrf: string },
+  options: readonly PromotionProductOption[],
+  search: string,
+  principal: AdminPrincipal,
+): string => {
+  const canManage =
+    hasAdminCapability(principal, "PROMOTION_MANAGE") &&
+    campaign.lifecycle !== "ARCHIVED";
+  const path = `/admin/discounts/${campaign.id}/products`;
+  const csrf = campaign.productCsrf;
+  const selected =
+    campaign.productIds.length === 0
+      ? emptyState(
+          "Noch keine Produkte ausgewählt",
+          "Vor der Aktivierung muss mindestens ein Produkt zugeordnet werden.",
+        )
+      : `<ul class="promotion-product-list">${campaign.selectedProducts.map((product) => `<li><span><strong>${escapeHtml(product.title)}</strong><small>${escapeHtml(product.platform)} · ${escapeHtml(product.id)} · ${product.active ? "Aktiv" : "Inaktiv"}</small></span>${canManage ? `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="expected_version" value="${campaign.recordVersion}"><input type="hidden" name="product_id" value="${escapeHtml(product.id)}"><input type="hidden" name="action" value="remove"><button class="button-quiet" type="submit">Entfernen</button></form>` : ""}</li>`).join("")}</ul>`;
+  const matches = !search
+    ? ""
+    : options.length === 0
+      ? emptyState(
+          "Keine Produkte gefunden",
+          "Prüfen Sie Suchbegriff oder Produkt-ID.",
+        )
+      : `<ul class="promotion-product-results">${options.map((product) => `<li><span><strong>${escapeHtml(product.title)}</strong><small>${escapeHtml(product.platform)} · ${escapeHtml(product.id)} · ${product.active ? "Aktiv" : "Inaktiv"}</small></span>${canManage && !campaign.productIds.includes(product.id) ? `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="expected_version" value="${campaign.recordVersion}"><input type="hidden" name="product_id" value="${escapeHtml(product.id)}"><input type="hidden" name="action" value="add"><button type="submit">Hinzufügen</button></form>` : ""}</li>`).join("")}</ul>`;
+  return `<section class="content-section promotion-products"><div class="section-heading"><div><h2>Ausgewählte Produkte</h2><span>Begrenzte serverseitige Suche, maximal 20 Treffer</span></div></div>${selected}${canManage ? `<form class="page-search" method="get" action="/admin/discounts/${campaign.id}"><label for="product-search">Produkt suchen</label><span class="search-field">${icon("search")}<input id="product-search" name="product_search" maxlength="120" value="${escapeHtml(search)}" placeholder="Titel oder Produkt-ID"></span><button class="button-quiet" type="submit">Suchen</button></form>${matches}` : ""}</section>`;
+};
+
+const promotionUsageContent = (campaign: PromotionDetail): string =>
+  `<section class="content-section"><div class="section-heading"><div><h2>Nutzung & Verlauf</h2><span>Maximal 10 bestätigte Einlösungen, ohne Kunden-PII</span></div></div>${campaign.recentUsage.length === 0 ? emptyState("Noch keine bestätigte Nutzung", "Reservierungen werden hier nicht als abgeschlossene Einlösung dargestellt.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Bestellung</th><th>Rabatt</th><th>Endbetrag</th><th>Bestätigt</th></tr></thead><tbody>${campaign.recentUsage.map((usage) => `<tr><td data-label="Bestellung"><a href="/admin/orders/${encodeURIComponent(usage.orderId)}">${escapeHtml(usage.orderId)}</a></td><td data-label="Rabatt">${escapeHtml(formatMinor(usage.discountAmountMinor.toString(), usage.currency))}</td><td data-label="Endbetrag">${escapeHtml(formatMinor(usage.finalAmountMinor.toString(), usage.currency))}</td><td data-label="Bestätigt">${escapeHtml(formatDate(usage.consumedAt))}</td></tr>`).join("")}</tbody></table></div>`}${detailRow("Version", String(campaign.recordVersion))}${detailRow("Erstellt", formatDate(campaign.createdAt))}${detailRow("Aktualisiert", formatDate(campaign.updatedAt))}</section>`;
+
+const promotionDiscountLabel = (
+  campaign: Pick<
+    PromotionDetail,
+    "discountType" | "discountValue" | "currency"
+  >,
+): string =>
+  campaign.discountType === "PERCENTAGE"
+    ? `${formatPercentage(campaign.discountValue)} %`
+    : formatMinor(campaign.discountValue.toString(), campaign.currency);
+const formatPercentage = (basisPoints: bigint): string =>
+  `${basisPoints / 100n}${basisPoints % 100n === 0n ? "" : `,${(basisPoints % 100n).toString().padStart(2, "0").replace(/0$/u, "")}`}`;
+const formatMoneyInput = (minor: bigint): string =>
+  `${minor / 100n},${(minor % 100n).toString().padStart(2, "0")}`;
+const dateTimeInput = (value: Date | null): string =>
+  value ? escapeHtml(value.toISOString().slice(0, 16)) : "";
+const promotionStatusLabel = (status: PromotionEffectiveStatus): string =>
+  ({
+    ACTIVE: "Aktiv",
+    ARCHIVED: "Archiviert",
+    DISABLED: "Deaktiviert",
+    DRAFT: "Entwurf",
+    EXPIRED: "Abgelaufen",
+    PLANNED: "Geplant",
+  })[status];
+const promotionStatusTone = (status: PromotionEffectiveStatus): string =>
+  ({
+    ACTIVE: "active",
+    ARCHIVED: "neutral",
+    DISABLED: "disabled",
+    DRAFT: "info",
+    EXPIRED: "neutral",
+    PLANNED: "warning",
+  })[status];
 
 const supportListContent = (
   result: AdminOperationsListResult<AdminSupportCaseSummary>,
@@ -2928,8 +3556,12 @@ const orderDetailContent = (
   delayedEligible: boolean,
   canViewSupplier: boolean,
   returnPath: string,
-): string =>
-  `${pageActionBar(`Bestellung ${order.operatorReference}`, `Technische Bestell-ID ${order.orderId}`, `<a class="button-quiet" href="${escapeHtml(returnPath)}">← Zurück zu Bestellungen</a>`)}<section class="order-detail-identity"><span class="product-media">${icon("package")}</span><div><h2>${escapeHtml(order.productTitle)}</h2><p>${escapeHtml(adminStatusLabel(order.productPlatform))} · Menge ${order.quantity}</p></div><span class="status status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(adminStatusLabel(order.status))}</span></section><section class="state-strip" aria-label="Bestellzustände">${stateItem("Zahlung", order.paymentStatus)}${stateItem("Risiko", order.riskStatus)}${stateItem("Beschaffung", order.procurementStatus)}${stateItem("Auslieferung", order.fulfillmentStatus)}</section><section class="detail-grid"><article><h2>Bestellung</h2>${detailRow("Bestellreferenz", order.operatorReference)}${detailRow("Technische Bestell-ID", order.orderId)}${detailRow("Kunde", order.customerEmail ?? "Nicht verfügbar")}${detailRow("Betrag", formatMinor(order.amountMinor, order.currency))}${detailRow("Angelegt", formatDate(order.createdAt))}${detailRow("Aktualisiert", formatDate(order.updatedAt))}</article><article><h2>Operativer Kontext</h2>${detailRow("Gastbestellungs-Zuordnung", adminStatusLabel(order.guestClaimStatus))}${detailRow("Rechnung", adminStatusLabel(order.invoiceStatus))}${canViewSupplier ? `${detailRow("Lieferant", order.supplierId ?? "Nicht verfügbar")}${detailRow("Lieferantenbestellung", order.externalSupplierOrderId ?? "Nicht verfügbar")}` : ""}${detailRow("Abrufstatus", order.retrievalState ? adminStatusLabel(order.retrievalState) : "Nicht verfügbar")}${detailRow("Zustellstatus", order.deliveryState ? adminStatusLabel(order.deliveryState) : "Nicht verfügbar")}</article></section>${delayedEligible ? `<section class="content-section sensitive"><div class="section-heading"><div><p>Synthetischer Staging-Vorgang</p><h2>Verzögerte Auslieferung abschließen</h2></div></div><p>Dieser Vorgang nutzt keine Lieferantenverbindung und erzeugt ausschließlich verschlüsseltes synthetisches Testmaterial.</p><form method="post" action="${escapeHtml(delayedPath)}"><input type="hidden" name="csrf" value="${escapeHtml(delayedCsrf)}"><input type="hidden" name="confirm" value="SYNTHETIC_DELAYED_FULFILLMENT"><button type="submit">Synthetische Auslieferung bestätigen</button></form></section>` : ""}<section class="content-section sensitive"><div class="section-heading"><div><p>Sensibler Vorgang</p><h2>Produktschlüssel</h2></div></div><p>${order.encryptedSecretAvailable ? "Verschlüsseltes Material ist vorhanden. Eine Offenlegung ist nur über den kontrollierten separaten Vorgang möglich." : "Für diese Bestellung ist kein verschlüsseltes Material verfügbar."}</p><form method="post" action="${escapeHtml(revealPath)}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit"${order.encryptedSecretAvailable ? "" : " disabled"}>Kontrollierten Zugriff anfordern</button></form></section><section class="content-section"><div class="section-heading"><h2>Statushistorie</h2></div>${order.history.length === 0 ? '<div class="empty-state"><strong>Keine Statushistorie verfügbar</strong></div>' : `<ol class="timeline">${order.history.map((entry) => `<li><strong>${escapeHtml(adminStatusLabel(entry.toStatus))}</strong><span>${escapeHtml(adminAuditCodeLabel(entry.reasonCode))} · ${escapeHtml(formatDate(entry.occurredAt))}</span></li>`).join("")}</ol>`}</section>`;
+): string => {
+  const promotion = order.promotion
+    ? `<section class="content-section"><div class="section-heading"><div><p>Unveränderlicher Bestellnachweis</p><h2>Angewandter Rabatt</h2></div></div><div class="detail-grid"><article>${detailRow("Kampagne", order.promotion.campaignName)}${detailRow("Code", order.promotion.code)}${detailRow("Kampagnen-ID", order.promotion.campaignId)}${detailRow("Verbraucht", formatDate(order.promotion.consumedAt))}</article><article>${detailRow("Ausgangsbetrag", formatMinor(order.promotion.baseAmountMinor, order.promotion.currency))}${detailRow("Rabatt", formatMinor(order.promotion.discountAmountMinor, order.promotion.currency))}${detailRow("Bestellbetrag", formatMinor(order.promotion.finalAmountMinor, order.promotion.currency))}${detailRow("Regel", order.promotion.discountType === "PERCENTAGE" ? `${(Number(order.promotion.discountValue) / 100).toLocaleString("de-DE")} %` : `${formatMinor(order.promotion.discountValue, order.promotion.currency)} Festbetrag`)}</article></div><p class="module-note">Dieser Snapshot stammt aus der bestätigten Einlösung und bleibt unabhängig von späteren Kampagnenänderungen erhalten.</p></section>`
+    : "";
+  return `${pageActionBar(`Bestellung ${order.operatorReference}`, `Technische Bestell-ID ${order.orderId}`, `<a class="button-quiet" href="${escapeHtml(returnPath)}">← Zurück zu Bestellungen</a>`)}<section class="order-detail-identity"><span class="product-media">${icon("package")}</span><div><h2>${escapeHtml(order.productTitle)}</h2><p>${escapeHtml(adminStatusLabel(order.productPlatform))} · Menge ${order.quantity}</p></div><span class="status status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(adminStatusLabel(order.status))}</span></section><section class="state-strip" aria-label="Bestellzustände">${stateItem("Zahlung", order.paymentStatus)}${stateItem("Risiko", order.riskStatus)}${stateItem("Beschaffung", order.procurementStatus)}${stateItem("Auslieferung", order.fulfillmentStatus)}</section><section class="detail-grid"><article><h2>Bestellung</h2>${detailRow("Bestellreferenz", order.operatorReference)}${detailRow("Technische Bestell-ID", order.orderId)}${detailRow("Kunde", order.customerEmail ?? "Nicht verfügbar")}${detailRow("Betrag", formatMinor(order.amountMinor, order.currency))}${detailRow("Angelegt", formatDate(order.createdAt))}${detailRow("Aktualisiert", formatDate(order.updatedAt))}</article><article><h2>Operativer Kontext</h2>${detailRow("Gastbestellungs-Zuordnung", adminStatusLabel(order.guestClaimStatus))}${detailRow("Rechnung", adminStatusLabel(order.invoiceStatus))}${canViewSupplier ? `${detailRow("Lieferant", order.supplierId ?? "Nicht verfügbar")}${detailRow("Lieferantenbestellung", order.externalSupplierOrderId ?? "Nicht verfügbar")}` : ""}${detailRow("Abrufstatus", order.retrievalState ? adminStatusLabel(order.retrievalState) : "Nicht verfügbar")}${detailRow("Zustellstatus", order.deliveryState ? adminStatusLabel(order.deliveryState) : "Nicht verfügbar")}</article></section>${promotion}${delayedEligible ? `<section class="content-section sensitive"><div class="section-heading"><div><p>Synthetischer Staging-Vorgang</p><h2>Verzögerte Auslieferung abschließen</h2></div></div><p>Dieser Vorgang nutzt keine Lieferantenverbindung und erzeugt ausschließlich verschlüsseltes synthetisches Testmaterial.</p><form method="post" action="${escapeHtml(delayedPath)}"><input type="hidden" name="csrf" value="${escapeHtml(delayedCsrf)}"><input type="hidden" name="confirm" value="SYNTHETIC_DELAYED_FULFILLMENT"><button type="submit">Synthetische Auslieferung bestätigen</button></form></section>` : ""}<section class="content-section sensitive"><div class="section-heading"><div><p>Sensibler Vorgang</p><h2>Produktschlüssel</h2></div></div><p>${order.encryptedSecretAvailable ? "Verschlüsseltes Material ist vorhanden. Eine Offenlegung ist nur über den kontrollierten separaten Vorgang möglich." : "Für diese Bestellung ist kein verschlüsseltes Material verfügbar."}</p><form method="post" action="${escapeHtml(revealPath)}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit"${order.encryptedSecretAvailable ? "" : " disabled"}>Kontrollierten Zugriff anfordern</button></form></section><section class="content-section"><div class="section-heading"><h2>Statushistorie</h2></div>${order.history.length === 0 ? '<div class="empty-state"><strong>Keine Statushistorie verfügbar</strong></div>' : `<ol class="timeline">${order.history.map((entry) => `<li><strong>${escapeHtml(adminStatusLabel(entry.toStatus))}</strong><span>${escapeHtml(adminAuditCodeLabel(entry.reasonCode))} · ${escapeHtml(formatDate(entry.occurredAt))}</span></li>`).join("")}</ol>`}</section>`;
+};
 const stateItem = (label: string, status: string): string =>
   `<div><span>${escapeHtml(label)}</span><strong class="status status-${escapeHtml(status.toLowerCase())}">${escapeHtml(operationalLabel(status))}</strong></div>`;
 const detailRow = (label: string, value: string): string =>
