@@ -1432,11 +1432,17 @@ describe("AdminHttpController", () => {
     expect(overview.body).toContain("Rabatte &amp; Kampagnen");
     expect(overview.body).toContain("Staging Rabatt");
     expect(overview.body).toContain("Handlungsbedarf");
+    expect(overview.body).toContain('aria-current="true"');
+    expect(overview.body).toMatch(
+      /<details class="filter-panel"><summary>Filter und Sortierung/u,
+    );
     expect(overview.body).not.toContain("Produkt-IDs");
 
     const form = await controller.handle(
       authenticated("GET", "/admin/discounts/new"),
     );
+    expect(form.body).toContain("discount-unit-percentage");
+    expect(form.body).toContain("discount-unit-fixed");
     const csrf =
       /action="\/admin\/discounts\/new"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"/u.exec(
         form.body,
@@ -1464,6 +1470,7 @@ describe("AdminHttpController", () => {
           product_scope: "ALL_ELIGIBLE_PRODUCTS",
           starts_at: "",
           usage_limit: "12",
+          usage_mode: "LIMITED",
         },
       ),
     );
@@ -1474,6 +1481,56 @@ describe("AdminHttpController", () => {
       minimumSubtotalMinor: 500n,
       usageLimit: 12n,
     });
+
+    const manuallyFiltered = await controller.handle(
+      authenticated("GET", "/admin/discounts?discount_type=PERCENTAGE&panel=1"),
+    );
+    expect(manuallyFiltered.body).toMatch(
+      /<details class="filter-panel" open><summary>Filter und Sortierung <span class="filter-count">1 aktiv/u,
+    );
+  });
+
+  it("preserves safe promotion fields after validation errors", async () => {
+    const controller = fixture();
+    const form = await controller.handle(
+      authenticated("GET", "/admin/discounts/new"),
+    );
+    const csrf = required(
+      /action="\/admin\/discounts\/new"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"/u.exec(
+        form.body,
+      )?.[1],
+    );
+    const operationId = required(
+      /name="operation_id" value="([0-9a-f-]{36})"/u.exec(form.body)?.[1],
+    );
+    const response = await controller.handle(
+      authenticated(
+        "POST",
+        "/admin/discounts/new",
+        { origin },
+        {
+          code: "bad",
+          csrf,
+          discount_type: "PERCENTAGE",
+          discount_value: "100",
+          ends_at: "",
+          internal_description: "Bleibt erhalten",
+          minimum_subtotal: "",
+          name: "Sicherer Entwurf",
+          operation_id: operationId,
+          product_scope: "SELECTED_PRODUCTS",
+          starts_at: "",
+          usage_limit: "7",
+          usage_mode: "LIMITED",
+        },
+      ),
+    );
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toContain('value="Sicherer Entwurf"');
+    expect(response.body).toContain("Bleibt erhalten");
+    expect(response.body).toContain('value="SELECTED_PRODUCTS" selected');
+    expect(response.body).toContain('value="LIMITED" checked');
+    expect(response.body).toContain('value="7"');
   });
 
   it("keeps campaign mutations POST-only, exact-field, origin and CSRF protected", async () => {
@@ -1483,6 +1540,10 @@ describe("AdminHttpController", () => {
     const detail = await controller.handle(authenticated("GET", detailPath));
     expect(detail.statusCode).toBe(200);
     expect(detail.body).toContain("Kampagnendetail");
+    expect(detail.body).toContain("<span>Status</span>");
+    expect(detail.body).not.toContain("Effektiver Status");
+    expect(detail.body).toContain("Technische Hinweise");
+    expect(detail.body).toContain(">KR0000042</a>");
     const action = `${detailPath}/lifecycle`;
     const csrf = new RegExp(
       `action="${action.replaceAll("/", "\\/")}"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"`,
@@ -2020,7 +2081,20 @@ class CapturingPromotionRepository implements PromotionRepository {
   }
 
   public async find() {
-    return { ...promotionFixture(), recentUsage: [], selectedProducts: [] };
+    return {
+      ...promotionFixture(),
+      recentUsage: [
+        {
+          consumedAt: new Date("2026-09-02T10:00:00.000Z"),
+          currency: "EUR" as const,
+          discountAmountMinor: 100n,
+          finalAmountMinor: 1_199n,
+          operatorReference: "KR0000042",
+          orderId: targetOrderId,
+        },
+      ],
+      selectedProducts: [],
+    };
   }
 
   public async create(input: Parameters<PromotionRepository["create"]>[0]) {

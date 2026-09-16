@@ -145,15 +145,19 @@ export class PostgresPromotionRepository implements PromotionRepository {
       ),
       this.database.query<{
         readonly order_id: string;
+        readonly operator_reference: string;
         readonly consumed_at: Date;
         readonly discount_amount_minor: string;
         readonly final_amount_minor: string;
         readonly currency: "EUR";
       }>(
-        `SELECT order_id::text, consumed_at, discount_amount_minor::text, final_amount_minor::text, currency
-         FROM promotion_redemptions
-         WHERE campaign_id = $1::uuid AND state = 'CONSUMED'
-         ORDER BY consumed_at DESC, id DESC LIMIT 10`,
+        `SELECT redemption.order_id::text, orders.operator_reference,
+           redemption.consumed_at, redemption.discount_amount_minor::text,
+           redemption.final_amount_minor::text, redemption.currency
+         FROM promotion_redemptions redemption
+         JOIN keycore_orders orders ON orders.id = redemption.order_id
+         WHERE redemption.campaign_id = $1::uuid AND redemption.state = 'CONSUMED'
+         ORDER BY redemption.consumed_at DESC, redemption.id DESC LIMIT 10`,
         [id],
       ),
       this.database.query<{
@@ -180,6 +184,7 @@ export class PostgresPromotionRepository implements PromotionRepository {
             discountAmountMinor: BigInt(usage.discount_amount_minor),
             finalAmountMinor: BigInt(usage.final_amount_minor),
             orderId: usage.order_id,
+            operatorReference: usage.operator_reference,
           })),
           selectedProducts: productResult.rows,
         }

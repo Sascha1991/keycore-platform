@@ -1098,6 +1098,7 @@ export class AdminHttpController {
       "sort",
       "page",
       "limit",
+      "panel",
     ];
     rejectDuplicateParameters(request.query, queryFields);
     const result = await this.requirePromotionManagement().list(
@@ -1155,6 +1156,7 @@ export class AdminHttpController {
       "ends_at",
       "minimum_subtotal",
       "usage_limit",
+      "usage_mode",
     ];
     if (!this.validSensitivePost(request, principal, path, fields))
       return this.render(
@@ -1176,7 +1178,10 @@ export class AdminHttpController {
           startsAt: request.form.get("starts_at") ?? "",
           endsAt: request.form.get("ends_at") ?? "",
           minimumSubtotal: request.form.get("minimum_subtotal") ?? "",
-          usageLimit: request.form.get("usage_limit") ?? "",
+          usageLimit:
+            request.form.get("usage_mode") === "LIMITED"
+              ? (request.form.get("usage_limit") ?? "")
+              : "",
         },
         newAdminCorrelationId(),
       );
@@ -1192,6 +1197,7 @@ export class AdminHttpController {
             createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
             request.form.get("operation_id") ?? randomUUID(),
             "Bitte prüfen Sie Code, Rabattwert, Zeitraum und Produktauswahl.",
+            promotionFormState(request.form),
           ),
           principal,
         );
@@ -1315,6 +1321,7 @@ export class AdminHttpController {
       "ends_at",
       "minimum_subtotal",
       "usage_limit",
+      "usage_mode",
     ];
     if (!this.validSensitivePost(request, principal, path, fields))
       return this.render(
@@ -1337,7 +1344,10 @@ export class AdminHttpController {
           name: request.form.get("name") ?? "",
           productScope: request.form.get("product_scope") ?? "",
           startsAt: request.form.get("starts_at") ?? "",
-          usageLimit: request.form.get("usage_limit") ?? "",
+          usageLimit:
+            request.form.get("usage_mode") === "LIMITED"
+              ? (request.form.get("usage_limit") ?? "")
+              : "",
         },
         newAdminCorrelationId(),
       );
@@ -1371,6 +1381,7 @@ export class AdminHttpController {
             campaign,
             createAdminCsrf(principal, "POST", path, this.config.csrfSecret),
             "Bitte prüfen Sie Rabattwert, Zeitraum und Eingaben.",
+            promotionFormState(request.form),
           ),
           principal,
         );
@@ -3130,17 +3141,23 @@ const discountsContent = (
             ? "Die aktuelle Suche oder Filterauswahl liefert keine Ergebnisse."
             : "Legen Sie die erste Kampagne als sicheren Entwurf an.",
         )
-      : `<div class="table-wrap"><table class="operations-table promotions-table"><thead><tr><th>Kampagne</th><th>Rabatt</th><th>Code</th><th>Umfang</th><th>Nutzung</th><th>Status</th><th><span class="sr-only">Aktion</span></th></tr></thead><tbody>${result.campaigns
+      : `<div class="table-wrap"><table class="operations-table promotions-table"><thead><tr><th>Kampagne</th><th>Rabatt</th><th>Code</th><th>Produktumfang</th><th>Nutzung</th><th>Status</th><th><span class="sr-only">Aktion</span></th></tr></thead><tbody>${result.campaigns
           .map((campaign) => {
             const effective = effectivePromotionStatus(campaign, new Date());
-            return `<tr><td data-label="Kampagne"><span class="cell-stack"><strong>${escapeHtml(campaign.name)}</strong><small>${escapeHtml(campaign.internalDescription || `ID ${campaign.id}`)}</small></span></td><td data-label="Rabatt">${escapeHtml(promotionDiscountLabel(campaign))}</td><td data-label="Code"><code>${escapeHtml(campaign.code)}</code></td><td data-label="Umfang">${campaign.productScope === "ALL_ELIGIBLE_PRODUCTS" ? "Alle berechtigten Produkte" : `${campaign.productIds.length} ausgewählt`}</td><td data-label="Nutzung">${campaign.consumedCount.toString()}${campaign.usageLimit === null ? " · unbegrenzt" : ` / ${campaign.usageLimit.toString()}`}</td><td data-label="Status"><span class="status status-${promotionStatusTone(effective)}">${promotionStatusLabel(effective)}</span></td><td data-label="Aktion"><a class="row-action" href="/admin/discounts/${encodeURIComponent(campaign.id)}">Öffnen ${icon("arrow")}</a></td></tr>`;
+            return `<tr><td data-label="Kampagne"><span class="cell-stack"><strong>${escapeHtml(campaign.name)}</strong><small>${escapeHtml(campaign.internalDescription || `ID ${campaign.id}`)}</small></span></td><td data-label="Rabatt">${escapeHtml(promotionDiscountLabel(campaign))}</td><td data-label="Code"><code>${escapeHtml(campaign.code)}</code></td><td data-label="Produktumfang">${campaign.productScope === "ALL_ELIGIBLE_PRODUCTS" ? "Alle berechtigten Produkte" : promotionProductCount(campaign.productIds.length)}</td><td data-label="Nutzung">${campaign.consumedCount.toString()}${campaign.usageLimit === null ? " · unbegrenzt" : ` von ${campaign.usageLimit.toString()}`}</td><td data-label="Status"><span class="status status-${promotionStatusTone(effective)}">${promotionStatusLabel(effective)}</span></td><td data-label="Aktion"><a class="row-action" href="/admin/discounts/${encodeURIComponent(campaign.id)}">Öffnen ${icon("arrow")}</a></td></tr>`;
           })
           .join("")}</tbody></table></div>`;
-  return `${pageActionBar("Rabatte & Kampagnen", "Rabattcodes sicher planen, begrenzen und nachvollziehen.", actions)}<section class="metric-grid promotion-metrics" aria-label="Rabattkennzahlen">${metric("Kampagnen", result.total, { href: "/admin/discounts", iconName: "tag", detail: "Gesamt" })}${metric("Aktiv", result.active, { href: "/admin/discounts?status=ACTIVE", iconName: "tag", detail: "Jetzt anwendbar" })}${metric("Geplant", result.planned, { href: "/admin/discounts?status=PLANNED", iconName: "calendar", detail: "Beginnt später" })}${metric("Handlungsbedarf", result.attention, { href: "/admin/discounts?usage=LIMIT_REACHED", iconName: "alert", detail: "Nutzungslimit erreicht" })}</section>${promotionFilters(query)}<section class="content-section operations-section flush"><div class="section-heading"><div><h2>Kampagnen</h2><span>${result.totalCount} Treffer</span></div></div>${rows}${promotionPagination(result, query)}</section><p class="page-note">Rabatte sind nicht kombinierbar. Einlösung wird erst nach bestätigter Zahlung verbraucht; fehlgeschlagene und abgebrochene Zahlungen geben die Reservierung frei.</p>`;
+  return `${pageActionBar("Rabatte & Kampagnen", "Rabattcodes sicher planen, begrenzen und nachvollziehen.", actions)}<section class="metric-grid promotion-metrics" aria-label="Rabattkennzahlen">${metric("Kampagnen", result.total, { href: "/admin/discounts", iconName: "tag", detail: "Gesamt", selected: !query.has("status") && !query.has("usage") })}${metric("Aktiv", result.active, { href: "/admin/discounts?status=ACTIVE", iconName: "tag", detail: "Jetzt anwendbar", selected: query.get("status") === "ACTIVE" })}${metric("Geplant", result.planned, { href: "/admin/discounts?status=PLANNED", iconName: "calendar", detail: "Beginnt später", selected: query.get("status") === "PLANNED" })}${metric("Handlungsbedarf", result.attention, { href: "/admin/discounts?usage=LIMIT_REACHED", iconName: "alert", detail: "Kampagnen mit Handlungsbedarf", selected: query.get("usage") === "LIMIT_REACHED" })}</section>${promotionFilters(query)}<section class="content-section operations-section flush"><div class="section-heading"><div><h2>Kampagnen</h2><span>${result.totalCount} Treffer</span></div></div>${rows}${promotionPagination(result, query)}</section><p class="page-note">Rabatte sind nicht kombinierbar. Einlösung wird erst nach bestätigter Zahlung verbraucht; fehlgeschlagene und abgebrochene Zahlungen geben die Reservierung frei.</p>`;
 };
 
-const promotionFilters = (query: URLSearchParams): string =>
-  `<details class="filter-panel"${["status", "discount_type", "product_scope", "usage"].some((key) => query.has(key)) ? " open" : ""}><summary>Filter und Sortierung</summary><form class="filter-grid promotion-filter-grid" method="get" action="/admin/discounts">${query.get("search") ? `<input type="hidden" name="search" value="${escapeHtml(query.get("search") ?? "")}">` : ""}${selectFilter(
+const promotionFilters = (query: URLSearchParams): string => {
+  const manualFilters = [
+    "discount_type",
+    "product_scope",
+    "sort",
+    "limit",
+  ].filter((key) => query.has(key)).length;
+  return `<details class="filter-panel"${query.get("panel") === "1" ? " open" : ""}><summary>Filter und Sortierung${manualFilters > 0 ? ` <span class="filter-count">${manualFilters} aktiv</span>` : ""}</summary><form class="filter-grid promotion-filter-grid" method="get" action="/admin/discounts"><input type="hidden" name="panel" value="1">${query.get("search") ? `<input type="hidden" name="search" value="${escapeHtml(query.get("search") ?? "")}">` : ""}${selectFilter(
     "Status",
     "status",
     query.get("status") ?? "",
@@ -3186,6 +3203,7 @@ const promotionFilters = (query: URLSearchParams): string =>
     ["25", "25"],
     ["50", "50"],
   ])}<div class="filter-actions"><a class="button-quiet" href="/admin/discounts">Zurücksetzen</a><button type="submit">Anwenden</button></div></form></details>`;
+};
 
 const selectFilter = (
   label: string,
@@ -3213,27 +3231,100 @@ const promotionCreateContent = (
   csrf: string,
   operationId: string,
   error?: string,
+  submitted?: PromotionFormState,
 ): string =>
-  `${pageActionBar("Kampagne erstellen", "Eine codegebundene Rabattaktion als sicheren Entwurf anlegen.", '<a class="button-quiet" href="/admin/discounts">Abbrechen</a>')}<section class="content-section promotion-form-section">${error ? `<div class="form-error" role="alert">${escapeHtml(error)}</div>` : ""}<form class="admin-form promotion-form" method="post" action="/admin/discounts/new"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="operation_id" value="${escapeHtml(operationId)}">${promotionFields()}<div class="promotion-boundary"><strong>Sicherer Entwurf</strong><p>Erstellen aktiviert keine Kundenpreise. Bei ausgewählten Produkten erfolgt die Zuordnung nach dem Anlegen über die begrenzte Produktsuche.</p></div><div class="form-actions"><a class="button-quiet" href="/admin/discounts">Abbrechen</a><button type="submit">Entwurf anlegen</button></div></form></section>`;
+  `${pageActionBar("Kampagne erstellen", "Eine codegebundene Rabattaktion als sicheren Entwurf anlegen.", '<a class="button-quiet" href="/admin/discounts">Abbrechen</a>')}<section class="content-section promotion-form-section">${error ? `<div id="promotion-form-error" class="form-error" role="alert">${escapeHtml(error)}</div>` : ""}<form class="admin-form promotion-form" method="post" action="/admin/discounts/new"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="operation_id" value="${escapeHtml(operationId)}">${promotionFields(submitted ?? emptyPromotionFormState(), false, error)}<div class="promotion-boundary"><strong>Sicherer Entwurf</strong><p>Das Anlegen aktiviert keine Kundenpreise. Bei „Ausgewählte Produkte“ ordnen Sie Produkte anschließend im Kampagnendetail über die begrenzte serverseitige Suche zu.</p></div><div class="form-actions"><a class="button-quiet" href="/admin/discounts">Abbrechen</a><button type="submit">Entwurf anlegen</button></div></form></section>`;
 
 const promotionEditContent = (
   campaign: PromotionDetail,
   csrf: string,
   error?: string,
+  submitted?: PromotionFormState,
 ): string =>
-  `${pageActionBar("Kampagne bearbeiten", "Konfiguration für künftige Preis-Locks ändern.", `<a class="button-quiet" href="/admin/discounts/${encodeURIComponent(campaign.id)}">Abbrechen</a>`)}<section class="content-section promotion-form-section">${error ? `<div class="form-error" role="alert">${escapeHtml(error)}</div>` : ""}<form class="admin-form promotion-form" method="post" action="/admin/discounts/${encodeURIComponent(campaign.id)}/edit"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="expected_version" value="${campaign.recordVersion}">${promotionFields(campaign)}${campaign.hasCommittedUsage ? '<div class="promotion-boundary"><strong>Historische Integrität</strong><p>Code und Rabattregel sind nach der ersten bestätigten Nutzung gesperrt. Stammdaten und künftige Gültigkeit bleiben kontrolliert änderbar.</p></div>' : ""}<div class="form-actions"><a class="button-quiet" href="/admin/discounts/${encodeURIComponent(campaign.id)}">Abbrechen</a><button type="submit">Änderungen speichern</button></div></form></section>`;
+  `${pageActionBar("Kampagne bearbeiten", "Konfiguration für künftige Preis-Locks ändern.", `<a class="button-quiet" href="/admin/discounts/${encodeURIComponent(campaign.id)}">Abbrechen</a>`)}<section class="content-section promotion-form-section">${error ? `<div id="promotion-form-error" class="form-error" role="alert">${escapeHtml(error)}</div>` : ""}<form class="admin-form promotion-form" method="post" action="/admin/discounts/${encodeURIComponent(campaign.id)}/edit"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="expected_version" value="${campaign.recordVersion}">${promotionFields(submitted ?? promotionFormState(campaign), campaign.hasCommittedUsage, error)}${campaign.hasCommittedUsage ? '<div class="promotion-boundary"><strong>Historische Integrität</strong><p>Code und Rabattregel sind nach der ersten bestätigten Nutzung gesperrt. Stammdaten und künftige Gültigkeit bleiben kontrolliert änderbar.</p></div>' : ""}<div class="form-actions"><a class="button-quiet" href="/admin/discounts/${encodeURIComponent(campaign.id)}">Abbrechen</a><button type="submit">Änderungen speichern</button></div></form></section>`;
 
-const promotionFields = (campaign?: PromotionDetail): string => {
-  const percentage = campaign?.discountType !== "FIXED_AMOUNT";
-  const value = campaign
-    ? percentage
-      ? formatPercentage(campaign.discountValue)
-      : formatMoneyInput(campaign.discountValue)
-    : "";
-  const discountTypeField = campaign?.hasCommittedUsage
-    ? `<input type="hidden" name="discount_type" value="${campaign.discountType}"><select disabled aria-label="Rabattart (nach Nutzung unveränderlich)"><option selected>${percentage ? "Prozent" : "Fester Betrag"}</option></select>`
-    : `<select name="discount_type"><option value="PERCENTAGE"${percentage ? " selected" : ""}>Prozent</option><option value="FIXED_AMOUNT"${!percentage ? " selected" : ""}>Fester Betrag</option></select>`;
-  return `<label>Name<input name="name" maxlength="120" required value="${escapeHtml(campaign?.name ?? "")}"></label><label>Interne Beschreibung<textarea name="internal_description" maxlength="500">${escapeHtml(campaign?.internalDescription ?? "")}</textarea></label><div class="form-grid"><label>Aktionscode<input name="code" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_-]{2,31}" required value="${escapeHtml(campaign?.code ?? "")}"${campaign?.hasCommittedUsage ? " readonly" : ""}><small>3–32 Zeichen; Groß-/Kleinschreibung wird vereinheitlicht.</small></label><label>Rabattart${discountTypeField}</label></div><div class="form-grid"><label>Rabattwert<input name="discount_value" inputmode="decimal" required value="${escapeHtml(value)}"${campaign?.hasCommittedUsage ? " readonly" : ""}><small>Beispiele: 20 für 20 % oder 5,00 für 5,00 EUR.</small></label><label>Mindest-Zwischensumme (optional)<input name="minimum_subtotal" inputmode="decimal" value="${campaign?.minimumSubtotalMinor === null || campaign?.minimumSubtotalMinor === undefined ? "" : escapeHtml(formatMoneyInput(campaign.minimumSubtotalMinor))}"><small>Zwischensumme des einzelnen berechtigten Produkts vor Rabatt.</small></label></div><label>Produktumfang<select name="product_scope"><option value="ALL_ELIGIBLE_PRODUCTS"${campaign?.productScope !== "SELECTED_PRODUCTS" ? " selected" : ""}>Alle berechtigten Produkte</option><option value="SELECTED_PRODUCTS"${campaign?.productScope === "SELECTED_PRODUCTS" ? " selected" : ""}>Ausgewählte Produkte</option></select></label><div class="form-grid"><label>Start (optional)<input type="datetime-local" name="starts_at" value="${dateTimeInput(campaign?.startsAt ?? null)}"></label><label>Ende (optional)<input type="datetime-local" name="ends_at" value="${dateTimeInput(campaign?.endsAt ?? null)}"></label></div><label>Globales Nutzungslimit (optional)<input name="usage_limit" inputmode="numeric" pattern="[1-9][0-9]{0,14}" value="${campaign?.usageLimit?.toString() ?? ""}"><small>Leer bedeutet unbegrenzt; Null ist kein gültiges Limit.</small></label>`;
+interface PromotionFormState {
+  readonly name: string;
+  readonly internalDescription: string;
+  readonly code: string;
+  readonly discountType: string;
+  readonly discountValue: string;
+  readonly minimumSubtotal: string;
+  readonly productScope: string;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly usageMode: string;
+  readonly usageLimit: string;
+}
+
+const emptyPromotionFormState = (): PromotionFormState => ({
+  code: "",
+  discountType: "PERCENTAGE",
+  discountValue: "",
+  endsAt: "",
+  internalDescription: "",
+  minimumSubtotal: "",
+  name: "",
+  productScope: "ALL_ELIGIBLE_PRODUCTS",
+  startsAt: "",
+  usageLimit: "",
+  usageMode: "UNLIMITED",
+});
+
+const promotionFormState = (
+  source: URLSearchParams | PromotionDetail,
+): PromotionFormState => {
+  if (source instanceof URLSearchParams)
+    return {
+      code: source.get("code") ?? "",
+      discountType: source.get("discount_type") ?? "PERCENTAGE",
+      discountValue: source.get("discount_value") ?? "",
+      endsAt: source.get("ends_at") ?? "",
+      internalDescription: source.get("internal_description") ?? "",
+      minimumSubtotal: source.get("minimum_subtotal") ?? "",
+      name: source.get("name") ?? "",
+      productScope: source.get("product_scope") ?? "ALL_ELIGIBLE_PRODUCTS",
+      startsAt: source.get("starts_at") ?? "",
+      usageLimit: source.get("usage_limit") ?? "",
+      usageMode: source.get("usage_mode") ?? "UNLIMITED",
+    };
+  return {
+    code: source.code,
+    discountType: source.discountType,
+    discountValue:
+      source.discountType === "PERCENTAGE"
+        ? formatPercentage(source.discountValue)
+        : formatMoneyInput(source.discountValue),
+    endsAt: dateTimeInput(source.endsAt),
+    internalDescription: source.internalDescription,
+    minimumSubtotal:
+      source.minimumSubtotalMinor === null
+        ? ""
+        : formatMoneyInput(source.minimumSubtotalMinor),
+    name: source.name,
+    productScope: source.productScope,
+    startsAt: dateTimeInput(source.startsAt),
+    usageLimit: source.usageLimit?.toString() ?? "",
+    usageMode: source.usageLimit === null ? "UNLIMITED" : "LIMITED",
+  };
+};
+
+const promotionFields = (
+  state: PromotionFormState,
+  immutableRule: boolean,
+  error?: string,
+): string => {
+  const percentage = state.discountType !== "FIXED_AMOUNT";
+  const described = error ? ' aria-describedby="promotion-form-error"' : "";
+  const discountTypeField = immutableRule
+    ? `<input type="hidden" name="discount_type" value="${escapeHtml(state.discountType)}"><select disabled aria-label="Rabattart (nach Nutzung unveränderlich)"><option selected>${percentage ? "Prozent" : "Fester Betrag"}</option></select>`
+    : `<select name="discount_type"${described}><option value="PERCENTAGE"${percentage ? " selected" : ""}>Prozent</option><option value="FIXED_AMOUNT"${!percentage ? " selected" : ""}>Fester Betrag</option></select>`;
+  return `<fieldset class="promotion-form-group"><legend>Kampagne</legend><div class="promotion-fields"><label class="field-wide">Name<input name="name" maxlength="120" required value="${escapeHtml(state.name)}"${described}></label><label class="field-wide">Interne Beschreibung<textarea name="internal_description" maxlength="500"${described}>${escapeHtml(state.internalDescription)}</textarea><small>Nur für Mitarbeitende sichtbar.</small></label></div></fieldset>
+<fieldset class="promotion-form-group promotion-discount-group"><legend>Rabatt</legend><div class="promotion-fields"><label>Rabattart${discountTypeField}</label><label>Rabattwert<span class="input-with-unit"><input name="discount_value" inputmode="decimal" required value="${escapeHtml(state.discountValue)}"${immutableRule ? " readonly" : ""}${described}><span class="discount-unit discount-unit-percentage">%</span><span class="discount-unit discount-unit-fixed">EUR</span></span><small>Positiver Wert unter 100 % beziehungsweise in Euro.</small></label><label class="field-wide">Mindest-Zwischensumme (optional)<span class="input-with-unit"><input name="minimum_subtotal" inputmode="decimal" value="${escapeHtml(state.minimumSubtotal)}"${described}><span>EUR</span></span><small>Bezogen auf das einzelne berechtigte Produkt vor Rabatt.</small></label></div></fieldset>
+<fieldset class="promotion-form-group"><legend>Aktionscode</legend><label>Code<input name="code" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_-]{2,31}" required value="${escapeHtml(state.code)}" placeholder="z. B. SOMMER20"${immutableRule ? " readonly" : ""}${described}><small>3–32 Zeichen; Groß-/Kleinschreibung wird vereinheitlicht.</small></label></fieldset>
+<fieldset class="promotion-form-group"><legend>Gültigkeit</legend><div class="promotion-fields"><label>Beginn (optional)<input type="datetime-local" name="starts_at" value="${escapeHtml(state.startsAt)}"${described}></label><label>Ende (optional)<input type="datetime-local" name="ends_at" value="${escapeHtml(state.endsAt)}"${described}></label><p class="field-wide form-helper">Ohne Beginn gilt die Kampagne nach Aktivierung sofort; ohne Ende bleibt sie zeitlich offen.</p></div></fieldset>
+<fieldset class="promotion-form-group"><legend>Produktumfang</legend><label>Auswahl<select name="product_scope"${described}><option value="ALL_ELIGIBLE_PRODUCTS"${state.productScope !== "SELECTED_PRODUCTS" ? " selected" : ""}>Alle berechtigten Produkte</option><option value="SELECTED_PRODUCTS"${state.productScope === "SELECTED_PRODUCTS" ? " selected" : ""}>Ausgewählte Produkte</option></select><small>Ausgewählte Produkte ordnen Sie nach dem Anlegen im Kampagnendetail zu.</small></label></fieldset>
+<fieldset class="promotion-form-group promotion-usage-group"><legend>Nutzung</legend><div class="segmented-control"><label><input type="radio" name="usage_mode" value="UNLIMITED"${state.usageMode !== "LIMITED" ? " checked" : ""}> Unbegrenzt</label><label><input type="radio" name="usage_mode" value="LIMITED"${state.usageMode === "LIMITED" ? " checked" : ""}> Begrenzt</label></div><label class="usage-limit-field">Maximale Nutzungen<input name="usage_limit" inputmode="numeric" pattern="[1-9][0-9]{0,14}" value="${escapeHtml(state.usageLimit)}"${described}><small>Nur bei „Begrenzt“ erforderlich.</small></label></fieldset>`;
 };
 
 const promotionDetailContent = (
@@ -3278,7 +3369,7 @@ const promotionDetailContent = (
       ? "Nutzungslimit erreicht"
       : "Keiner erkannt";
   const headerActions = `<a class="button-quiet" href="/admin/discounts">Zurück zu Kampagnen</a>${canManage && campaign.lifecycle !== "ARCHIVED" ? `<a class="button" href="/admin/discounts/${encodeURIComponent(campaign.id)}/edit">Bearbeiten</a>` : ""}`;
-  return `${pageActionBar("Kampagnendetail", "Regel, Gültigkeit und Nutzung nachvollziehen.", headerActions)}${success ? '<div class="notice notice-success"><strong>Kampagne gespeichert.</strong></div>' : ""}<section class="promotion-detail-identity"><span class="promotion-detail-media">${icon("tag")}</span><div><span class="eyebrow">Kampagne</span><h2>${escapeHtml(campaign.name)}</h2><p><code>${escapeHtml(campaign.code)}</code> · ID ${escapeHtml(campaign.id)}</p></div><span class="status status-${promotionStatusTone(effective)}">${promotionStatusLabel(effective)}</span></section><section class="state-strip"><div><span>Effektiver Status</span><strong>${promotionStatusLabel(effective)}</strong></div><div><span>Handlungsbedarf</span><strong>${attention}</strong></div><div><span>Verbraucht</span><strong>${campaign.consumedCount.toString()}</strong></div><div><span>Reserviert</span><strong>${campaign.reservedCount.toString()}</strong></div></section><section class="detail-grid"><article><h2>Rabattregel</h2>${detailRow("Rabatt", promotionDiscountLabel(campaign))}${detailRow("Anwendung", "Code erforderlich")}${detailRow("Kombination", "Nicht kombinierbar")}${detailRow("Mindest-Zwischensumme", campaign.minimumSubtotalMinor === null ? "Keine" : formatMinor(campaign.minimumSubtotalMinor.toString(), campaign.currency))}</article><article><h2>Gültigkeit & Umfang</h2>${detailRow("Start", campaign.startsAt ? formatDate(campaign.startsAt) : "Sofort")}${detailRow("Ende", campaign.endsAt ? formatDate(campaign.endsAt) : "Ohne Enddatum")}${detailRow("Produktumfang", campaign.productScope === "ALL_ELIGIBLE_PRODUCTS" ? "Alle berechtigten Produkte" : `${campaign.productIds.length} ausgewählte Produkte`)}${detailRow("Nutzungslimit", campaign.usageLimit?.toString() ?? "Unbegrenzt")}</article></section>${campaign.internalDescription ? `<section class="content-section"><div class="section-heading"><h2>Interne Beschreibung</h2></div><p>${escapeHtml(campaign.internalDescription)}</p></section>` : ""}${campaign.productScope === "SELECTED_PRODUCTS" ? promotionProductPicker(campaign, productOptions, productSearch, principal) : ""}${action}${promotionUsageContent(campaign)}<p class="page-note">Gültige Preis-Locks behalten ihren Rabatt-Snapshot auch nach späterer Änderung oder Deaktivierung. Null-Euro-Bestellungen und Rabattkombinationen sind nicht unterstützt.</p>`;
+  return `${pageActionBar("Kampagnendetail", "Regel, Gültigkeit und Nutzung nachvollziehen.", headerActions)}${success ? '<div class="notice notice-success"><strong>Kampagne gespeichert.</strong></div>' : ""}<section class="promotion-detail-identity"><span class="promotion-detail-media">${icon("tag")}</span><div><span class="eyebrow">Kampagne</span><h2>${escapeHtml(campaign.name)}</h2><p><code>${escapeHtml(campaign.code)}</code> · ID ${escapeHtml(campaign.id)}</p></div><span class="status status-${promotionStatusTone(effective)}">${promotionStatusLabel(effective)}</span></section><section class="state-strip"><div><span>Status</span><strong>${promotionStatusLabel(effective)}</strong></div><div><span>Handlungsbedarf</span><strong>${attention}</strong></div><div><span>Verbraucht</span><strong>${campaign.consumedCount.toString()}</strong></div><div><span>Reserviert</span><strong>${campaign.reservedCount.toString()}</strong></div></section><section class="detail-grid"><article><h2>Rabattregel</h2>${detailRow("Rabatt", promotionDiscountLabel(campaign))}${detailRow("Anwendung", "Code erforderlich")}${detailRow("Kombination", "Nicht kombinierbar")}${detailRow("Mindest-Zwischensumme", campaign.minimumSubtotalMinor === null ? "Keine" : formatMinor(campaign.minimumSubtotalMinor.toString(), campaign.currency))}</article><article><h2>Gültigkeit & Produktumfang</h2>${detailRow("Beginn", campaign.startsAt ? formatDate(campaign.startsAt) : "Sofort")}${detailRow("Ende", campaign.endsAt ? formatDate(campaign.endsAt) : "Ohne Enddatum")}${detailRow("Produktumfang", campaign.productScope === "ALL_ELIGIBLE_PRODUCTS" ? "Alle berechtigten Produkte" : promotionProductCount(campaign.productIds.length))}${detailRow("Nutzungslimit", campaign.usageLimit?.toString() ?? "Unbegrenzt")}</article></section>${campaign.internalDescription ? `<section class="content-section"><div class="section-heading"><h2>Interne Beschreibung</h2></div><p>${escapeHtml(campaign.internalDescription)}</p></section>` : ""}${campaign.productScope === "SELECTED_PRODUCTS" ? promotionProductPicker(campaign, productOptions, productSearch, principal) : ""}${action}${promotionUsageContent(campaign)}<section class="promotion-technical-notes"><h2>Technische Hinweise</h2><p>Gültige Preis-Locks behalten ihren Rabatt-Snapshot nach späteren Änderungen. Null-Euro-Bestellungen und Rabattkombinationen sind nicht unterstützt.</p></section>`;
 };
 
 const promotionProductPicker = (
@@ -3311,7 +3402,10 @@ const promotionProductPicker = (
 };
 
 const promotionUsageContent = (campaign: PromotionDetail): string =>
-  `<section class="content-section"><div class="section-heading"><div><h2>Nutzung & Verlauf</h2><span>Maximal 10 bestätigte Einlösungen, ohne Kunden-PII</span></div></div>${campaign.recentUsage.length === 0 ? emptyState("Noch keine bestätigte Nutzung", "Reservierungen werden hier nicht als abgeschlossene Einlösung dargestellt.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Bestellung</th><th>Rabatt</th><th>Endbetrag</th><th>Bestätigt</th></tr></thead><tbody>${campaign.recentUsage.map((usage) => `<tr><td data-label="Bestellung"><a href="/admin/orders/${encodeURIComponent(usage.orderId)}">${escapeHtml(usage.orderId)}</a></td><td data-label="Rabatt">${escapeHtml(formatMinor(usage.discountAmountMinor.toString(), usage.currency))}</td><td data-label="Endbetrag">${escapeHtml(formatMinor(usage.finalAmountMinor.toString(), usage.currency))}</td><td data-label="Bestätigt">${escapeHtml(formatDate(usage.consumedAt))}</td></tr>`).join("")}</tbody></table></div>`}${detailRow("Version", String(campaign.recordVersion))}${detailRow("Erstellt", formatDate(campaign.createdAt))}${detailRow("Aktualisiert", formatDate(campaign.updatedAt))}</section>`;
+  `<section class="content-section"><div class="section-heading"><div><h2>Nutzung & Verlauf</h2><span>Maximal 10 bestätigte Einlösungen, ohne Kunden-PII</span></div></div>${campaign.recentUsage.length === 0 ? emptyState("Noch keine bestätigte Nutzung", "Reservierungen werden hier nicht als abgeschlossene Einlösung dargestellt.") : `<div class="table-wrap"><table class="operations-table"><thead><tr><th>Bestellung</th><th>Rabatt</th><th>Endbetrag</th><th>Bestätigt</th></tr></thead><tbody>${campaign.recentUsage.map((usage) => `<tr><td data-label="Bestellung"><span class="cell-stack"><a href="/admin/orders/${encodeURIComponent(usage.orderId)}">${escapeHtml(usage.operatorReference)}</a><small>ID ${escapeHtml(usage.orderId)}</small></span></td><td data-label="Rabatt">${escapeHtml(formatMinor(usage.discountAmountMinor.toString(), usage.currency))}</td><td data-label="Endbetrag">${escapeHtml(formatMinor(usage.finalAmountMinor.toString(), usage.currency))}</td><td data-label="Bestätigt">${escapeHtml(formatDate(usage.consumedAt))}</td></tr>`).join("")}</tbody></table></div>`}<div class="promotion-meta">${detailRow("Version", String(campaign.recordVersion))}${detailRow("Erstellt", formatDate(campaign.createdAt))}${detailRow("Aktualisiert", formatDate(campaign.updatedAt))}</div></section>`;
+
+const promotionProductCount = (count: number): string =>
+  count === 1 ? "1 Produkt" : `${count} Produkte`;
 
 const promotionDiscountLabel = (
   campaign: Pick<

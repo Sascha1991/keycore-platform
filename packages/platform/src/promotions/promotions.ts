@@ -67,6 +67,7 @@ export interface PromotionCampaign {
 
 export interface PromotionUsageEvidence {
   readonly orderId: string;
+  readonly operatorReference: string;
   readonly consumedAt: Date;
   readonly discountAmountMinor: bigint;
   readonly finalAmountMinor: bigint;

@@ -42,6 +42,18 @@ cancelled payment attempts release their reservation; confirmed capture consumes
 it and preserves an immutable Order snapshot. This category is technically ready
 for Human browser review, not Human accepted.
 
+The Category 06 UX correction keeps that domain boundary unchanged while making
+the Campaign workspace easier to operate and verify. KPI cards now act as
+explicit quick filters without opening the advanced filter panel, manual filters
+show their active count, Create and Edit use the same grouped form language, and
+validation failures retain safe submitted values. Usage limits are an explicit
+unlimited/limited choice, percentage and fixed-EUR units follow the selected
+rule, Product counts use natural German wording, and confirmed usage names the
+operator-facing Order reference before its UUID. Selected Products are still
+assigned immediately after Draft creation through the existing bounded,
+server-side search; no client script, broader CSP or second Campaign creation
+contract was introduced.
+
 ## Functional changes
 
 - Dashboard KPI cards are accessible links. `Aufmerksamkeit`, `In Bearbeitung`
@@ -229,6 +241,11 @@ for Human browser review, not Human accepted.
   overflow. It exercised Draft creation, bounded Product search and assignment,
   explicit activation, optimistic version progression and editable master data.
   At 1025 px the four Campaign KPIs render as a stable two-column grid.
+- The Category 06 UX correction rechecked quick-filter selection, the collapsed
+  and counted manual filter panel, fixed-EUR Draft creation, retained validation
+  input, bounded Product assignment, Edit/Cancel behavior and operator-facing
+  usage evidence. The controlled correction Draft remained inactive throughout;
+  no production provider, key material or external action was used.
 - The real local WooCommerce browser path applied the active code-required
   Campaign to `Neonpfad: Berlin`, showed the authoritative 1,94 EUR reduction
   from 12,99 EUR to 11,05 EUR and completed one synthetic successful payment.
@@ -253,14 +270,13 @@ remains `NOT_APPROVED`, and `SECURITY-READINESS` remains `NOT_APPROVED`.
 
 Category 06 Promotions validation:
 
-- Focused Campaign domain, Admin HTTP, browser adapter, checkout persistence,
-  Order presentation and PostgreSQL contracts: 74 tests passed across six
-  files. The focused PostgreSQL promotion and checkout group passed 12 tests,
+- Focused Category 06 correction tests: 35 Campaign-domain and Admin HTTP tests
+  passed. The focused PostgreSQL promotion and checkout group passed 12 tests,
   including an independent-connection usage-limit race, idempotency, release,
   immutable consumption evidence and the Admin Order projection.
-- `npm run check`: 97 test files and 1,017 tests passed; format, lint, typecheck
-  and secret scan passed.
-- Security assessment: 60 passed with 345 focused exclusions.
+- `npm run check`: 97 test files; 868 tests passed and 150 service-gated tests
+  were skipped (1,018 total). Format, lint, typecheck and secret scan passed.
+- Security assessment: 36 passed with 369 focused exclusions.
 - E2E acceptance: 16/16 passed with PostgreSQL enabled.
 - Catalog scale: 10/10 passed; Order concurrency: 38/38 passed.
 - Recovery harness: one local test passed and the PostgreSQL client-dependent
