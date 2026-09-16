@@ -39,8 +39,9 @@ WooCommerce checkout and captured Orders. Campaigns are created as Drafts,
 support percentage or fixed EUR reductions, bounded Product eligibility,
 optional minimum subtotal and a concurrency-safe global usage limit. Failed or
 cancelled payment attempts release their reservation; confirmed capture consumes
-it and preserves an immutable Order snapshot. This category is technically ready
-for Human browser review, not Human accepted.
+it and preserves an immutable Order snapshot. Final Human browser review accepted
+the Campaign overview, Create, Edit and detail workflows and their established
+domain boundaries.
 
 The Category 06 UX correction keeps that domain boundary unchanged while making
 the Campaign workspace easier to operate and verify. KPI cards now act as
@@ -168,7 +169,7 @@ contract was introduced.
 | Kunden                       | `ALIGNED_WITH_DOMAIN_LIMIT`: account/order summaries; no invented names, onboarding or authentication mutation                                |
 | Mitarbeiter & Rollen         | `ALIGNED`: real staff lifecycle and permission actions retained in the denser layout                                                          |
 | Produkte / Katalog           | `READY_FOR_HUMAN_BROWSER_REVIEW`: global KPIs, real filters, bounded detail and semantic fallback media; no unsafe write or invented price    |
-| Rabatte & Kampagnen          | `READY_FOR_HUMAN_BROWSER_REVIEW`: authoritative code-required Campaign management, checkout application and immutable Order evidence          |
+| Rabatte & Kampagnen          | `HUMAN_ACCEPTED`: authoritative code-required Campaign management, checkout application and immutable Order evidence                          |
 | Support                      | `ALIGNED`: real cases, priorities, customer-visible/internal messages and transitions                                                         |
 | Admin-Panel Gesamt           | `PARTIALLY_ALIGNED`: shared visual language and operational modules; deep workflows remain constrained by existing authority                  |
 | Markierte Produkt-Action-Bar | `ALIGNED`: reusable title/description/search/filter/action composition implemented                                                            |
@@ -253,14 +254,23 @@ contract was introduced.
   zero reservations and immutable Order evidence. Renaming the Campaign after
   capture did not alter the stored Campaign name, code, rule, base amount,
   discount or final amount on that Order.
+- Final Human browser review accepted Category 06/13. The review covered the
+  Campaign overview, responsive Create and Edit forms, detail, KPI quick filters,
+  independent manual filters, percentage/fixed-amount presentation, `%`/`EUR`
+  unit switching, unlimited/limited usage, Product scope, bounded Product search
+  and assignment, lifecycle/status and technical-information presentation,
+  usage history and the operator-facing Order reference. The accepted Product
+  workflow remains safe Draft creation followed by bounded server-side Product
+  assignment. Intentionally unsupported functionality remains unsupported.
 
 ## UAT and approval
 
 Category 05/13 Human browser review is `HUMAN_ACCEPTED`. This category review
 does not constitute a KS-11-07 scenario result. No Human-UAT result changed;
 the authoritative total remains 11/18 PASS.
-Category 06/13 is `READY_FOR_HUMAN_BROWSER_REVIEW` and is not yet Human
-accepted. Its technical completion does not add or change a KS-11-07 result.
+Category 06/13 Human browser review is `HUMAN_ACCEPTED`. This category review
+also does not add or change a KS-11-07 result; the authoritative total remains
+11/18 PASS.
 UAT-014 and UAT-017 remain technically ready but not Human-PASS. UAT-008,
 UAT-010, UAT-011, UAT-013 and UAT-016 remain blocked at their documented UI or
 identity boundaries. Human Acceptance remains `IN_REVIEW`, Human Approval
