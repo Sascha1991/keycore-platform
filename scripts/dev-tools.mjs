@@ -180,15 +180,13 @@ export const validateLocalEnv = (env, templateEnv = {}) => {
   ) {
     errors.push("KEYCORE_DEPLOYMENT_ID ist ungültig.");
   }
-  if (env.KEYRANO_STAGING_ORIGIN !== "http://localhost:18080") {
-    errors.push(
-      "KEYRANO_STAGING_ORIGIN muss lokal http://localhost:18080 sein.",
-    );
+  const storefrontOrigin = `http://localhost:${env.KEYCORE_STAGING_WORDPRESS_PORT ?? "18080"}`;
+  const adminOrigin = `http://localhost:${env.KEYCORE_STAGING_ADMIN_PORT ?? "18081"}`;
+  if (env.KEYRANO_STAGING_ORIGIN !== storefrontOrigin) {
+    errors.push(`KEYRANO_STAGING_ORIGIN muss lokal ${storefrontOrigin} sein.`);
   }
-  if (env.KEYRANO_STAGING_ADMIN_ORIGIN !== "http://localhost:18081") {
-    errors.push(
-      "KEYRANO_STAGING_ADMIN_ORIGIN muss lokal http://localhost:18081 sein.",
-    );
+  if (env.KEYRANO_STAGING_ADMIN_ORIGIN !== adminOrigin) {
+    errors.push(`KEYRANO_STAGING_ADMIN_ORIGIN muss lokal ${adminOrigin} sein.`);
   }
   if (env.KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE !== "false") {
     errors.push(

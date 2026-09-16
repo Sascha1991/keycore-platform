@@ -41,6 +41,29 @@ describe("multi-device development tooling", () => {
     expect(rendered).not.toContain("GENERATE_LOCALLY");
   });
 
+  it("validates isolated local port overrides without weakening local-only origins", () => {
+    const template = readFileSync("infra/docker/staging.env.example", "utf8");
+    const env = {
+      ...parseEnv(
+        renderLocalEnv(template, createLocalEnvValues(deterministicRandom)),
+      ),
+      KEYCORE_STAGING_ADMIN_PORT: "28081",
+      KEYCORE_STAGING_WORDPRESS_PORT: "28080",
+      KEYRANO_STAGING_ADMIN_ORIGIN: "http://localhost:28081",
+      KEYRANO_STAGING_ORIGIN: "http://localhost:28080",
+    };
+
+    expect(validateLocalEnv(env, parseEnv(template)).errors).toEqual([]);
+    expect(
+      validateLocalEnv(
+        { ...env, KEYRANO_STAGING_ADMIN_ORIGIN: "https://example.test" },
+        parseEnv(template),
+      ).errors,
+    ).toContain(
+      "KEYRANO_STAGING_ADMIN_ORIGIN muss lokal http://localhost:28081 sein.",
+    );
+  });
+
   it("keeps generated secrets out of CLI output and never overwrites the env file", () => {
     const cli = readFileSync("scripts/dev.mjs", "utf8");
 
