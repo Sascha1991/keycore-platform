@@ -1,6 +1,9 @@
 export * from "./audit/service.js";
 export * from "./admin/admin-orders.js";
+export * from "./admin/admin-password-authentication.js";
+export * from "./admin/admin-password-reset.js";
 export * from "./admin/admin-operations.js";
+export * from "./admin/admin-suppliers.js";
 export * from "./admin/admin-staff.js";
 export * from "./catalog/germany-eligibility.js";
 export * from "./catalog/canonical-product-grouping.js";
@@ -29,6 +32,7 @@ export * from "./ports/core.js";
 export * from "./ports/supplier.js";
 export * from "./pricing/pricing-margin.js";
 export * from "./pricing/price-locks.js";
+export * from "./promotions/promotions.js";
 export * from "./orders/order-orchestration.js";
 export * from "./operations/operations-controls.js";
 export * from "./operations/observability.js";

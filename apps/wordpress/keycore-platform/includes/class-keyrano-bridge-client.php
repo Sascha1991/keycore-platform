@@ -30,6 +30,24 @@ final class Bridge_Client implements Bridge
     }
 
     /** @return array<string, mixed>|null */
+    public function promotion_quote(string $code, string $product_reference, string $base_amount_minor): ?array
+    {
+        return $this->request(
+            'POST',
+            '/v1/promotions/quote',
+            null,
+            null,
+            true,
+            [
+                'baseAmountMinor' => $base_amount_minor,
+                'code' => $code,
+                'currency' => 'EUR',
+                'productReference' => $product_reference,
+            ]
+        );
+    }
+
+    /** @return array<string, mixed>|null */
     public function orders(int $wp_user_id, string $customer_id): ?array
     {
         return $this->request('GET', '/v1/account/orders', $wp_user_id, $customer_id);

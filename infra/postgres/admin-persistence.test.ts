@@ -13,6 +13,8 @@ import {
   PostgresAdminStaffRepository,
 } from "./admin-repositories.js";
 import { PostgresAdminOperationsRepository } from "./admin-operations-repository.js";
+import { PostgresAdminSupplierMutationRepository } from "./admin-supplier-repository.js";
+import { loadMigrations } from "./migrations.js";
 import { PostgresTestDatabase } from "./test-database.js";
 
 const connectionString = process.env.KEYCORE_TEST_DATABASE_URL;
@@ -62,6 +64,7 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         [customerId, now],
       );
       const createdOrderId = await insertOrder(database, productId, customerId);
+      await insertConfirmedCustomerAccess(database, createdOrderId, customerId);
       await database.query(
         `INSERT INTO order_transition_history(order_id, from_status, to_status, reason_code, correlation_id, actor_type, occurred_at) VALUES ($1, NULL, 'FULFILLMENT_PENDING', 'ADMIN_TEST_FIXTURE', 'corr-admin-pg', 'SYSTEM', $2)`,
         [createdOrderId, now],
@@ -69,19 +72,89 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       const repository = new PostgresAdminOrderReadRepository(database);
 
       const page = await repository.list({
+        cursorDirection: "NEXT",
         filters: { exactCustomerEmail: "admin-customer@example.test" },
         limit: 25,
+        sort: "NEWEST",
       });
       expect(page.orders).toHaveLength(1);
       expect(page.orders[0]).toMatchObject({
         orderId: orderId(createdOrderId),
+        operatorReference: expect.stringMatching(/^KR[0-9A-F]{7}$/u),
+        customerAccessConfirmed: true,
+        productPlatform: "WINDOWS",
         productTitle: "Admin Persistence Product",
       });
+      expect(page).toMatchObject({
+        metrics: {
+          attentionOrders: 0,
+          failedOrders: 0,
+          processingOrders: 1,
+          totalOrders: 1,
+        },
+        totalCount: 1,
+      });
+      const operatorReference = page.orders[0]?.operatorReference;
+      if (!operatorReference) throw new Error("Operator reference unavailable");
+      const byReference = await repository.list({
+        cursorDirection: "NEXT",
+        filters: { exactOperatorReference: operatorReference },
+        limit: 10,
+        sort: "NEWEST",
+      });
+      expect(byReference.orders.map((item) => item.orderId)).toEqual([
+        orderId(createdOrderId),
+      ]);
+      const combined = await repository.list({
+        cursorDirection: "NEXT",
+        filters: {
+          exactCustomerEmail: "admin-customer@example.test",
+          exactOperatorReference: operatorReference,
+          fulfillmentStatus: "PENDING",
+          paymentStatus: "CAPTURED",
+        },
+        limit: 10,
+        sort: "NEWEST",
+      });
+      expect(combined.orders.map((item) => item.orderId)).toEqual([
+        orderId(createdOrderId),
+      ]);
+      const dimensional = await repository.list({
+        cursorDirection: "NEXT",
+        filters: {
+          fulfillmentStatus: "PENDING",
+          paymentStatus: "CAPTURED",
+          procurementStatus: "SUCCEEDED",
+          riskStatus: "APPROVED",
+        },
+        limit: 10,
+        sort: "OLDEST",
+      });
+      expect(dimensional.orders.map((item) => item.orderId)).toContain(
+        orderId(createdOrderId),
+      );
+      const processing = await repository.list({
+        cursorDirection: "NEXT",
+        filters: { operationalView: "PROCESSING" },
+        limit: 25,
+        sort: "NEWEST",
+      });
+      expect(processing.orders.map((item) => item.orderId)).toContain(
+        orderId(createdOrderId),
+      );
+      const failed = await repository.list({
+        cursorDirection: "NEXT",
+        filters: { operationalView: "FAILED" },
+        limit: 25,
+        sort: "NEWEST",
+      });
+      expect(failed.orders).toHaveLength(0);
       const detail = await repository.findDetail(orderId(createdOrderId));
       expect(detail).toMatchObject({
         encryptedSecretAvailable: false,
         history: [{ reasonCode: "ADMIN_TEST_FIXTURE" }],
         invoiceStatus: "NOT_AVAILABLE",
+        operatorReference,
       });
       expect(JSON.stringify(detail)).not.toMatch(
         /ciphertext|encryption_nonce|wrapped_data_encryption_key/iu,
@@ -218,12 +291,27 @@ describePostgres("secure admin PostgreSQL persistence", () => {
     const database = await initDatabase();
     try {
       const customerId = randomUUID();
+      const customerWithoutOrdersId = randomUUID();
       const productId = await insertProduct(database);
+      const recentRegistration = new Date(Date.now() - 24 * 60 * 60 * 1000);
       await database.query(
         `INSERT INTO keycore_customers(id, email_normalized, email_verification_state, record_version, created_at, updated_at) VALUES ($1, 'operations-customer@example.test', 'VERIFIED', 1, $2, $2)`,
-        [customerId, now],
+        [customerId, recentRegistration],
+      );
+      await database.query(
+        `INSERT INTO keycore_customers(id, email_normalized, email_verification_state, record_version, created_at, updated_at) VALUES ($1, 'customer-without-orders@example.test', 'UNVERIFIED', 1, $2, $2)`,
+        [customerWithoutOrdersId, new Date("2025-08-15T09:00:00.000Z")],
       );
       const createdOrderId = await insertOrder(database, productId, customerId);
+      const sameEmailGuestOrderId = await insertOrder(
+        database,
+        productId,
+        null,
+        {
+          amountMinor: 999,
+          checkoutEmail: "customer-without-orders@example.test",
+        },
+      );
       const supportId = randomUUID();
       await database.query(
         `INSERT INTO support_cases(id, customer_id, order_id, category, status, priority, source, resolution_code, record_version, correlation_id, created_at, updated_at, resolved_at, closed_at) VALUES ($1, $2, $3, 'ORDER_STATUS', 'OPEN', 'NORMAL', 'CUSTOMER', NULL, 1, 'admin-operations-pg', $4, $4, NULL, NULL)`,
@@ -232,19 +320,159 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       const repository = new PostgresAdminOperationsRepository(database);
 
       await expect(
-        repository.listCustomers({ limit: 25, search: "operations-customer" }),
+        repository.listCustomers({
+          limit: 25,
+          search: "operations-customer",
+          sort: "NEWEST",
+        }),
       ).resolves.toMatchObject({
-        items: [{ customerId, orderCount: 1, verificationState: "VERIFIED" }],
+        items: [
+          {
+            customerId,
+            lastOrderReference: expect.stringMatching(/^KR/u),
+            orderCount: 1,
+            verificationState: "VERIFIED",
+          },
+        ],
+        metrics: {
+          capturedPaymentVolumes: [
+            {
+              amountMinor: "2199",
+              currency: "EUR",
+            },
+          ],
+          customersWithOrders: 1,
+          newCustomersLast30Days: 1,
+          totalCustomers: 2,
+          verifiedCustomers: 1,
+        },
+        totalCount: 1,
       });
       await expect(
-        repository.listProducts({ limit: 25, search: "Admin Persistence" }),
+        repository.listCustomers({
+          limit: 25,
+          orderPresence: "WITHOUT_ORDERS",
+          sort: "EMAIL_ASC",
+          status: "UNVERIFIED",
+        }),
+      ).resolves.toMatchObject({
+        items: [
+          {
+            customerId: customerWithoutOrdersId,
+            lastOrderAt: null,
+            lastOrderReference: null,
+            orderCount: 0,
+          },
+        ],
+        metrics: {
+          capturedPaymentVolumes: [
+            {
+              amountMinor: "2199",
+              currency: "EUR",
+            },
+          ],
+          customersWithOrders: 1,
+          newCustomersLast30Days: 1,
+          totalCustomers: 2,
+          verifiedCustomers: 1,
+        },
+        totalCount: 1,
+      });
+      await expect(
+        repository.listCustomers({
+          limit: 25,
+          registrationWindow: "LAST_30_DAYS",
+          sort: "NEWEST",
+        }),
+      ).resolves.toMatchObject({
+        items: [{ customerId, orderCount: 1 }],
+        totalCount: 1,
+      });
+      await expect(
+        repository.listCustomers({
+          limit: 25,
+          orderPresence: "WITH_CAPTURED_PAYMENT",
+          sort: "NEWEST",
+        }),
+      ).resolves.toMatchObject({
+        items: [{ customerId, orderCount: 1 }],
+        totalCount: 1,
+      });
+      await expect(repository.findCustomer(customerId)).resolves.toMatchObject({
+        customerId,
+        email: "operations-customer@example.test",
+        orderCount: 1,
+      });
+      await expect(
+        repository.findCustomer(customerWithoutOrdersId),
+      ).resolves.toMatchObject({
+        customerId: customerWithoutOrdersId,
+        lastOrderAt: null,
+        lastOrderReference: null,
+        orderCount: 0,
+      });
+      const orderRepository = new PostgresAdminOrderReadRepository(database);
+      await expect(
+        orderRepository.list({
+          cursorDirection: "NEXT",
+          filters: { exactCustomerId: customerWithoutOrdersId },
+          limit: 10,
+          sort: "NEWEST",
+        }),
+      ).resolves.toMatchObject({ orders: [], totalCount: 0 });
+      await expect(
+        orderRepository.list({
+          cursorDirection: "NEXT",
+          filters: {
+            exactCustomerEmail: "customer-without-orders@example.test",
+          },
+          limit: 10,
+          sort: "NEWEST",
+        }),
+      ).resolves.toMatchObject({
+        orders: [{ orderId: sameEmailGuestOrderId }],
+        totalCount: 1,
+      });
+      await expect(
+        orderRepository.list({
+          cursorDirection: "NEXT",
+          filters: { exactCustomerId: customerId },
+          limit: 10,
+          sort: "NEWEST",
+        }),
+      ).resolves.toMatchObject({
+        orders: [{ orderId: createdOrderId }],
+        totalCount: 1,
+      });
+      await expect(
+        repository.listProducts({
+          limit: 25,
+          search: "Admin Persistence",
+          sort: "TITLE_ASC",
+        }),
       ).resolves.toMatchObject({
         items: [
           { active: true, productId, title: "Admin Persistence Product" },
         ],
       });
-      await expect(repository.listSuppliers({ limit: 25 })).resolves.toEqual({
+      await expect(
+        repository.listProducts({
+          limit: 25,
+          platform: "windows",
+          sort: "TITLE_ASC",
+        }),
+      ).resolves.toMatchObject({ items: [{ productId }] });
+      await expect(
+        repository.listSuppliers({ limit: 25 }),
+      ).resolves.toMatchObject({
         items: [],
+        metrics: {
+          suppliersRequiringAttention: 0,
+          suppliersWithOffers: 0,
+          suppliersWithProducts: 0,
+          totalSuppliers: 0,
+        },
+        totalCount: 0,
       });
       await expect(
         repository.listSupportCases({ limit: 25, status: "OPEN" }),
@@ -258,7 +486,7 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         ],
       });
       await expect(repository.financeSummary()).resolves.toMatchObject([
-        { capturedAmountMinor: "2199", capturedOrders: 1, currency: "EUR" },
+        { capturedAmountMinor: "3198", capturedOrders: 2, currency: "EUR" },
       ]);
       const controls = await repository.listOperationsControls();
       expect(controls).toEqual(
@@ -272,8 +500,14 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       );
       expect(
         JSON.stringify({
-          customers: await repository.listCustomers({ limit: 25 }),
-          products: await repository.listProducts({ limit: 25 }),
+          customers: await repository.listCustomers({
+            limit: 25,
+            sort: "NEWEST",
+          }),
+          products: await repository.listProducts({
+            limit: 25,
+            sort: "TITLE_ASC",
+          }),
           support: await repository.listSupportCases({ limit: 25 }),
         }),
       ).not.toMatch(/ciphertext|session_hash|claim_code|verification_token/iu);
@@ -308,16 +542,235 @@ describePostgres("secure admin PostgreSQL persistence", () => {
       await database.transaction(async (client) => {
         await client.query("SET LOCAL statement_timeout = '1500ms'");
         const repository = new PostgresAdminOperationsRepository(client);
-        await expect(repository.listSuppliers({ limit: 25 })).resolves.toEqual({
+        await expect(
+          repository.listSuppliers({ limit: 25 }),
+        ).resolves.toMatchObject({
           items: [
             expect.objectContaining({
-              activeOfferCount: 2250,
+              availableOfferCount: 0,
+              currentOfferCount: 2250,
               productCount: 3000,
               supplierId,
             }),
           ],
+          metrics: {
+            suppliersWithOffers: 1,
+            suppliersWithProducts: 1,
+            totalSuppliers: 1,
+          },
+          totalCount: 1,
         });
       });
+    } finally {
+      await database.cleanup();
+    }
+  }, 30_000);
+
+  it("creates and renames an inert supplier with idempotency, versioning and audit", async () => {
+    const database = await initDatabase();
+    try {
+      const repository = new PostgresAdminSupplierMutationRepository(database);
+      const supplierId = randomUUID();
+      const operationId = randomUUID();
+      const context = {
+        actorId: randomUUID(),
+        at: now,
+        correlationId: correlationId("corr-admin-supplier-pg"),
+        environment: "STAGING" as const,
+      };
+      const createInput = {
+        displayName: "Zweiter Testlieferant",
+        operationId,
+        supplierCode: `admin-supplier-${operationId}`,
+        supplierId,
+      };
+
+      await expect(repository.create(createInput, context)).resolves.toEqual({
+        status: "CREATED",
+        supplierId,
+      });
+      await expect(
+        repository.create(
+          { ...createInput, supplierId: randomUUID() },
+          context,
+        ),
+      ).resolves.toEqual({ status: "IDEMPOTENT", supplierId });
+      await expect(
+        repository.rename(
+          {
+            displayName: "Umbenannter Testlieferant",
+            expectedVersion: 1,
+            supplierId,
+          },
+          context,
+        ),
+      ).resolves.toBe("UPDATED");
+      await expect(
+        repository.rename(
+          {
+            displayName: "Veralteter Schreibversuch",
+            expectedVersion: 1,
+            supplierId,
+          },
+          context,
+        ),
+      ).resolves.toBe("STALE");
+
+      const operations = new PostgresAdminOperationsRepository(database);
+      await expect(
+        operations.listSuppliers({
+          limit: 25,
+          search: "Umbenannter Testlieferant",
+          sort: "NAME_ASC",
+        }),
+      ).resolves.toMatchObject({
+        items: [
+          {
+            displayName: "Umbenannter Testlieferant",
+            integration: null,
+            productCount: 0,
+            recordVersion: 2,
+            supplierId,
+          },
+        ],
+        metrics: {
+          suppliersWithOffers: 0,
+          suppliersWithProducts: 0,
+          totalSuppliers: 1,
+        },
+        totalCount: 1,
+      });
+      await expect(
+        database.query(
+          `SELECT id FROM supplier_integrations WHERE supplier_id = $1::uuid`,
+          [supplierId],
+        ),
+      ).resolves.toMatchObject({ rowCount: 0 });
+
+      const integrationId = randomUUID();
+      const integrationOperationId = randomUUID();
+      await expect(
+        repository.configureIntegration(
+          {
+            adapterType: "SYNTHETIC",
+            capabilities: { catalog: true },
+            integrationId,
+            operationId: integrationOperationId,
+            supplierId,
+          },
+          context,
+        ),
+      ).resolves.toBe("CREATED");
+      await expect(
+        repository.configureIntegration(
+          {
+            adapterType: "SYNTHETIC",
+            capabilities: { catalog: true },
+            integrationId: randomUUID(),
+            operationId: integrationOperationId,
+            supplierId,
+          },
+          context,
+        ),
+      ).resolves.toBe("IDEMPOTENT");
+      await expect(operations.findSupplier(supplierId)).resolves.toMatchObject({
+        integration: {
+          adapterType: "SYNTHETIC",
+          capabilities: ["catalog"],
+          credentialsConfigured: false,
+          integrationId,
+          supportsConnectionTest: false,
+          supportsManualSync: false,
+        },
+      });
+
+      await expect(
+        database.query<{
+          readonly capabilities: Record<string, unknown>;
+          readonly display_name: string;
+          readonly record_version: number;
+        }>(
+          `SELECT capabilities, display_name, record_version FROM suppliers WHERE id = $1`,
+          [supplierId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            capabilities: {},
+            display_name: "Umbenannter Testlieferant",
+            record_version: 2,
+          },
+        ],
+      });
+      await expect(
+        database.query<{ readonly reason_code: string }>(
+          `SELECT reason_code FROM audit_events WHERE entity->>'id' = $1 ORDER BY timestamp_utc, reason_code`,
+          [supplierId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          { reason_code: "ADMIN_SUPPLIER_CREATED" },
+          { reason_code: "ADMIN_SUPPLIER_INTEGRATION_CONFIGURED" },
+          { reason_code: "ADMIN_SUPPLIER_RENAMED" },
+        ],
+      });
+      expect(
+        JSON.stringify(
+          await database.query(
+            `SELECT supplier_code, display_name, capabilities FROM suppliers WHERE id = $1`,
+            [supplierId],
+          ),
+        ),
+      ).not.toMatch(/credential|secret|token|password/iu);
+    } finally {
+      await database.cleanup();
+    }
+  }, 30_000);
+
+  it("backfills only legacy synthetic integrations and preserves suppliers on rollback", async () => {
+    const database = await initDatabase();
+    try {
+      const migration = (await loadMigrations()).find(
+        (candidate) => candidate.version === "035",
+      );
+      if (!migration) throw new Error("Migration 035 is required");
+      await database.query(migration.downSql);
+      const legacySupplierId = randomUUID();
+      const neutralSupplierId = randomUUID();
+      await database.query(
+        `INSERT INTO suppliers(id, supplier_code, display_name, capabilities)
+         VALUES
+           ($1::uuid, 'synthetic-admin-legacy', 'Legacy Synthetic', '{"catalog":true}'::jsonb),
+           ($2::uuid, 'ordinary-supplier', 'Ordinary Supplier', '{}'::jsonb)`,
+        [legacySupplierId, neutralSupplierId],
+      );
+
+      await database.query(migration.upSql);
+      await expect(
+        database.query<{
+          readonly adapter_type: string;
+          readonly supplier_id: string;
+        }>(
+          `SELECT supplier_id::text, adapter_type
+           FROM supplier_integrations
+           WHERE supplier_id IN ($1::uuid, $2::uuid)
+           ORDER BY supplier_id`,
+          [legacySupplierId, neutralSupplierId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [{ adapter_type: "SYNTHETIC", supplier_id: legacySupplierId }],
+      });
+
+      await database.query(migration.downSql);
+      await expect(
+        database.query<{ readonly count: string }>(
+          `SELECT count(*)::text AS count
+           FROM suppliers
+           WHERE id IN ($1::uuid, $2::uuid)`,
+          [legacySupplierId, neutralSupplierId],
+        ),
+      ).resolves.toMatchObject({ rows: [{ count: "2" }] });
+      await database.query(migration.upSql);
     } finally {
       await database.cleanup();
     }
@@ -344,6 +797,14 @@ describePostgres("secure admin PostgreSQL persistence", () => {
         amountMinor: 1500,
         paymentStatus: "PARTIALLY_REFUNDED",
       });
+      const failedProductId = await insertProduct(
+        database,
+        "Failed Admin Product",
+      );
+      await insertOrder(database, failedProductId, customerId, {
+        amountMinor: 9999,
+        paymentStatus: "FAILED",
+      });
 
       const dashboard = await new PostgresAdminOrderReadRepository(
         database,
@@ -354,6 +815,13 @@ describePostgres("secure admin PostgreSQL persistence", () => {
 
       expect(dashboard.revenueByCurrency).toEqual([
         { amountMinor: "6699", currency: "EUR" },
+      ]);
+      expect(dashboard.topProducts).toEqual([
+        {
+          productId,
+          productTitle: "Admin Persistence Product",
+          purchasedQuantity: 3,
+        },
       ]);
       expect(finance).toEqual([
         {
@@ -468,9 +936,11 @@ const insertAdmin = async (
 
 const insertProduct = async (
   database: PostgresTestDatabase,
+  title = "Admin Persistence Product",
 ): Promise<string> => {
   const result = await database.query<{ readonly id: string }>(
-    `INSERT INTO products(product_type, title, platform, lifecycle, active, canonical_metadata_confidence) VALUES ('GAME', 'Admin Persistence Product', 'WINDOWS', 'IN_STOCK', true, 'HIGH') RETURNING id::text`,
+    `INSERT INTO products(product_type, title, platform, lifecycle, active, canonical_metadata_confidence) VALUES ('GAME', $1, 'WINDOWS', 'IN_STOCK', true, 'HIGH') RETURNING id::text`,
+    [title],
   );
   return required(result.rows[0]).id;
 };
@@ -478,10 +948,12 @@ const insertProduct = async (
 const insertOrder = async (
   database: PostgresTestDatabase,
   productId: string,
-  customerId: string,
+  customerId: string | null,
   options: {
     readonly amountMinor?: number;
-    readonly paymentStatus?: "CAPTURED" | "REFUNDED" | "PARTIALLY_REFUNDED";
+    readonly checkoutEmail?: string;
+    readonly paymentStatus?:
+      "CAPTURED" | "FAILED" | "REFUNDED" | "PARTIALLY_REFUNDED";
   } = {},
 ): Promise<string> => {
   const amountMinor = options.amountMinor ?? 2199;
@@ -504,14 +976,19 @@ const insertOrder = async (
   );
   const id = randomUUID();
   await database.query(
-    `INSERT INTO keycore_orders(id, product_id, price_lock_id, customer_id, customer_amount_minor, currency, quantity, status, payment_status, procurement_status, fulfillment_status, risk_status, refund_status, record_version, idempotency_key, idempotency_fingerprint, correlation_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, 'EUR', 1, $6, $7, 'SUCCEEDED', 'PENDING', 'APPROVED', $8, 1, $9, $10, 'corr-admin-pg', $11, $11)`,
+    `INSERT INTO keycore_orders(id, product_id, price_lock_id, customer_id, checkout_email_normalized, customer_amount_minor, currency, quantity, status, payment_status, procurement_status, fulfillment_status, risk_status, refund_status, record_version, idempotency_key, idempotency_fingerprint, correlation_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, 'EUR', 1, $7, $8, 'SUCCEEDED', 'PENDING', 'APPROVED', $9, 1, $10, $11, 'corr-admin-pg', $12, $12)`,
     [
       id,
       productId,
       priceLockId,
       customerId,
+      options.checkoutEmail ?? null,
       amountMinor,
-      refunded ? "REFUNDED" : "FULFILLMENT_PENDING",
+      refunded
+        ? "REFUNDED"
+        : paymentStatus === "FAILED"
+          ? "FAILED"
+          : "FULFILLMENT_PENDING",
       paymentStatus,
       refunded
         ? "SUCCEEDED"
@@ -524,6 +1001,36 @@ const insertOrder = async (
     ],
   );
   return id;
+};
+
+const insertConfirmedCustomerAccess = async (
+  database: PostgresTestDatabase,
+  targetOrderId: string,
+  customerId: string,
+): Promise<void> => {
+  const fulfillmentId = randomUUID();
+  const approvalId = randomUUID();
+  await database.query(
+    `INSERT INTO fulfillment_operations(id, order_id, supplier_id, external_supplier_order_id, expected_quantity, status, retrieval_state, delivery_state, record_version, correlation_id, created_at, updated_at, retrieved_at, delivered_at) VALUES ($1, $2, 'synthetic-admin-supplier', 'synthetic-admin-order', 1, 'DELIVERED', 'RETRIEVED', 'DELIVERED', 1, 'corr-admin-access', $3, $3, $3, $3)`,
+    [fulfillmentId, targetOrderId, now],
+  );
+  await database.query(
+    `INSERT INTO customer_key_delivery_approvals(id, fulfillment_id, order_id, customer_id, purpose, version, token_hash, context_fingerprint, status, issued_at, expires_at, consumed_at, correlation_id, record_version, created_at, updated_at) VALUES ($1, $2, $3, $4, 'customer-key-delivery', 1, $5, $6, 'CONSUMED', $7, $8, $7, 'corr-admin-access', 1, $7, $7)`,
+    [
+      approvalId,
+      fulfillmentId,
+      targetOrderId,
+      customerId,
+      "a".repeat(64),
+      "b".repeat(64),
+      now,
+      new Date(now.getTime() + 60_000),
+    ],
+  );
+  await database.query(
+    `INSERT INTO customer_key_delivery_attempts(approval_id, fulfillment_id, order_id, customer_id, channel, status, delivered_at, delivery_reference, correlation_id, record_version, created_at, updated_at) VALUES ($1, $2, $3, $4, 'TEST', 'DELIVERED', $5, 'synthetic-admin-delivery', 'corr-admin-access', 1, $5, $5)`,
+    [approvalId, fulfillmentId, targetOrderId, customerId, now],
+  );
 };
 
 const required = <T>(value: T | undefined): T => {

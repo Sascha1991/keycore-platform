@@ -3,7 +3,11 @@ import { createServer, type IncomingMessage } from "node:http";
 
 import {
   AdminAuthenticationService,
+  AdminPasswordAuthenticationService,
+  AdminPasswordResetService,
   AdminOperationsService,
+  AdminPromotionService,
+  AdminSupplierService,
   AdminOrderService,
   AdminStaffService,
 } from "../packages/platform/src/contracts.js";
@@ -16,10 +20,14 @@ import {
 } from "../infra/postgres/client.js";
 import {
   PostgresAdminOrderReadRepository,
+  PostgresAdminPasswordCredentialRepository,
+  PostgresAdminPasswordResetRepository,
   PostgresAdminSessionRepository,
   PostgresAdminStaffRepository,
 } from "../infra/postgres/admin-repositories.js";
 import { PostgresAdminOperationsRepository } from "../infra/postgres/admin-operations-repository.js";
+import { PostgresAdminSupplierMutationRepository } from "../infra/postgres/admin-supplier-repository.js";
+import { PostgresPromotionRepository } from "../infra/postgres/promotion-repository.js";
 import { PostgresOperationsControlRepository } from "../infra/postgres/operations-control-repositories.js";
 import { PostgresSupportCaseRepository } from "../infra/postgres/support-case-repositories.js";
 import { PostgresAuditEventRepository } from "../infra/postgres/repositories.js";
@@ -51,6 +59,7 @@ const pool = createPostgresPool({
 });
 const database = new PostgresTransactionBoundary(pool);
 const audit = new PostgresAuditEventRepository(database);
+const supplierMutations = new PostgresAdminSupplierMutationRepository(database);
 const preflightEnvironment = {
   ...process.env,
   KEYCORE_DATABASE_URL: internalDatabaseUrl(
@@ -66,15 +75,17 @@ const preflight = new StagingPreflightService().verify(
     preflightEnvironment.KEYCORE_DATABASE_URL,
   ),
 );
+const mailpit = new MailpitStagingTransport(
+  required("KEYCORE_STAGING_MAILPIT_URL"),
+  allowedOrigin,
+);
 const delayedFulfillment =
   preflight.status === "READY"
     ? new PostgresStagingDelayedFulfillment({
         database,
         masterKeyMaterialBase64: required("KEYCORE_FULFILLMENT_MASTER_KEY"),
         masterKeyVersion: required("KEYCORE_FULFILLMENT_MASTER_KEY_ID"),
-        notification: new MailpitStagingTransport(
-          required("KEYCORE_STAGING_MAILPIT_URL"),
-        ),
+        notification: mailpit,
         syntheticKey: required("KEYRANO_STAGING_SYNTHETIC_KEY"),
       })
     : undefined;
@@ -83,6 +94,18 @@ const controller = new AdminHttpController(
     new PostgresAdminSessionRepository(database),
     audit,
     required("KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET"),
+    "STAGING",
+  ),
+  new AdminPasswordAuthenticationService(
+    new PostgresAdminPasswordCredentialRepository(database),
+    audit,
+    required("KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET"),
+    "STAGING",
+  ),
+  new AdminPasswordResetService(
+    new PostgresAdminPasswordResetRepository(database),
+    mailpit,
+    audit,
     "STAGING",
   ),
   new AdminOrderService(
@@ -119,6 +142,12 @@ const controller = new AdminHttpController(
       audit,
       "STAGING",
     ),
+  ),
+  new AdminSupplierService(supplierMutations, audit, "STAGING"),
+  new AdminPromotionService(
+    new PostgresPromotionRepository(database),
+    audit,
+    "STAGING",
   ),
 );
 const css = await readFile(

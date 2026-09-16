@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- Rebuilt the Admin `Produkte / Katalog` workspace around canonical Product,
+  active supplier-offer and Storefront publication authority, with global KPI
+  views, server-side search and filters, signed-cursor sorting, responsive
+  result presentation and a bounded read-only detail. Unsupported Product
+  writes, ambiguous prices, raw supplier metadata and Product Keys remain
+  absent; Human-UAT and security approvals are unchanged.
+
+- Corrected the Product workspace after Human browser review with shared,
+  field-specific lifecycle, platform and Product-type labels, deduplicated
+  authoritative filter options and case-insensitive matching for existing
+  platform capitalization. The deliverability KPI now uses digital-catalog
+  wording; Product write and security boundaries remain unchanged.
+
+- Added normal staging Admin sign-in with an email address and a persistent
+  scrypt password credential. Ordinary bootstrap runs now preserve existing
+  credentials unless explicit rotation is requested. Admin staff can request a
+  Mailpit-delivered, rate-limited password reset using a hashed, one-time
+  45-minute token; completion changes only the target credential and revokes
+  that Admin's active sessions. The opaque bootstrap session code remains
+  available only through the separate recovery route; no plaintext password or
+  production authentication approval was introduced.
+
+- Aligned the Admin Panel V1.1 global shell and Übersicht with the Human browser
+  reference: semantic SVG navigation/KPI icons, integrated KeyRaNo branding,
+  active navigation, truthful request-backed service status, a bounded real
+  Top-Products ranking, operational status/action modules and a readable recent
+  Orders surface. Unsupported historic capture and tax authority remains
+  explicit; Human-UAT and security approvals are unchanged.
+
+- Refined KeyRaNo Admin Panel V1.1 with a shared dense operations layout,
+  accessible KPI navigation, truthful page action bars, professional no-data
+  states and dashboard quick filters backed by matching allowlisted PostgreSQL
+  predicates. Existing Admin security and business mutations remain unchanged;
+  unavailable discount, reporting and onboarding authority is shown explicitly
+  rather than simulated. Human-UAT and security approvals remain unchanged.
+
 - Added KeyRaNo Admin Panel V1 as a German, responsive and capability-filtered
   operations workspace over existing PostgreSQL/domain authority, including
   customer, catalog, supplier, support, finance, reporting, fraud-read,

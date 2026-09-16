@@ -16,6 +16,11 @@ $GLOBALS['keyrano_notices'] = [];
 $GLOBALS['keyrano_nonce_fields'] = [];
 $GLOBALS['keyrano_logged_in'] = true;
 $GLOBALS['keyrano_current_user_id'] = 20;
+$GLOBALS['keyrano_remote_requests'] = [];
+$GLOBALS['keyrano_cart'] = null;
+putenv('KEYRANO_STAGING_BRIDGE_URL=http://keycore-storefront:3000');
+putenv('KEYRANO_STAGING_ORIGIN=https://staging.keyrano.de');
+putenv('KEYRANO_STAGING_BRIDGE_SECRET=staging-wordpress-test-secret-at-least-32-bytes');
 
 function add_action(string $name, mixed $callback, int $priority = 10): void { $GLOBALS['keyrano_test_actions'][] = $name; }
 function add_filter(string $name, mixed $callback, int $priority = 10, int $accepted_args = 1): void {
@@ -58,6 +63,42 @@ function get_user_meta(int $user_id, string $key, bool $single = true): string {
 function wc_get_order(int $order_id): mixed { return $GLOBALS['keyrano_order']; }
 function get_query_var(string $name): int { return 'order-received' === $name ? (int) ($GLOBALS['keyrano_order']?->get_id() ?? 0) : 0; }
 function wc_add_notice(string $message, string $type): void { $GLOBALS['keyrano_notices'][] = [$message, $type]; }
+function wc_format_decimal(string $value, int $decimals): string { return number_format((float) str_replace(',', '.', $value), $decimals, '.', ''); }
+function WC(): object { return (object) ['cart' => $GLOBALS['keyrano_cart']]; }
+function wp_remote_request(string $url, array $arguments): array
+{
+    $GLOBALS['keyrano_remote_requests'][] = compact('url', 'arguments');
+    $payload = str_ends_with($url, '/v1/checkout')
+        ? [
+            'orderId' => '20000000-0000-4000-8000-000000000099',
+            'status' => 'CAPTURED',
+        ]
+        : [
+            'code' => 'STAGING20',
+            'discountAmountMinor' => '259',
+            'finalAmountMinor' => '1040',
+            'status' => 'APPLICABLE',
+        ];
+    $body = json_encode($payload, JSON_UNESCAPED_SLASHES);
+    $timestamp = gmdate('c');
+    $status = 200;
+    $request_signature = (string) ($arguments['headers']['X-KeyRaNo-Signature'] ?? '');
+    $secret = (string) getenv('KEYRANO_STAGING_BRIDGE_SECRET');
+    $canonical = $timestamp . "\n" . $status . "\n" . $request_signature . "\n" . hash('sha256', (string) $body);
+    $signature = rtrim(strtr(base64_encode(hash_hmac('sha256', $canonical, $secret, true)), '+/', '-_'), '=');
+    return [
+        'body' => $body,
+        'headers' => [
+            'x-keyrano-response-signature' => $signature,
+            'x-keyrano-response-timestamp' => $timestamp,
+        ],
+        'response' => ['code' => $status],
+    ];
+}
+function is_wp_error(mixed $value): bool { return false; }
+function wp_remote_retrieve_response_code(array $response): int { return (int) $response['response']['code']; }
+function wp_remote_retrieve_body(array $response): string { return (string) $response['body']; }
+function wp_remote_retrieve_header(array $response, string $name): string { return (string) ($response['headers'][strtolower($name)] ?? ''); }
 
 class WC_Payment_Gateway
 {
@@ -76,6 +117,7 @@ class WC_Payment_Gateway
 class WC_Order
 {
     private array $meta = [];
+    private array $items = [];
     public function __construct(
         private int $customer_id,
         private string $billing_email = '',
@@ -90,6 +132,30 @@ class WC_Order
     public function get_payment_method(): string { return $this->payment_method; }
     public function get_meta(string $key, bool $single = true): string { return (string) ($this->meta[$key] ?? ''); }
     public function update_meta_data(string $key, string $value): void { $this->meta[$key] = $value; }
+    public function set_items(string $type, array $items): void { $this->items[$type] = $items; }
+    public function get_items(string $type): array { return $this->items[$type] ?? []; }
+    public function get_total(): string { return '10.40'; }
+    public function get_currency(): string { return 'EUR'; }
+    public function get_date_created(): WC_DateTime { return new WC_DateTime('2026-09-15T10:00:00Z'); }
+    public function get_order_key(): string { return 'wc_order_synthetic'; }
+    public function save(): void {}
+    public function payment_complete(string $transaction_id): void { $this->status = 'processing'; }
+    public function update_status(string $status, string $note): void { $this->status = $status; }
+}
+
+class WC_DateTime extends DateTime {}
+
+class WC_Order_Item_Product
+{
+    public function __construct(private WC_Product $product, private int $quantity = 1) {}
+    public function get_quantity(): int { return $this->quantity; }
+    public function get_product(): WC_Product { return $this->product; }
+}
+
+class WC_Order_Item_Coupon
+{
+    public function __construct(private string $code) {}
+    public function get_code(): string { return $this->code; }
 }
 
 class WP_HTML_Tag_Processor
@@ -145,6 +211,7 @@ class WC_Product
     public function set_description(string $value): void { $this->data['description'] = $value; }
     public function update_meta_data(string $key, string $value): void { $this->meta[$key] = $value; }
     public function get_meta(string $key, bool $single = true): string { return (string) ($this->meta[$key] ?? ''); }
+    public function get_price(): string { return (string) ($this->data['price'] ?? ''); }
     public function save(): int {
         if (0 === $this->id) { $this->id = count($GLOBALS['keyrano_products']) + 1; }
         $GLOBALS['keyrano_products'][$this->id] = $this;
@@ -153,6 +220,13 @@ class WC_Product
     public function state(): array { return ['data' => $this->data, 'meta' => $this->meta]; }
 }
 class WC_Product_Simple extends WC_Product {}
+
+class WC_Cart
+{
+    /** @param array<int, array<string, mixed>> $items */
+    public function __construct(private array $items) {}
+    public function get_cart(): array { return $this->items; }
+}
 
 function wc_get_product_id_by_sku(string $sku): int {
     foreach ($GLOBALS['keyrano_products'] as $id => $product) {
@@ -174,6 +248,7 @@ final class FakeBridge implements Bridge
     public function __construct() { $this->products = [fixture('safe-one'), fixture('safe-two')]; }
     public function catalog(): ?array { return ['products' => $this->products, 'status' => 'OK']; }
     public function checkout(?int $wp_user_id, ?string $customer_id, array $command): ?array { return null; }
+    public function promotion_quote(string $code, string $product_reference, string $base_amount_minor): ?array { return null; }
     public function orders(int $wp_user_id, string $customer_id): ?array { return null; }
     public function order(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
     public function invoice(int $wp_user_id, string $customer_id, string $order_id): ?array { return null; }
@@ -376,8 +451,37 @@ assert_true('attachment; filename="keyrano-rechnung.pdf"' === ($invoice_headers[
 assert_true(false !== strpos((string) ($invoice_headers['Cache-Control'] ?? ''), 'no-store'), 'Invoice response is cacheable');
 $gateways = \KeyRaNo\Storefront\Checkout_Registration_Loader::gateways([]);
 assert_true(3 === count($gateways), 'Expected three explicit synthetic checkout outcomes');
+$promotion_product = new WC_Product_Simple();
+$promotion_product->set_regular_price('12.99');
+$promotion_product->update_meta_data('_keyrano_managed', '1');
+$promotion_product->update_meta_data('_keyrano_public_reference', 'synthetic-de-adventure');
+$GLOBALS['keyrano_cart'] = new WC_Cart([['data' => $promotion_product, 'quantity' => 1]]);
+$promotion_filter = $GLOBALS['keyrano_test_filter_callbacks']['woocommerce_get_shop_coupon_data']['callback'];
+$promotion_data = $promotion_filter(false, 'staging20');
+assert_true(is_array($promotion_data), 'Applicable authoritative promotion was not exposed as a virtual WooCommerce coupon');
+assert_true('2.59' === ($promotion_data['amount'] ?? null), 'Authoritative promotion amount changed in WooCommerce');
+assert_true('fixed_cart' === ($promotion_data['discount_type'] ?? null), 'WooCommerce coupon type is not the bounded fixed quote');
+assert_true(true === ($promotion_data['individual_use'] ?? null), 'Promotion became combinable');
+assert_true(1 === count($GLOBALS['keyrano_remote_requests']), 'Promotion quote did not use exactly one bridge request');
+$promotion_request = $GLOBALS['keyrano_remote_requests'][0];
+assert_true(false !== str_ends_with((string) $promotion_request['url'], '/v1/promotions/quote'), 'Promotion quote used the wrong bridge route');
+assert_true('1' === ($promotion_request['arguments']['headers']['X-KeyRaNo-CSRF-Verified'] ?? null), 'Promotion quote was not CSRF verified');
+$GLOBALS['keyrano_cart'] = new WC_Cart([['data' => $promotion_product, 'quantity' => 2]]);
+assert_true(false === $promotion_filter(false, 'staging20'), 'Multi-quantity cart accepted a promotion');
+$GLOBALS['keyrano_cart'] = null;
 $success_gateway = new \KeyRaNo\Storefront\Checkout_Gateway_Success();
 assert_true($success_gateway->is_available(), 'Synthetic success gateway is unavailable in staging');
+$discounted_order = new WC_Order(20, 'customer-a@example.test', 99);
+$discounted_order->set_items('line_item', [new WC_Order_Item_Product($promotion_product)]);
+$discounted_order->set_items('coupon', [new WC_Order_Item_Coupon('staging20')]);
+$GLOBALS['keyrano_order'] = $discounted_order;
+$discounted_result = $success_gateway->process_payment(99);
+assert_true('success' === ($discounted_result['result'] ?? null), 'Discounted checkout did not complete through the bridge');
+$checkout_request = $GLOBALS['keyrano_remote_requests'][1] ?? null;
+assert_true(is_array($checkout_request) && str_ends_with((string) $checkout_request['url'], '/v1/checkout'), 'Discounted checkout used the wrong bridge route');
+$checkout_command = json_decode((string) $checkout_request['arguments']['body'], true);
+assert_true('STAGING20' === ($checkout_command['promotionCode'] ?? null), 'WooCommerce order omitted its authoritative promotion code');
+assert_true('1040' === ($checkout_command['expectedTotalMinor'] ?? null), 'WooCommerce order did not send the discounted total');
 $GLOBALS['keyrano_order'] = new WC_Order(21);
 assert_true(
     ['result' => 'failure'] === $success_gateway->process_payment(100),

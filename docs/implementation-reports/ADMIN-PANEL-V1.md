@@ -103,3 +103,31 @@ The existing KS-11-07 result remains 11/18 PASS. Human Acceptance remains
 `IN_REVIEW`, Human Approval remains `NOT_APPROVED`, and `SECURITY-READINESS`
 remains `NOT_APPROVED`. No production deployment, live payment, live supplier
 operation or real Product Key is authorized by this work.
+
+## Admin password persistence and reset hotfix
+
+Normal staging bootstrap now creates a missing Admin password credential but
+preserves an existing scrypt hash by default. Rotation is available only when
+`KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE=true` is set for an explicit
+bootstrap run; its default is `false`.
+
+Migration 033 adds persisted Admin password-reset requests. Raw reset tokens
+are 32 random bytes and exist only in the private Mailpit message and request
+URL; PostgreSQL stores only their SHA-256 hash. A link expires after 45 minutes,
+is single-use, and a newer request invalidates an older active link. Issuance is
+limited to one message per active credential every five minutes. Unknown,
+invalid and disabled identities receive the same browser response without an
+email. Successful reset preserves the Admin email, writes a new scrypt hash,
+consumes the token atomically and revokes active sessions only for that Admin.
+
+The normal login remains email and password based and now links to the
+dedicated reset request page. Reset mutations retain exact-origin and
+exact-form validation. The separate `/admin/recovery` session-code route remains
+unchanged as a controlled break-glass mechanism.
+
+Local validation used the actual Admin HTTP server, PostgreSQL and Mailpit at a
+1600 x 950 browser viewport. The browser requested a reset, opened the captured
+message, followed the one-time link, changed the password, rejected the old
+password, accepted the new password, refreshed, logged out and signed in again.
+An ordinary Admin bootstrap/service recreation preserved the new password. No
+credential, raw token, session value or hash was retained in evidence.

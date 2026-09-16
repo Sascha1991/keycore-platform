@@ -17,6 +17,7 @@ import {
 import { OperationsControlService } from "../../packages/platform/src/operations/operations-controls.js";
 import { PostgresCustomerAccountReadRepository } from "./customer-account-repositories.js";
 import { PostgresOperationsControlRepository } from "./operations-control-repositories.js";
+import { PostgresPromotionRepository } from "./promotion-repository.js";
 import { seedSyntheticStagingCheckoutData } from "./staging-checkout-seed.js";
 import { stagingGuestOrderId } from "./staging-checkout-seed.js";
 import { createPostgresStagingGuestOrderClaim } from "../storefront/staging-guest-claim.js";
@@ -312,6 +313,103 @@ describe.skipIf(!connectionString)(
             procurement_status: "NOT_STARTED",
           },
         ]);
+        await expect(count(database, "fulfillment_operations")).resolves.toBe(
+          0,
+        );
+        await expect(count(database, "encrypted_key_records")).resolves.toBe(0);
+      });
+    }, 30_000);
+
+    it("applies one authoritative promotion, releases failed attempts and preserves the consumed price lock on replay", async () => {
+      await withDatabase(async (database) => {
+        const promotions = new PostgresPromotionRepository(database);
+        const campaignId = "71000000-0000-4000-8000-000000000010";
+        const promotionContext = {
+          actorId: "admin-promotion-checkout-test",
+          at: now,
+          correlationId: correlationId("promotion-checkout-test"),
+          environment: "STAGING" as const,
+        };
+        await promotions.create(
+          {
+            code: "CHECKOUT20",
+            currency: "EUR",
+            discountType: "PERCENTAGE",
+            discountValue: 2_000n,
+            endsAt: null,
+            id: campaignId,
+            internalDescription: "Synthetic checkout integration",
+            minimumSubtotalMinor: null,
+            name: "Checkout 20",
+            operationId: "72000000-0000-4000-8000-000000000010",
+            productScope: "ALL_ELIGIBLE_PRODUCTS",
+            startsAt: null,
+            usageLimit: 2n,
+          },
+          promotionContext,
+        );
+        await promotions.transition(
+          { expectedVersion: 1, id: campaignId, lifecycle: "ENABLED" },
+          promotionContext,
+        );
+        const checkout = createPostgresStagingCheckout(database, {
+          now: () => now,
+        });
+        const failedCommand = {
+          ...checkoutCommand(customerA, "e", "FAILURE"),
+          expectedTotalMinor: "1040",
+          promotionCode: "CHECKOUT20",
+        };
+        await expect(checkout.checkout(failedCommand)).resolves.toMatchObject({
+          status: "FAILED",
+        });
+        await expect(
+          database.query<{ state: string }>(
+            "SELECT state FROM promotion_redemptions WHERE checkout_token = $1",
+            [failedCommand.checkoutToken],
+          ),
+        ).resolves.toMatchObject({ rows: [{ state: "RELEASED" }] });
+
+        const successCommand = {
+          ...checkoutCommand(customerA, "f", "SUCCESS"),
+          expectedTotalMinor: "1040",
+          promotionCode: "CHECKOUT20",
+        };
+        const captured = await checkout.checkout(successCommand);
+        expect(captured.status).toBe("CAPTURED");
+        await expect(
+          database.query<{
+            customer_amount_minor: string;
+            discount_amount_minor: string;
+            final_amount_minor: string;
+            state: string;
+          }>(
+            `SELECT orders.customer_amount_minor::text, redemption.discount_amount_minor::text,
+              redemption.final_amount_minor::text, redemption.state
+             FROM promotion_redemptions redemption
+             JOIN keycore_orders orders ON orders.id = redemption.order_id
+             WHERE redemption.checkout_token = $1`,
+            [successCommand.checkoutToken],
+          ),
+        ).resolves.toMatchObject({
+          rows: [
+            {
+              customer_amount_minor: "1040",
+              discount_amount_minor: "259",
+              final_amount_minor: "1040",
+              state: "CONSUMED",
+            },
+          ],
+        });
+
+        await promotions.transition(
+          { expectedVersion: 2, id: campaignId, lifecycle: "DISABLED" },
+          { ...promotionContext, at: new Date(now.getTime() + 1_000) },
+        );
+        await expect(checkout.checkout(successCommand)).resolves.toMatchObject({
+          status: "IDEMPOTENT",
+        });
+        await expect(count(database, "promotion_redemptions")).resolves.toBe(2);
         await expect(count(database, "fulfillment_operations")).resolves.toBe(
           0,
         );

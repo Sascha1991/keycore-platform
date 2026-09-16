@@ -1,4 +1,5 @@
 import type {
+  AdminPasswordResetDeliveryPort,
   CorrelationId,
   GuestOrderClaimDeliveryPort,
   OrderId,
@@ -13,11 +14,15 @@ export interface StagingReadinessNotificationPort {
 }
 
 export class MailpitStagingTransport
-  implements GuestOrderClaimDeliveryPort, StagingReadinessNotificationPort
+  implements
+    AdminPasswordResetDeliveryPort,
+    GuestOrderClaimDeliveryPort,
+    StagingReadinessNotificationPort
 {
   private readonly endpoint: string;
+  private readonly adminOrigin: string;
 
-  public constructor(baseUrl: string) {
+  public constructor(baseUrl: string, adminOrigin = "http://127.0.0.1:18081") {
     const parsed = new URL(baseUrl);
     if (
       parsed.protocol !== "http:" ||
@@ -32,6 +37,38 @@ export class MailpitStagingTransport
       throw new Error("Internal staging Mailpit URL is required");
     }
     this.endpoint = `${parsed.origin}/api/v1/send`;
+    const parsedAdminOrigin = new URL(adminOrigin);
+    const localHttp =
+      parsedAdminOrigin.protocol === "http:" &&
+      ["127.0.0.1", "localhost", "::1"].includes(parsedAdminOrigin.hostname);
+    if (
+      (!localHttp && parsedAdminOrigin.protocol !== "https:") ||
+      parsedAdminOrigin.username ||
+      parsedAdminOrigin.password ||
+      parsedAdminOrigin.pathname !== "/" ||
+      parsedAdminOrigin.search ||
+      parsedAdminOrigin.hash
+    ) {
+      throw new Error("Admin staging origin is required");
+    }
+    this.adminOrigin = parsedAdminOrigin.origin;
+  }
+
+  public async sendPasswordReset(input: {
+    readonly emailNormalized: string;
+    readonly expiresAt: Date;
+    readonly rawToken: string;
+  }): Promise<{ readonly status: "ACCEPTED" | "FAILED" }> {
+    return this.send(
+      input.emailNormalized,
+      "KeyRaNo Admin-Passwort zurücksetzen",
+      [
+        "Für Ihr KeyRaNo Admin-Konto wurde eine Passwortänderung angefordert.",
+        `Einmaliger Link: ${this.adminOrigin}/admin/password-reset/${encodeURIComponent(input.rawToken)}`,
+        `Gültig bis: ${input.expiresAt.toISOString()}`,
+        "Falls Sie diese Änderung nicht angefordert haben, ignorieren Sie diese Nachricht.",
+      ].join("\n\n"),
+    );
   }
 
   public async sendGuestOrderClaim(input: {

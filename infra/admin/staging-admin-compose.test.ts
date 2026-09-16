@@ -41,6 +41,11 @@ describe("staging Admin Compose wiring", () => {
     expect(bootstrap).toContain(
       "KEYRANO_STAGING_ADMIN_ROLE: ${KEYRANO_STAGING_ADMIN_ROLE-PROJECT_OWNER}",
     );
+    expect(bootstrap).toContain("KEYRANO_STAGING_ADMIN_LOGIN_EMAIL:");
+    expect(bootstrap).toContain("KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD:");
+    expect(bootstrap).toContain(
+      "KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE: ${KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE:-false}",
+    );
     expect(bootstrap).toContain(
       "KEYCORE_DEPLOYMENT_ID: ${KEYCORE_DEPLOYMENT_ID:?staging deployment ID is required}",
     );
@@ -54,6 +59,12 @@ describe("staging Admin Compose wiring", () => {
     expect(bootstrap).not.toContain("KEYRANO_STAGING_ADMIN_UAT_TARGET_ID:");
     expect(serviceBlock("keycore-admin")).not.toContain(
       "KEYRANO_STAGING_ADMIN_ROLE:",
+    );
+    expect(serviceBlock("keycore-admin")).not.toContain(
+      "KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD:",
+    );
+    expect(serviceBlock("keycore-admin")).toContain(
+      "KEYCORE_STAGING_MAILPIT_URL: http://mail:8025",
     );
   });
 });
