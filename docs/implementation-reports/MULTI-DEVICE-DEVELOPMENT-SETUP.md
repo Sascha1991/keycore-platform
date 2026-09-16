@@ -45,7 +45,8 @@ Die PC-1-Volumes, Datenbanken und lokalen Konfigurationen werden nicht
 zurückgesetzt oder übernommen. Standardmäßig besitzt jeder PC eigene lokale
 Daten. Die optionale PostgreSQL-Übertragung ist im Guide als separate,
 checksum-geprüfte und ausdrücklich destruktive PC-2-Restore-Operation
-dokumentiert. MariaDB, Redis und Secrets werden dabei nicht übertragen.
+dokumentiert. MariaDB, Redis und Secrets werden dabei nicht automatisch
+übertragen.
 Für eine bewusst restaurierte Review-Datenbank dokumentiert der Guide die
 minimalen echten Abhängigkeiten: den festen synthetischen Guest-Claim-Code sowie
 Browser-/Fulfillment-Master-Key und Fulfillment-Key-ID. Diese Werte werden
@@ -72,6 +73,48 @@ Die Änderung lässt sich durch Revert der Tooling-/Dokumentationsdateien
 zurücknehmen. Da keine Migration und kein automatischer Volume-Reset existiert,
 bleiben lokale Daten davon unabhängig. Eine erzeugte lokale Env bleibt ignoriert
 und muss bei einem Rollback bewusst lokal verwaltet werden.
+
+## Isolierte Validierung
+
+Die vollständige lokale Validierung lief in einem separaten Compose-Projekt
+`keycore-staging-multidevice-validation` mit eigenen Ports und vier eigenen
+Volumes. Das bestehende PC-1-Projekt `keycore-staging-local-001` und dessen
+Volumes blieben währenddessen unverändert.
+
+- Ein frisches `dev:setup` erzeugte die ignorierte lokale Env, installierte die
+  Node-Abhängigkeiten, startete den vollständigen Stack, wendete alle 36
+  Migrationen an und führte Staging-Seed sowie WordPress-Bootstrap aus.
+- Der zweite identische Setup-Lauf erkannte den vollständigen Volume-Satz,
+  ließ die Env-Datei unverändert und übersprang Seed und WordPress-Bootstrap.
+- `dev:stop` entfernte Container und Netzwerk, erhielt aber alle vier Volumes.
+  `dev:start` stellte den Stack mit denselben Daten wieder her.
+- Nach dem Wiederanlauf waren 10 Produkte, ein Lieferant und drei Kampagnen
+  vorhanden. Storefront und Admin-Health antworteten jeweils mit HTTP 200.
+- `dev:status` änderte weder Container, Volumes noch den vorhandenen Git-Diff;
+  `dev:logs -- admin` blieb auf den vorgesehenen Ausschnitt begrenzt.
+- Die abschließende Bereinigung entfernte ausschließlich das isolierte
+  Compose-Projekt und dessen vier Test-Volumes.
+
+Die Validierung deckte zwei lokale Integrationsgrenzen auf, die im selben
+Branch korrigiert und regressionsgetestet wurden: frei konfigurierbare lokale
+Ports werden aus der Env abgeleitet, und die Staging-Preflight-Prüfung erlaubt
+HTTP nur für Loopback-Hosts. Nichtlokale HTTP-Origins, Pfade, Query-Strings und
+Fragmente bleiben abgelehnt.
+
+## Quality Gates
+
+- `npm run check`: Format, ESLint, TypeScript und Secret-Scan bestanden; 68
+  Testdateien mit 889 Tests bestanden, 30 Dateien mit 150 dienstgebundenen
+  Tests übersprungen.
+- Fokussierte Dev-Tool-/Preflight-Regression: 44 Tests bestanden.
+- Security Assessment: 36 Tests bestanden; 369 dienstgebundene Tests
+  übersprungen.
+- E2E Acceptance: 15 Tests bestanden; ein PostgreSQL-gebundener Test
+  übersprungen.
+- `npm audit`: keine Schwachstellen.
+- Compose-Konfiguration, Composer-Validierung, PHP-Syntax für 20 Dateien,
+  WordPress-Adaptertests, UAT-Strukturvalidierung und `git diff --check`
+  bestanden.
 
 ## Offene Human-Evidenz
 
