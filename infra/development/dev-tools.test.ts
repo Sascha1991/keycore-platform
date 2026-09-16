@@ -185,6 +185,14 @@ describe("multi-device development tooling", () => {
     expect(linter).toContain("PHP_BINARY");
   });
 
+  it("accepts native Windows line endings without rewriting the repository", () => {
+    const prettier = JSON.parse(
+      readFileSync(".prettierrc.json", "utf8"),
+    ) as Record<string, unknown>;
+
+    expect(prettier.endOfLine).toBe("auto");
+  });
+
   it("documents every required PC 1 and PC 2 workflow with real commands", () => {
     const guide = readFileSync(
       "docs/development/MULTI-DEVICE-DEVELOPMENT.md",
@@ -222,5 +230,18 @@ describe("multi-device development tooling", () => {
     ]) {
       expect(guide).toContain(`npm run dev:${script}`);
     }
+    const transferSection = guide.slice(
+      guide.indexOf("## L. Optionale PostgreSQL-Kopie PC 1 zu PC 2"),
+      guide.indexOf("## M. Was tun, wenn sich das Projekt geändert hat?"),
+    );
+    expect(transferSection).toContain(
+      "KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE=true",
+    );
+    expect(transferSection).toContain(
+      "`KEYRANO_STAGING_BROWSER_MASTER_KEY` wird nicht übertragen",
+    );
+    expect(transferSection).toContain(
+      "`KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET` darf deshalb PC-2-lokal bleiben",
+    );
   });
 });

@@ -87,7 +87,7 @@ describe("KS-11-05 repository security assessment", () => {
       `${projectRoot}/.github/workflows/quality-gates.yml`,
       "utf8",
     );
-    expect(workflow).toContain("permissions:\n  contents: read");
+    expect(workflow).toMatch(/permissions:\r?\n  contents: read/u);
     expect(workflow).not.toMatch(/uses:\s+[^\s]+@(main|master|HEAD)\b/u);
     expect(workflow).toMatch(/uses:\s+actions\/checkout@v4/u);
   });

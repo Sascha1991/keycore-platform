@@ -6,8 +6,13 @@
   existing full synthetic Compose stack, including strict toolchain checks,
   non-overwriting local env generation, safe first bootstrap, bounded status
   and logs, volume-preserving stop, read-only Git handoff diagnostics,
-  containerized PHP validation and a detailed German operating guide. Existing
-  Admin functionality, Human-UAT and approval states remain unchanged.
+  containerized PHP validation, native Windows line-ending compatibility and a
+  detailed German operating guide. Normal starts now preserve restored Admin
+  identity and password credentials;
+  password rotation is explicit and email-preserving. The PostgreSQL transfer
+  guide now distinguishes the persisted Guest-Claim/Fulfillment dependencies
+  from the device-local browser and Admin secrets. Existing Human-UAT and
+  approval states remain unchanged.
 
 - Rebuilt the Admin `Produkte / Katalog` workspace around canonical Product,
   active supplier-offer and Storefront publication authority, with global KPI

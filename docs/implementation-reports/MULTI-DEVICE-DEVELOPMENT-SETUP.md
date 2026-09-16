@@ -49,10 +49,30 @@ dokumentiert. MariaDB, Redis und Secrets werden dabei nicht automatisch
 übertragen.
 Für eine bewusst restaurierte Review-Datenbank dokumentiert der Guide die
 minimalen echten Abhängigkeiten: den festen synthetischen Guest-Claim-Code sowie
-Browser-/Fulfillment-Master-Key und Fulfillment-Key-ID. Diese Werte werden
-nicht durch Git oder den Dump transportiert und niemals ausgegeben. Das
-restaurierte Admin-Passwort wird sicher über den lokalen Mailpit-Reset ersetzt,
-statt PC-1-Credentials pauschal zu kopieren.
+Fulfillment-Master-Key und Fulfillment-Key-ID, falls persistiertes
+Fulfillment-Material lesbar bleiben muss. Der Browser-Master-Key schützt nur
+ein bei jedem Prozessstart neu erzeugtes In-Memory-Fixture und bleibt ebenso
+wie Admin-Session-, Cursor-, CSRF- und Bridge-Secrets gerätespezifisch. Diese
+Werte werden nicht durch Git oder den Dump transportiert und niemals
+ausgegeben. Das restaurierte Admin-Passwort wird sicher über den lokalen
+Mailpit-Reset oder einen expliziten Einmal-Rotationslauf ersetzt, statt
+PC-1-Credentials pauschal zu kopieren.
+
+## Restore-Bootstrap-Härtung
+
+Der reproduzierte PC-1-zu-PC-2-Fehler lag nicht im Dump, Restore oder
+Session-Hash-Secret. Der Admin-Bootstrap adressierte bei jedem Start dieselbe
+synthetische Admin-ID und überschrieb deren E-Mail mit dem gerätelokalen
+Default, während `PASSWORD_ROTATE=false` den restaurierten Scrypt-Hash korrekt
+erhielt. Nach dem Start gehörten E-Mail und Passwort daher nicht mehr zusammen.
+
+Normales Bootstrap legt die synthetische Identity jetzt nur an, wenn sie fehlt.
+Bestehende Identity-Felder und Credentials bleiben erhalten. Ein fehlendes
+Credential wird weiterhin automatisch provisioniert. Die explizite
+`KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE=true`-Semantik ändert nur den
+Passwort-Hash und niemals die persistierte E-Mail. Wiederholte Starts bleiben
+idempotent; vorhandene Review-Identities bleiben unangetastet. Es wurde keine
+Migration eingeführt.
 
 Alle lokalen Defaults bleiben synthetisch: `STAGING`, Stripe `TEST`, Supplier
 `MOCK`, externe Mail deaktiviert und Operations Authority `DISABLED`. Es gibt
@@ -104,8 +124,13 @@ Fragmente bleiben abgelehnt.
 ## Quality Gates
 
 - `npm run check`: Format, ESLint, TypeScript und Secret-Scan bestanden; 68
-  Testdateien mit 889 Tests bestanden, 30 Dateien mit 150 dienstgebundenen
+  Testdateien mit 890 Tests bestanden, 30 Dateien mit 151 dienstgebundenen
   Tests übersprungen.
+- Fokussierte Admin-/Checkout-Persistenz: 15 Tests gegen isolierte PostgreSQL-
+  Schemas bestanden, einschließlich Restore-Erhalt und expliziter Rotation.
+- `npm run dev:check`: Node-/npm-/Docker-Voraussetzungen, vollständiges
+  Node-Gate, Composer-Validierung, PHP-Syntax, WordPress-Adaptertests und
+  Compose-Konfiguration bestanden.
 - Fokussierte Dev-Tool-/Preflight-Regression: 44 Tests bestanden.
 - Security Assessment: 36 Tests bestanden; 369 dienstgebundene Tests
   übersprungen.

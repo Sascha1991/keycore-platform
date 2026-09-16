@@ -52,6 +52,7 @@ describePostgres("staging Admin role bootstrap persistence", () => {
     const replacementPassword = ["replacement", "development", "password"].join(
       "-",
     );
+    const replacementEmail = "replacement@example.test";
     const now = new Date("2026-09-11T10:00:00.000Z");
 
     try {
@@ -112,7 +113,7 @@ describePostgres("staging Admin role bootstrap persistence", () => {
 
       await bootstrapStagingAdmin(database, {
         credential: {
-          emailNormalized: "admin@example.test",
+          emailNormalized: replacementEmail,
           passwordHash: await hashAdminPassword(replacementPassword),
         },
         hashSecret,
@@ -129,7 +130,7 @@ describePostgres("staging Admin role bootstrap persistence", () => {
       ).resolves.toMatchObject({ authenticated: true });
       await expect(
         passwordAuthentication.login(
-          "admin@example.test",
+          replacementEmail,
           replacementPassword,
           correlationId("bootstrap-did-not-rotate-password"),
         ),
@@ -137,7 +138,7 @@ describePostgres("staging Admin role bootstrap persistence", () => {
 
       await bootstrapStagingAdmin(database, {
         credential: {
-          emailNormalized: "admin@example.test",
+          emailNormalized: replacementEmail,
           passwordHash: await hashAdminPassword(replacementPassword),
           rotateExisting: true,
         },
@@ -158,6 +159,121 @@ describePostgres("staging Admin role bootstrap persistence", () => {
           "admin@example.test",
           password,
           correlationId("bootstrap-old-password-rejected"),
+        ),
+      ).resolves.toEqual({ authenticated: false });
+      await expect(
+        passwordAuthentication.login(
+          replacementEmail,
+          replacementPassword,
+          correlationId("bootstrap-rotation-preserved-email-identity"),
+        ),
+      ).resolves.toEqual({ authenticated: false });
+
+      const rotated = await database.query<{
+        readonly email_normalized: string;
+      }>(`SELECT email_normalized FROM admin_identities WHERE id = $1`, [
+        stagingAdminId,
+      ]);
+      expect(rotated.rows[0]?.email_normalized).toBe("admin@example.test");
+    } finally {
+      await database.cleanup();
+    }
+  }, 30_000);
+
+  it("preserves a restored Admin identity and credential across repeated normal bootstrap", async () => {
+    const database = await PostgresTestDatabase.initialize({
+      connectionString,
+      schemaName: `staging_admin_restored_${randomUUID().replaceAll("-", "_")}`,
+    });
+    const restoredEmail = "restored-admin@example.test";
+    const restoredPassword = ["restored", "development", "password"].join("-");
+    const localPassword = ["local", "generated", "password"].join("-");
+    const restoredHash = await hashAdminPassword(restoredPassword);
+
+    try {
+      await bootstrapStagingAdmin(database, {
+        credential: {
+          emailNormalized: restoredEmail,
+          passwordHash: restoredHash,
+        },
+        hashSecret,
+        now: new Date("2026-09-11T11:00:00.000Z"),
+        rawSession: ownerSession,
+        role: "PROJECT_OWNER",
+      });
+      await database.query(
+        `INSERT INTO admin_identities(
+           id, provider, provider_subject, display_name, status, created_at, updated_at
+         ) VALUES ($1, 'STAGING_SYNTHETIC', $2, 'Preserved review identity', 'DISABLED', $3, $3)`,
+        [
+          uatStaffId,
+          `managed-profile:${uatStaffId}`,
+          new Date("2026-09-11T11:01:00.000Z"),
+        ],
+      );
+
+      for (const [index, rawSession] of [
+        supportSession,
+        financeSession,
+      ].entries()) {
+        await bootstrapStagingAdmin(database, {
+          credential: {
+            emailNormalized: "admin@example.test",
+            passwordHash: await hashAdminPassword(localPassword),
+          },
+          hashSecret,
+          now: new Date(Date.UTC(2026, 8, 11, 11, index + 2)),
+          rawSession,
+          role: "PROJECT_OWNER",
+        });
+      }
+
+      const restored = await database.query<{
+        readonly email_normalized: string;
+        readonly password_hash: string;
+        readonly status: string;
+      }>(
+        `SELECT identity.email_normalized, identity.status, credential.password_hash
+         FROM admin_identities identity
+         JOIN admin_password_credentials credential ON credential.admin_id = identity.id
+         WHERE identity.id = $1`,
+        [stagingAdminId],
+      );
+      expect(restored.rows[0]).toEqual({
+        email_normalized: restoredEmail,
+        password_hash: restoredHash,
+        status: "ACTIVE",
+      });
+      const reviewIdentity = await database.query<{
+        readonly display_name: string;
+        readonly status: string;
+      }>(`SELECT display_name, status FROM admin_identities WHERE id = $1`, [
+        uatStaffId,
+      ]);
+      expect(reviewIdentity.rows[0]).toEqual({
+        display_name: "Preserved review identity",
+        status: "DISABLED",
+      });
+
+      const audit = new PostgresAuditEventRepository(database);
+      const passwordAuthentication = new AdminPasswordAuthenticationService(
+        new PostgresAdminPasswordCredentialRepository(database),
+        audit,
+        hashSecret,
+        "STAGING",
+      );
+      await expect(
+        passwordAuthentication.login(
+          restoredEmail,
+          restoredPassword,
+          correlationId("restored-admin-login"),
+        ),
+      ).resolves.toMatchObject({ authenticated: true });
+      await expect(
+        passwordAuthentication.login(
+          "admin@example.test",
+          localPassword,
+          correlationId("local-admin-not-implicitly-provisioned"),
         ),
       ).resolves.toEqual({ authenticated: false });
     } finally {

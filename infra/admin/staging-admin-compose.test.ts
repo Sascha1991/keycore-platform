@@ -10,7 +10,7 @@ const dockerfile = readFileSync(
 
 const serviceBlock = (service: string): string => {
   const match = new RegExp(
-    `^  ${service}:\\n[\\s\\S]*?(?=^  [a-z][a-z0-9-]*:\\n|^volumes:)`,
+    `^  ${service}:\\r?\\n[\\s\\S]*?(?=^  [a-z][a-z0-9-]*:\\r?\\n|^volumes:)`,
     "mu",
   ).exec(compose);
   if (!match) throw new Error(`Missing Compose service: ${service}`);

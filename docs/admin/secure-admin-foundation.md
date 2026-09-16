@@ -136,9 +136,12 @@ docker compose --env-file .env.staging -f infra/docker/compose.staging.yaml up -
 ```
 
 The admin portal is then available at the configured origin. The bootstrap is
-staging-only, idempotently provisions one synthetic `PROJECT_OWNER`, replaces
-its previous synthetic session, persists only the HMAC hash and expires the new
-session after eight hours.
+staging-only and idempotently provisions one synthetic `PROJECT_OWNER` when it
+is missing. Existing identity fields and password credentials survive normal
+bootstrap runs, including after a PostgreSQL restore. Explicit password
+rotation changes only the scrypt hash, not the persisted email identity. Each
+run replaces the previous synthetic recovery session, persists only its HMAC
+hash and expires the new session after eight hours.
 
 ### Temporary managed-staff UAT session
 
