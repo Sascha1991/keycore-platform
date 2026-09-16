@@ -1876,7 +1876,7 @@ td:first-child {
   overflow-wrap: anywhere;
 }
 .promotion-form-section {
-  max-width: 1080px;
+  max-width: 1140px;
 }
 .promotion-form { display: grid; gap: 1rem; }
 .promotion-form-group {

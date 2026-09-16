@@ -1443,6 +1443,15 @@ describe("AdminHttpController", () => {
     );
     expect(form.body).toContain("discount-unit-percentage");
     expect(form.body).toContain("discount-unit-fixed");
+    expect(form.body).toContain(
+      "Bei „Ausgewählte Produkte“ erfolgt die Zuordnung nach dem Anlegen im Kampagnendetail.",
+    );
+    expect(form.body).toContain(
+      "Die Kampagne wird zunächst als Entwurf gespeichert.",
+    );
+    expect(form.body).not.toContain(
+      "ordnen Sie Produkte anschließend im Kampagnendetail",
+    );
     const csrf =
       /action="\/admin\/discounts\/new"[^>]*><input type="hidden" name="csrf" value="([a-f0-9]{64})"/u.exec(
         form.body,
