@@ -15,6 +15,9 @@ Before changing code or specification behavior:
 5. linked requirements and ADRs
 6. nearest nested `AGENTS.md`, if present
 
+For Windows machine setup, daily startup and safe PC 1 / PC 2 handoff, also
+read `docs/development/MULTI-DEVICE-DEVELOPMENT.md`.
+
 ## Working Rules
 
 - Implement only the assigned task and its necessary prerequisites.

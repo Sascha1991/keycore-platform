@@ -2,6 +2,10 @@
 .env.*
 !.env.example
 !*.env.example
+infra/docker/staging.local.env
+Server Login Staging Daten.txt
+keycore-postgres-*.dump
+keycore-postgres-*.dump.sha256
 node_modules/
 vendor/
 coverage/

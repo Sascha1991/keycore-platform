@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added a Windows/PowerShell-friendly PC 1 / PC 2 development workflow over the
+  existing full synthetic Compose stack, including strict toolchain checks,
+  non-overwriting local env generation, safe first bootstrap, bounded status
+  and logs, volume-preserving stop, read-only Git handoff diagnostics,
+  containerized PHP validation and a detailed German operating guide. Existing
+  Admin functionality, Human-UAT and approval states remain unchanged.
+
 - Rebuilt the Admin `Produkte / Katalog` workspace around canonical Product,
   active supplier-offer and Storefront publication authority, with global KPI
   views, server-side search and filters, signed-cursor sorting, responsive

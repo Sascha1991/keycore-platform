@@ -13,7 +13,7 @@
       "@test"
     ],
     "validate": "composer validate --strict",
-    "lint": "find apps -name '*.php' -print0 | xargs -0 -n1 php -l",
+    "lint": "php scripts/php-lint.php",
     "test": "php apps/wordpress/keycore-platform/tests/plugin-test.php"
   },
   "config": {

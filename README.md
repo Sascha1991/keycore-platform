@@ -54,6 +54,14 @@ Use one task file per Codex run. Example:
 
 > Implement `tasks/phase-01-foundation/KS-01-01-foundation-bootstrap.md`. Follow all applicable `AGENTS.md` files. Do not implement unrelated tasks. Run the required checks and report any unresolved blockers.
 
+## Local Development On Multiple Windows PCs
+
+Use the repository's safe `dev:*` commands and the detailed German PC 1 / PC 2
+workflow in
+[`docs/development/MULTI-DEVICE-DEVELOPMENT.md`](docs/development/MULTI-DEVICE-DEVELOPMENT.md).
+The guide covers first setup, daily start/stop, Git handoff, diagnostics and the
+optional controlled PostgreSQL review-data transfer.
+
 ## Important Limitations
 
 The final Kinguin connector must be implemented only against the current official/private Kinguin Purchase/Reseller API documentation and credentials supplied by Kinguin.
