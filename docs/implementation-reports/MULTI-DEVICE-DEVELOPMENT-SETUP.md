@@ -223,9 +223,12 @@ die PC-1-Review-Datenbank wird niemals als destruktives Testziel verwendet.
   abgelehnt und änderte die lokale Konfigurationsdatei nicht.
 - CLI-nahe Prozessregressionen prüfen fehlende Bindungen für Work-Start und
   Work-Finish, korrekte und abweichende IDs, beschädigtes JSON sowie die
-  Unveränderlichkeit einer vorhandenen Bindung. Bei allen Device-bedingten
-  Fehlern bleibt der Git-Trace leer. Da die Repository-Prüfung die erste
-  nachgelagerte externe Befehlsgrenze ist, werden damit auch Fetch, Setup, npm,
+  Unveränderlichkeit einer vorhandenen Bindung. Bei einer passenden Bindung
+  enthält die CLI-Ausgabe die deterministische Fehlermarke
+  `git remote get-url origin ist fehlgeschlagen`, weil die Test-Sandbox bewusst
+  kein Git-Repository mit `origin` enthält. Bei allen Device-bedingten Fehlern
+  fehlt diese Marke. Da die Repository-Prüfung die erste nachgelagerte externe
+  Befehlsgrenze ist, werden damit auch Fetch, Setup, npm,
   Tests und Docker nicht erreicht.
 - Ein realer Start-Work-Aufruf mit Dirty Working Tree stoppte vor Fetch,
   Synchronisierung, npm und Docker.

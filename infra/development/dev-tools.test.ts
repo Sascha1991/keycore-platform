@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -48,7 +47,6 @@ const createDeviceCliSandbox = () => {
   const root = mkdtempSync(path.join(tmpdir(), "keycore-device-cli-"));
   const scripts = path.join(root, "scripts");
   const docker = path.join(root, "infra", "docker");
-  const commandLog = path.join(root, "commands.log");
   mkdirSync(scripts, { recursive: true });
   mkdirSync(docker, { recursive: true });
   copyFileSync("scripts/dev.mjs", path.join(scripts, "dev.mjs"));
@@ -57,26 +55,23 @@ const createDeviceCliSandbox = () => {
   writeFileSync(path.join(docker, "compose.staging.yaml"), "services: {}\n");
 
   return {
-    commandLog,
     devicePath: path.join(root, ".keycore-device.json"),
-    readCommands: () =>
-      existsSync(commandLog) ? readFileSync(commandLog, "utf8") : "",
     remove: () => rmSync(root, { force: true, recursive: true }),
     root,
     run: (...args: string[]) =>
       spawnSync(process.execPath, [path.join(scripts, "dev.mjs"), ...args], {
         cwd: root,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          GIT_TRACE: commandLog,
-        },
+        env: process.env,
       }),
   };
 };
 
 const cliOutput = (result: ReturnType<typeof spawnSync>): string =>
   `${String(result.stdout ?? "")}${String(result.stderr ?? "")}`;
+
+const repositoryBoundaryFailure =
+  "git remote get-url origin ist fehlgeschlagen";
 
 describe("multi-device development tooling", () => {
   it("creates a complete local-only environment without unresolved placeholders", () => {
@@ -215,7 +210,7 @@ describe("multi-device development tooling", () => {
 
       expect(result.status).toBe(1);
       expect(cliOutput(result)).toContain(".keycore-device.json fehlt");
-      expect(sandbox.readCommands()).toBe("");
+      expect(cliOutput(result)).not.toContain(repositoryBoundaryFailure);
     } finally {
       sandbox.remove();
     }
@@ -228,7 +223,7 @@ describe("multi-device development tooling", () => {
 
       expect(result.status).toBe(1);
       expect(cliOutput(result)).toContain(".keycore-device.json fehlt");
-      expect(sandbox.readCommands()).toBe("");
+      expect(cliOutput(result)).not.toContain(repositoryBoundaryFailure);
     } finally {
       sandbox.remove();
     }
@@ -244,7 +239,7 @@ describe("multi-device development tooling", () => {
       expect(cliOutput(result)).not.toMatch(
         /Geräte-ID stimmt nicht überein|\.keycore-device\.json fehlt/u,
       );
-      expect(sandbox.readCommands()).not.toBe("");
+      expect(cliOutput(result)).toContain(repositoryBoundaryFailure);
     } finally {
       sandbox.remove();
     }
@@ -257,13 +252,13 @@ describe("multi-device development tooling", () => {
       const mismatch = sandbox.run("work-start", "LAPTOP");
       expect(mismatch.status).toBe(1);
       expect(cliOutput(mismatch)).toContain("Geräte-ID stimmt nicht überein");
-      expect(sandbox.readCommands()).toBe("");
+      expect(cliOutput(mismatch)).not.toContain(repositoryBoundaryFailure);
 
       writeFileSync(sandbox.devicePath, "{not-json\n");
       const corrupt = sandbox.run("work-finish", "LAPTOP");
       expect(corrupt.status).toBe(1);
       expect(cliOutput(corrupt)).toContain("enthält kein gültiges JSON");
-      expect(sandbox.readCommands()).toBe("");
+      expect(cliOutput(corrupt)).not.toContain(repositoryBoundaryFailure);
     } finally {
       sandbox.remove();
     }
@@ -284,7 +279,9 @@ describe("multi-device development tooling", () => {
       expect(mismatch.status).toBe(1);
       expect(cliOutput(mismatch)).toContain("Geräte-ID stimmt nicht überein");
       expect(readFileSync(sandbox.devicePath, "utf8")).toBe(original);
-      expect(sandbox.readCommands()).toBe("");
+      expect(cliOutput(created)).not.toContain(repositoryBoundaryFailure);
+      expect(cliOutput(repeated)).not.toContain(repositoryBoundaryFailure);
+      expect(cliOutput(mismatch)).not.toContain(repositoryBoundaryFailure);
     } finally {
       sandbox.remove();
     }
