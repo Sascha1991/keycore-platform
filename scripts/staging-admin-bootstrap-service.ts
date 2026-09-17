@@ -56,11 +56,7 @@ export const bootstrapStagingAdmin = async (
           id, provider, provider_subject, display_name, status, email_normalized, created_at, updated_at
         )
         VALUES ($1, 'STAGING_SYNTHETIC', 'keyrano-staging-project-owner', $3, 'ACTIVE', $4, $2, $2)
-        ON CONFLICT (id) DO UPDATE SET
-          display_name = EXCLUDED.display_name,
-          status = 'ACTIVE',
-          email_normalized = COALESCE(EXCLUDED.email_normalized, admin_identities.email_normalized),
-          updated_at = EXCLUDED.updated_at
+        ON CONFLICT (id) DO NOTHING
       `,
       [
         stagingAdminId,
@@ -73,6 +69,20 @@ export const bootstrapStagingAdmin = async (
       "SELECT id FROM admin_identities WHERE id = $1 FOR UPDATE",
       [stagingAdminId],
     );
+
+    if (input.credential) {
+      await client.query(
+        `UPDATE admin_identities identity
+         SET email_normalized = $2, updated_at = $3
+         WHERE identity.id = $1
+           AND identity.email_normalized IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM admin_password_credentials credential
+             WHERE credential.admin_id = identity.id
+           )`,
+        [stagingAdminId, input.credential.emailNormalized, now],
+      );
+    }
 
     const activeAssignments = await client.query<{ readonly role: string }>(
       `SELECT role FROM admin_role_assignments WHERE admin_id = $1 AND revoked_at IS NULL ORDER BY role FOR UPDATE`,

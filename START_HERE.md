@@ -1,6 +1,6 @@
 # Start Here - KeyCore Specification v1.0.2
 
-**Public store:** KeyPlanet
+**Public store:** KeyRaNo
 **Initial domain:** `key-planet.de`
 **Internal platform:** KeyCore
 **Repository:** `keycore-platform`

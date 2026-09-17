@@ -107,9 +107,10 @@ operation or real Product Key is authorized by this work.
 ## Admin password persistence and reset hotfix
 
 Normal staging bootstrap now creates a missing Admin password credential but
-preserves an existing scrypt hash by default. Rotation is available only when
-`KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE=true` is set for an explicit
-bootstrap run; its default is `false`.
+preserves an existing Admin identity and scrypt hash by default. Rotation is
+available only when `KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE=true` is set
+for an explicit bootstrap run; it rotates only the password hash and preserves
+the persisted email. Its normal default remains `false`.
 
 Migration 033 adds persisted Admin password-reset requests. Raw reset tokens
 are 32 random bytes and exist only in the private Mailpit message and request

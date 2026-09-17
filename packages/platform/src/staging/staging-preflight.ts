@@ -449,12 +449,19 @@ const classifyOrigin = (raw: string | undefined): ResourceClassification => {
   if (!raw) return "MISSING";
   try {
     const url = new URL(raw);
-    if (url.protocol !== "https:" || url.username || url.password) {
+    if (url.username || url.password) {
       return "INVALID";
     }
+    if (url.pathname !== "/" || url.search || url.hash) return "INVALID";
+    if (
+      url.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname.toLowerCase())
+    ) {
+      return "STAGING";
+    }
+    if (url.protocol !== "https:") return "INVALID";
     const origin = url.origin.toLowerCase();
     if (productionStorefrontOrigins.has(origin)) return "PRODUCTION";
-    if (url.pathname !== "/" || url.search || url.hash) return "INVALID";
     return approvedStagingOrigins.has(origin) ? "STAGING" : "INVALID";
   } catch {
     return "INVALID";

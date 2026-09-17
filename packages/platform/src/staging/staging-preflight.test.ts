@@ -160,6 +160,36 @@ describe("staging preflight", () => {
   });
 
   it.each([
+    "http://localhost:18080",
+    "http://localhost:28080",
+    "http://127.0.0.1:18080",
+    "http://[::1]:18080",
+  ])("accepts a local HTTP development origin %s", (origin) => {
+    const environment = {
+      ...safeEnvironment(),
+      KEYCORE_STAGING_PUBLIC_ORIGIN: origin,
+    };
+
+    expect(
+      loadStagingPreflightConfiguration(environment).transport.origin,
+    ).toBe("STAGING");
+    expect(verify(environment).status).toBe("READY");
+  });
+
+  it.each([
+    "http://staging.example.invalid",
+    "http://192.168.1.20:18080",
+    "http://localhost:18080/path",
+  ])("rejects a non-local or malformed HTTP origin %s", (origin) => {
+    const environment = {
+      ...safeEnvironment(),
+      KEYCORE_STAGING_PUBLIC_ORIGIN: origin,
+    };
+
+    expect(reasonCodes(verify(environment))).toContain("STAGING_ORIGIN_UNSAFE");
+  });
+
+  it.each([
     "https://shop.example.com",
     "https://preview.keyrano.de",
     "https://user:password@staging.keyrano.de",

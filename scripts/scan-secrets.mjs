@@ -1,44 +1,25 @@
-import { readdir, readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { scanSecretText } from "./secret-patterns.mjs";
 
 const root = process.cwd();
-const ignoredDirectories = new Set([
-  ".git",
-  ".docker-data",
-  ".wordpress",
-  "coverage",
-  "dist",
-  "node_modules",
-  "vendor",
-]);
-
 const ignoredFiles = new Set(["package-lock.json"]);
 
-async function* walk(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = path.join(directory, entry.name);
-
-    if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) {
-        yield* walk(fullPath);
-      }
-      continue;
-    }
-
-    if (entry.isFile() && !ignoredFiles.has(entry.name)) {
-      yield fullPath;
-    }
-  }
-}
+const repositoryFiles = execFileSync(
+  "git",
+  ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+  { cwd: root, encoding: "utf8" },
+)
+  .split("\0")
+  .filter(Boolean)
+  .filter((file) => !ignoredFiles.has(path.basename(file)));
 
 const findings = [];
 
-for await (const filePath of walk(root)) {
-  const relativePath = path.relative(root, filePath);
+for (const relativePath of repositoryFiles) {
+  const filePath = path.join(root, relativePath);
 
   let content;
   try {

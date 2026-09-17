@@ -4,13 +4,13 @@ Codex-ready repository specification for the modular German KeyCore platform.
 
 ## Primary Goal
 
-Build the production-grade KeyPlanet storefront that imports the complete supplier catalog, publishes only offers that are verifiably usable in Germany, sells under the shop's own brand, automatically purchases keys from approved connected suppliers, issues invoices, delivers keys securely, and supports future suppliers through a common adapter architecture.
+Build the production-grade KeyRaNo storefront that imports the complete supplier catalog, publishes only offers that are verifiably usable in Germany, sells under the shop's own brand, automatically purchases keys from approved connected suppliers, issues invoices, delivers keys securely, and supports future suppliers through a common adapter architecture.
 
 ## Status
 
 - Specification version: 1.0.2
 - Implementation status: Specification hardening complete; development tasks ready
-- Public brand: KeyPlanet
+- Public brand: KeyRaNo
 - Initial domain: key-planet.de
 - Internal platform: KeyCore
 - Repository: keycore-platform
@@ -53,6 +53,16 @@ Open `START_HERE.md` first.
 Use one task file per Codex run. Example:
 
 > Implement `tasks/phase-01-foundation/KS-01-01-foundation-bootstrap.md`. Follow all applicable `AGENTS.md` files. Do not implement unrelated tasks. Run the required checks and report any unresolved blockers.
+
+## Local Development On Multiple Windows PCs
+
+Use the repository's safe `dev:*` commands and the detailed German PC 1 / PC 2 /
+Laptop workflow in
+[`docs/development/MULTI-DEVICE-DEVELOPMENT.md`](docs/development/MULTI-DEVICE-DEVELOPMENT.md).
+The guide covers first setup, daily start/stop, Git handoff, diagnostics and the
+optional controlled PostgreSQL review-data transfer. Each clone must be bound
+once with `npm run dev:device -- PC-1|PC-2|LAPTOP` before its first
+`dev:work-start`; missing, invalid or mismatched bindings fail closed.
 
 ## Important Limitations
 

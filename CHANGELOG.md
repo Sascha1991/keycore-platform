@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Documented the explicitly authorized accompanying storefront-brand cleanup
+  from the retired `KeyPlanet` name to `KeyRaNo`. `KeyCore` remains the backend
+  and platform name; this scope extension is intentionally included with the
+  multi-device pull request.
+
+- Extended the repository-driven multi-device workflow to PC 1, PC 2 and
+  Laptop with local non-authenticating device IDs, lossless Fast-Forward-only
+  Start-Work, check-and-handoff Finish-Work, and guarded PostgreSQL review-data
+  export/import packages with SHA-256, commit metadata, safety backup and
+  automatic recovery. No secret, env file, volume or database is synchronized
+  automatically.
+
+- Added a Windows/PowerShell-friendly PC 1 / PC 2 development workflow over the
+  existing full synthetic Compose stack, including strict toolchain checks,
+  non-overwriting local env generation, safe first bootstrap, bounded status
+  and logs, volume-preserving stop, read-only Git handoff diagnostics,
+  containerized PHP validation, native Windows line-ending compatibility and a
+  detailed German operating guide. Normal starts now preserve restored Admin
+  identity and password credentials;
+  password rotation is explicit and email-preserving. The PostgreSQL transfer
+  guide now distinguishes the persisted Guest-Claim/Fulfillment dependencies
+  from the device-local browser and Admin secrets. Existing Human-UAT and
+  approval states remain unchanged.
+
 - Rebuilt the Admin `Produkte / Katalog` workspace around canonical Product,
   active supplier-offer and Storefront publication authority, with global KPI
   views, server-side search and filters, signed-cursor sorting, responsive
@@ -605,12 +629,12 @@
 - Cleaned README metadata and updated repository-wide agent Definition of Done.
 - Added Specification Review #2 for v1.0.2.
 
-## 1.0.1 - KeyPlanet / KeyCore bootstrap
+## 1.0.1 - Storefront / KeyCore bootstrap
 
 - Renamed the internal platform to KeyCore.
-- Defined KeyPlanet as the public customer-facing brand.
+- Defined the original public customer-facing brand (since superseded by KeyRaNo).
 - Recorded `key-planet.de` as the initial domain.
-- Recorded naming and namespace rules for the KeyPlanet / KeyCore bootstrap.
+- Recorded the original storefront and KeyCore naming and namespace rules.
 - Added `START_HERE.md` and the Sprint 1 execution plan.
 - Marked the specification as ready for the initial Codex review and foundation tasks.
 
