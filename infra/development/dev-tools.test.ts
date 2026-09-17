@@ -1,4 +1,15 @@
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -32,6 +43,40 @@ import {
 
 const deterministicRandom = (size: number): Buffer =>
   Buffer.alloc(size, Math.max(1, size % 251));
+
+const createDeviceCliSandbox = () => {
+  const root = mkdtempSync(path.join(tmpdir(), "keycore-device-cli-"));
+  const scripts = path.join(root, "scripts");
+  const docker = path.join(root, "infra", "docker");
+  const commandLog = path.join(root, "commands.log");
+  mkdirSync(scripts, { recursive: true });
+  mkdirSync(docker, { recursive: true });
+  copyFileSync("scripts/dev.mjs", path.join(scripts, "dev.mjs"));
+  copyFileSync("scripts/dev-tools.mjs", path.join(scripts, "dev-tools.mjs"));
+  writeFileSync(path.join(root, "package.json"), '{"type":"module"}\n');
+  writeFileSync(path.join(docker, "compose.staging.yaml"), "services: {}\n");
+
+  return {
+    commandLog,
+    devicePath: path.join(root, ".keycore-device.json"),
+    readCommands: () =>
+      existsSync(commandLog) ? readFileSync(commandLog, "utf8") : "",
+    remove: () => rmSync(root, { force: true, recursive: true }),
+    root,
+    run: (...args: string[]) =>
+      spawnSync(process.execPath, [path.join(scripts, "dev.mjs"), ...args], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GIT_TRACE: commandLog,
+        },
+      }),
+  };
+};
+
+const cliOutput = (result: ReturnType<typeof spawnSync>): string =>
+  `${String(result.stdout ?? "")}${String(result.stderr ?? "")}`;
 
 describe("multi-device development tooling", () => {
   it("creates a complete local-only environment without unresolved placeholders", () => {
@@ -161,6 +206,88 @@ describe("multi-device development tooling", () => {
     expect(() => normalizeDeviceId("WORKSTATION-9")).toThrow(
       "Ungültige Geräte-ID",
     );
+  });
+
+  it("fails work-start before external commands when the device binding is missing", () => {
+    const sandbox = createDeviceCliSandbox();
+    try {
+      const result = sandbox.run("work-start", "LAPTOP");
+
+      expect(result.status).toBe(1);
+      expect(cliOutput(result)).toContain(".keycore-device.json fehlt");
+      expect(sandbox.readCommands()).toBe("");
+    } finally {
+      sandbox.remove();
+    }
+  });
+
+  it("fails work-finish before external commands when the device binding is missing", () => {
+    const sandbox = createDeviceCliSandbox();
+    try {
+      const result = sandbox.run("work-finish", "PC-2");
+
+      expect(result.status).toBe(1);
+      expect(cliOutput(result)).toContain(".keycore-device.json fehlt");
+      expect(sandbox.readCommands()).toBe("");
+    } finally {
+      sandbox.remove();
+    }
+  });
+
+  it("accepts a matching binding and proceeds to repository validation", () => {
+    const sandbox = createDeviceCliSandbox();
+    try {
+      writeFileSync(sandbox.devicePath, '{"version":1,"deviceId":"LAPTOP"}\n');
+      const result = sandbox.run("work-start", "LAPTOP");
+
+      expect(result.status).toBe(1);
+      expect(cliOutput(result)).not.toMatch(
+        /Geräte-ID stimmt nicht überein|\.keycore-device\.json fehlt/u,
+      );
+      expect(sandbox.readCommands()).not.toBe("");
+    } finally {
+      sandbox.remove();
+    }
+  });
+
+  it("fails mismatched and corrupt bindings before external commands", () => {
+    const sandbox = createDeviceCliSandbox();
+    try {
+      writeFileSync(sandbox.devicePath, '{"version":1,"deviceId":"PC-1"}\n');
+      const mismatch = sandbox.run("work-start", "LAPTOP");
+      expect(mismatch.status).toBe(1);
+      expect(cliOutput(mismatch)).toContain("Geräte-ID stimmt nicht überein");
+      expect(sandbox.readCommands()).toBe("");
+
+      writeFileSync(sandbox.devicePath, "{not-json\n");
+      const corrupt = sandbox.run("work-finish", "LAPTOP");
+      expect(corrupt.status).toBe(1);
+      expect(cliOutput(corrupt)).toContain("enthält kein gültiges JSON");
+      expect(sandbox.readCommands()).toBe("");
+    } finally {
+      sandbox.remove();
+    }
+  });
+
+  it("creates a binding once and never overwrites it automatically", () => {
+    const sandbox = createDeviceCliSandbox();
+    try {
+      const created = sandbox.run("device", "LAPTOP");
+      expect(created.status).toBe(0);
+      const original = readFileSync(sandbox.devicePath, "utf8");
+
+      const repeated = sandbox.run("device", "LAPTOP");
+      expect(repeated.status).toBe(0);
+      expect(readFileSync(sandbox.devicePath, "utf8")).toBe(original);
+
+      const mismatch = sandbox.run("device", "PC-1");
+      expect(mismatch.status).toBe(1);
+      expect(cliOutput(mismatch)).toContain("Geräte-ID stimmt nicht überein");
+      expect(readFileSync(sandbox.devicePath, "utf8")).toBe(original);
+      expect(sandbox.readCommands()).toBe("");
+    } finally {
+      sandbox.remove();
+    }
   });
 
   it("selects only lossless Start-Work synchronization paths", () => {
@@ -460,6 +587,10 @@ describe("multi-device development tooling", () => {
     expect(guide).toContain("`PC-1` ist der Haupt-PC");
     expect(guide).toContain("`LAPTOP` ist vollständig eingerichtet");
     expect(guide).toContain("`PC-2` ist der Büro-PC in der Matrix Bochum");
+    expect(guide).toContain("npm run dev:device -- PC-2");
+    expect(guide).toMatch(
+      /`dev:work-start` und\s+`dev:work-finish` erzeugen die Bindung nicht automatisch/u,
+    );
     expect(guide).toContain("Der Laptop ist kein Onboarding-Ziel mehr");
   });
 });

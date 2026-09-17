@@ -56,11 +56,13 @@ Use one task file per Codex run. Example:
 
 ## Local Development On Multiple Windows PCs
 
-Use the repository's safe `dev:*` commands and the detailed German PC 1 / PC 2
-workflow in
+Use the repository's safe `dev:*` commands and the detailed German PC 1 / PC 2 /
+Laptop workflow in
 [`docs/development/MULTI-DEVICE-DEVELOPMENT.md`](docs/development/MULTI-DEVICE-DEVELOPMENT.md).
 The guide covers first setup, daily start/stop, Git handoff, diagnostics and the
-optional controlled PostgreSQL review-data transfer.
+optional controlled PostgreSQL review-data transfer. Each clone must be bound
+once with `npm run dev:device -- PC-1|PC-2|LAPTOP` before its first
+`dev:work-start`; missing, invalid or mismatched bindings fail closed.
 
 ## Important Limitations
 

@@ -24,6 +24,18 @@ für eine reale Validierung erforderliche aktuelle Admin-/Storefront-
 Architektur, Migration 036 und die Human-akzeptierten Kategorien 05 und 06.
 Der Multi-Device-Branch und sein eigener PR bleiben von PR #62 getrennt.
 
+## Autorisierte begleitende Scope-Erweiterung
+
+Die repository-weite Bereinigung des veralteten Storefront-Namens
+`KeyPlanet` zu `KeyRaNo` ist ausdrücklich durch den Human autorisiert und
+absichtlich Bestandteil von PR #63. `KeyCore` bleibt der Name für Backend und
+Plattform, `KeyRaNo` ist der aktuelle Frontend-/Shop-Name und `KeyPlanet` wird
+in aktueller Code-, UI-, Task- und Projektdokumentation nicht weiterverwendet.
+Historische Aussagen werden nur so angepasst, dass sie als historisch und
+inzwischen abgelöst erkennbar bleiben. Diese Branding-Bereinigung ist eine
+transparente begleitende Scope-Erweiterung und keine technische Voraussetzung
+des Multi-Device-Toolings.
+
 ## Implementierung
 
 - Die sechs Codex-Kurzbefehle `Start-Work-*` und `Finish-Work-*` sind in
@@ -31,7 +43,11 @@ Der Multi-Device-Branch und sein eigener PR bleiben von PR #62 getrennt.
   dafür keinen früheren Chatverlauf.
 - `.keycore-device.json` bindet jeden Clone lokal an `PC-1`, `PC-2` oder
   `LAPTOP`. Die Datei ist ignoriert, enthält keinen Fingerprint und besitzt
-  keinerlei Authentisierungswirkung. Eine falsche angeforderte ID bricht ab.
+  keinerlei Authentisierungswirkung. Eine fehlende, beschädigte oder
+  abweichende Bindung bricht vor Fetch, Setup, npm, Tests und Docker-Aktionen
+  fail-closed ab. Die Start-/Finish-Workflows erzeugen oder überschreiben sie
+  niemals automatisch; jeder Clone wird vor seinem ersten Work-Start einmalig
+  explizit mit `dev:device` gebunden.
 - `dev:work-start` schützt lokale Änderungen, prüft das erwartete GitHub-
   Repository, aktualisiert Remote-Referenzen und erlaubt ausschließlich
   Fast-Forward. Danach delegiert es Toolchain, Abhängigkeiten, Compose,
@@ -151,14 +167,14 @@ Fragmente bleiben abgelehnt.
 ## Quality Gates
 
 - `npm run check`: Format, ESLint, TypeScript und Secret-Scan bestanden; 68
-  Testdateien mit 890 Tests bestanden, 30 Dateien mit 151 dienstgebundenen
+  Testdateien mit 905 Tests bestanden, 30 Dateien mit 151 dienstgebundenen
   Tests übersprungen.
 - Fokussierte Admin-/Checkout-Persistenz: 15 Tests gegen isolierte PostgreSQL-
   Schemas bestanden, einschließlich Restore-Erhalt und expliziter Rotation.
 - `npm run dev:check`: Node-/npm-/Docker-Voraussetzungen, vollständiges
   Node-Gate, Composer-Validierung, PHP-Syntax, WordPress-Adaptertests und
   Compose-Konfiguration bestanden.
-- Fokussierte Dev-Tool-/Preflight-Regression: 44 Tests bestanden.
+- Fokussierte Dev-Tool-/Preflight-Regression: 49 Tests bestanden.
 - Security Assessment: 36 Tests bestanden; 369 dienstgebundene Tests
   übersprungen.
 - E2E Acceptance: 15 Tests bestanden; ein PostgreSQL-gebundener Test
@@ -171,11 +187,28 @@ Fragmente bleiben abgelehnt.
 ## Offene Human-Evidenz
 
 Der Laptop-Praxistest ist abgeschlossen: Entwicklungssystem, Stack,
-PostgreSQL-Review-Daten, Admin-Login und Review-Daten funktionieren. Offene
-Human-Evidenz betrifft nur die reale PC-2-Ersteinrichtung. Der erste
-Human-Schritt auf PC 2 ist die Installation bzw.
-Auswahl von Node `22.22.0`, npm 11, Git und Docker Desktop; danach folgt Tabelle
-A in `docs/development/MULTI-DEVICE-DEVELOPMENT.md`.
+PostgreSQL-Review-Daten, Admin-Login und Review-Daten funktionieren. Auf PC 1
+meldeten `Start-Work-PC-1` und `Finish-Work-PC-1` nacheinander
+`ARBEITSBEREIT` und `ÜBERGABEBEREIT`.
+
+Beim ersten Laptop-Start stand der Clone noch auf `5efed8f`. Der damals aktive
+Ablauf synchronisierte zunächst den Repository-Stand und zog dabei
+`68a92d9abe1c89a4facc925f0090975c5aaaad10` ein. Erst dieser Commit enthielt die
+neuen Device-/Work-Start-/Work-Finish-Mechanismen. Der historische Start konnte
+daher noch ohne `.keycore-device.json` arbeitsbereit werden. Beim
+anschließenden Finish war der neue Code bereits aktiv und erkannte die fehlende
+Bindung korrekt fail-closed. Nach der einmaligen expliziten Bindung als
+`LAPTOP` meldete `Finish-Work-Laptop` `ÜBERGABEBEREIT`: Working Tree sauber,
+Ahead/Behind 0/0, 900 Tests bestanden, 151 übersprungen, Format, Lint,
+Typprüfung und Secret-Scan bestanden sowie der Stack volume-erhaltend gestoppt.
+Dies war keine Start-/Finish-Asymmetrie des aktuellen Codes, sondern eine
+einmalige Versionsgrenze während des ersten Laptop-Wechsels.
+
+Offene Human-Evidenz betrifft nur die reale PC-2-Ersteinrichtung. Der erste
+Human-Schritt auf PC 2 ist die Installation bzw. Auswahl von Node `22.22.0`,
+npm 11, Git und Docker Desktop; danach folgt Tabelle A in
+`docs/development/MULTI-DEVICE-DEVELOPMENT.md`, einschließlich der einmaligen
+expliziten Bindung mit `npm run dev:device -- PC-2` vor dem ersten Work-Start.
 
 Der nächste empfohlene manuelle Praxistest ist das vollständige
 New-Device-Onboarding auf PC 2. Danach wird eine harmlose
@@ -188,25 +221,30 @@ die PC-1-Review-Datenbank wird niemals als destruktives Testziel verwendet.
 
 - Gerätebindung auf PC 1 wurde real angelegt; eine angeforderte PC-2-ID wurde
   abgelehnt und änderte die lokale Konfigurationsdatei nicht.
+- CLI-nahe Prozessregressionen prüfen fehlende Bindungen für Work-Start und
+  Work-Finish, korrekte und abweichende IDs, beschädigtes JSON sowie die
+  Unveränderlichkeit einer vorhandenen Bindung. Bei allen Device-bedingten
+  Fehlern bleibt der Git-Trace leer. Da die Repository-Prüfung die erste
+  nachgelagerte externe Befehlsgrenze ist, werden damit auch Fetch, Setup, npm,
+  Tests und Docker nicht erreicht.
 - Ein realer Start-Work-Aufruf mit Dirty Working Tree stoppte vor Fetch,
   Synchronisierung, npm und Docker.
 - Ein DB-Import ohne exakte Bestätigung stoppte vor Toolchain-, Datei- und
   Datenbankzugriff. Ein DB-Export mit Dirty Working Tree stoppte vor
   PostgreSQL-Zugriff.
-- 28 fokussierte Multi-Device-/Admin-Compose-Tests bestanden. Sie decken
+- 33 fokussierte Multi-Device-/Admin-Compose-Tests bestanden. Sie decken
   Happy-Path-Entscheidungen, falsche Geräte-ID, Dirty/Diverged Git,
   Finish-Handoff, Pfade mit Leerzeichen, Manifest/Hash, fehlende Bestätigung,
   Recovery-Primitiven, Secret-Abhängigkeiten und den bestehenden Admin-
   Bootstrap-Fix ab.
-- `npm run check` bestand mit 68 Testdateien und 900 Tests; 30 Dateien und 151
+- `npm run check` bestand mit 68 Testdateien und 905 Tests; 30 Dateien und 151
   dienstgebundene Tests wurden übersprungen. Security Assessment (36 Tests),
   UAT-Struktur, Secret-Scan, npm Audit, Compose, Composer, PHP-Syntax und
   WordPress-Adaptertests bestanden ebenfalls.
-- `npm run dev:check` validierte die gepinnte Toolchain, stoppte dann jedoch
-  erwartungsgemäß an der bereits vorhandenen PC-1-`staging.local.env`: lokale
-  Origins, Rotations-Flag, Platzhalter und Template-Drift entsprechen nicht der
-  aktuellen lokalen Vorlage. Die gerätespezifische Datei wurde nicht verändert;
-  die nachgelagerten Teilgates wurden separat erfolgreich ausgeführt.
+- `npm run dev:check` bestand auf dem Laptop mit der gepinnten Toolchain, dem
+  vollständigen Node-Gate, Composer-Validierung, PHP-Syntax,
+  WordPress-Adaptertests und Compose-Konfiguration. Die gerätespezifische Env
+  blieb unverändert.
 - Kein Dump und kein destruktiver Import wurde gegen die aktuelle Review-
   Datenbank ausgeführt. Der vollständige Export-/Import-Praxistest bleibt für
   einen entbehrlichen synthetischen Stack reserviert.

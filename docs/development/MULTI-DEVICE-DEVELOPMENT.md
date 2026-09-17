@@ -56,7 +56,9 @@ npm run dev:device -- PC-1
 Die Datei `.keycore-device.json` bleibt ignoriert und enthält ausschließlich
 die Workflow-ID. Sie ist weder Hardware-Fingerprint noch Authentisierung. Eine
 abweichende Start-/Finish-ID bricht ab und wird niemals automatisch
-überschrieben.
+überschrieben. Auch eine fehlende oder beschädigte Datei bricht vor Fetch,
+Setup, npm, Tests und Docker-Aktionen fail-closed ab. `dev:work-start` und
+`dev:work-finish` erzeugen die Bindung nicht automatisch.
 
 ### Start-Work-Semantik
 
@@ -132,11 +134,12 @@ Matrix Bochum. Er gilt nicht für den bereits betriebsbereiten Laptop.
 | 5. Zustand prüfen        | PC 2    | vor Checkout             | Repository-Root          | `git status --short --branch`                                               | Unerwartete Dateien erkennen                                                                | Frischer sauberer Clone                                       | Nicht pauschal `git clean` oder `git reset --hard` verwenden      |
 | 6. Remote aktualisieren  | PC 2    | vor Checkout             | Repository-Root          | `git fetch --prune origin`                                                  | Aktuelle Branch-Kenntnis                                                                    | Fetch erfolgreich                                             | Netzwerk/Authentifizierung prüfen                                 |
 | 7. Arbeitsbranch wählen  | PC 2    | je Aufgabe               | Repository-Root          | `git switch <branch>`                                                       | Richtigen Branch verwenden                                                                  | Branchname stimmt                                             | Branch mit `git branch --all` ermitteln; nichts erfinden          |
-| 8. Toolchain prüfen      | PC 2    | einmalig/bei Wechsel     | Repository-Root          | `npm run dev:prerequisites`                                                 | Versionen und Docker prüfen                                                                 | Node, npm, Git, Docker und Compose werden als bereit gemeldet | Gemeldete Voraussetzung gezielt korrigieren                       |
-| 9. Setup starten         | PC 2    | einmalig                 | Repository-Root          | `npm run dev:setup`                                                         | Env erzeugen, `npm ci`, Full-Stack, Migrationen, Seeds und WordPress-Bootstrap koordinieren | Alle sieben Phasen erfolgreich; keine Secrets ausgegeben      | Beim ersten Fehler stoppen; keine Volumes löschen                 |
-| 10. Status prüfen        | PC 2    | nach Setup               | Repository-Root          | `npm run dev:status`                                                        | Dienste, HTTP und lokale URLs prüfen                                                        | Erforderliche Dienste `OK`; URLs sichtbar                     | `npm run dev:logs` und Abschnitt J verwenden                      |
-| 11. Browser prüfen       | PC 2    | nach Setup               | Browser                  | gemeldete Storefront-, Admin- und Mailpit-URLs öffnen                       | Reale lokale Nutzbarkeit                                                                    | Storefront und Admin laden; Mailpit ist lokal erreichbar      | Portbelegung und Logs prüfen                                      |
-| 12. Codex starten        | PC 2    | nach erfolgreichem Setup | Codex im Repository      | Starttext aus „Mit Codex weiterarbeiten“ verwenden                          | Repository-Kontext statt Chat-Abhängigkeit                                                  | Codex prüft Branch/Status vor Änderungen                      | Kein altes Chatprotokoll als Quellautorität verwenden             |
+| 8. Clone lokal binden    | PC 2    | einmalig pro Clone       | Repository-Root          | `npm run dev:device -- PC-2`                                                | Eindeutige lokale Workflow-ID vor dem ersten Start-Work setzen                              | `.keycore-device.json` enthält `PC-2` und bleibt ignoriert    | Bei vorhandener anderer ID STOP; Datei nie still überschreiben    |
+| 9. Toolchain prüfen      | PC 2    | einmalig/bei Wechsel     | Repository-Root          | `npm run dev:prerequisites`                                                 | Versionen und Docker prüfen                                                                 | Node, npm, Git, Docker und Compose werden als bereit gemeldet | Gemeldete Voraussetzung gezielt korrigieren                       |
+| 10. Setup starten        | PC 2    | einmalig                 | Repository-Root          | `npm run dev:setup`                                                         | Env erzeugen, `npm ci`, Full-Stack, Migrationen, Seeds und WordPress-Bootstrap koordinieren | Alle sieben Phasen erfolgreich; keine Secrets ausgegeben      | Beim ersten Fehler stoppen; keine Volumes löschen                 |
+| 11. Status prüfen        | PC 2    | nach Setup               | Repository-Root          | `npm run dev:status`                                                        | Dienste, HTTP und lokale URLs prüfen                                                        | Erforderliche Dienste `OK`; URLs sichtbar                     | `npm run dev:logs` und Abschnitt J verwenden                      |
+| 12. Browser prüfen       | PC 2    | nach Setup               | Browser                  | gemeldete Storefront-, Admin- und Mailpit-URLs öffnen                       | Reale lokale Nutzbarkeit                                                                    | Storefront und Admin laden; Mailpit ist lokal erreichbar      | Portbelegung und Logs prüfen                                      |
+| 13. Codex starten        | PC 2    | nach erfolgreichem Setup | Codex im Repository      | Starttext aus „Mit Codex weiterarbeiten“ verwenden                          | Repository-Kontext statt Chat-Abhängigkeit                                                  | Codex prüft Branch/Status vor Änderungen                      | Kein altes Chatprotokoll als Quellautorität verwenden             |
 
 `dev:setup` erzeugt `infra/docker/staging.local.env` nur, wenn die Datei fehlt,
 und überschreibt sie nie. Die Werte sind synthetisch, lokal und zufällig. Ein
@@ -203,6 +206,26 @@ ausschließlich Diagnose/Fallback.
 
 Der Laptop ist kein Onboarding-Ziel mehr. `dev:setup` ist dort nicht Teil des
 normalen Starts; `Start-Work-Laptop` verwendet die bestehende lokale Umgebung.
+
+### Historischer erster Laptop-Wechsel
+
+Der reale Wechsel von PC 1 zum Laptop verlief erfolgreich, traf aber einmalig
+eine Versionsgrenze. `Start-Work-PC-1` meldete `ARBEITSBEREIT` und
+`Finish-Work-PC-1` anschließend `ÜBERGABEBEREIT`. Beim ersten Laptop-Start stand
+der Clone noch auf `5efed8f`; der damalige Ablauf synchronisierte zunächst den
+Repository-Stand und zog dabei
+`68a92d9abe1c89a4facc925f0090975c5aaaad10` ein. Erst dieser Commit führte die
+Device-/Work-Start-/Work-Finish-Mechanismen ein. Deshalb konnte dieser
+historische Start noch ohne `.keycore-device.json` arbeitsbereit werden.
+
+Beim anschließenden `Finish-Work-Laptop` war bereits der neue Code aktiv und
+stoppte wegen der fehlenden Bindung korrekt fail-closed. Nach der einmaligen
+expliziten Bindung als `LAPTOP` meldete der zweite Finish-Lauf
+`ÜBERGABEBEREIT`: Working Tree sauber, Ahead/Behind jeweils 0, 900 Tests
+bestanden, 151 übersprungen, Format, Lint, Typprüfung und Secret-Scan grün und
+der Stack ohne Verlust der Docker-Volumes oder lokalen Daten gestoppt. Dies war
+keine Start-/Finish-Asymmetrie des aktuellen Codes, sondern ausschließlich die
+Versionsgrenze beim erstmaligen Laptop-Wechsel.
 
 ## E. Wechsel Laptop zu PC 1
 

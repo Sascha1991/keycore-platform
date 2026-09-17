@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Documented the explicitly authorized accompanying storefront-brand cleanup
+  from the retired `KeyPlanet` name to `KeyRaNo`. `KeyCore` remains the backend
+  and platform name; this scope extension is intentionally included with the
+  multi-device pull request.
+
 - Extended the repository-driven multi-device workflow to PC 1, PC 2 and
   Laptop with local non-authenticating device IDs, lossless Fast-Forward-only
   Start-Work, check-and-handoff Finish-Work, and guarded PostgreSQL review-data

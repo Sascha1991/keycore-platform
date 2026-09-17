@@ -70,6 +70,12 @@ Git. PostgreSQL review data moves only through the explicit
 `dev:db-export`/`dev:db-import` workflow in the development guide; secrets are
 never exported automatically.
 
+Each clone must be bound once with `npm run dev:device -- PC-1|PC-2|LAPTOP`
+before its first Start-Work command. Start-Work and Finish-Work fail closed when
+the binding is missing, invalid, or different from the requested device. They
+must never create or overwrite the binding automatically; follow the explicit
+new-device onboarding procedure instead.
+
 ## Preferred Implementation Style
 
 - PHP 8.3+ for WordPress and WooCommerce integration.
