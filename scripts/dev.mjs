@@ -1,29 +1,51 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream, existsSync } from "node:fs";
+import {
+  mkdir,
+  readFile,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
 import {
   COMPOSE_FILE,
+  DEVICE_CONFIG_PATH,
   ENV_TEMPLATE_PATH,
+  IMPORT_CONFIRMATION,
   LOCAL_ENV_PATH,
   REQUIRED_NODE_VERSION,
   REQUIRED_NPM_MAJOR,
+  assertImportConfirmation,
+  assertRequestedDevice,
   composeArgs,
+  createTransferManifest,
   createLocalEnvValues,
   expectedServices,
+  finishDecision,
+  gitStartDecision,
+  isPathInside,
   logsArgs,
+  normalizeDeviceId,
+  parseChecksumFile,
   parseAheadBehind,
   parseComposePs,
+  parseDeviceConfig,
   parseEnv,
   renderLocalEnv,
   serviceReadiness,
   stopArgs,
   toolchainReport,
+  transferSidecarPaths,
   validateLocalEnv,
+  validateTransferManifest,
 } from "./dev-tools.mjs";
 
 const command = process.argv[2] ?? "help";
@@ -180,6 +202,155 @@ const createLocalEnv = async () => {
   return true;
 };
 
+const configureDevice = async (requestedDeviceId) => {
+  const requested = normalizeDeviceId(requestedDeviceId);
+  if (existsSync(DEVICE_CONFIG_PATH)) {
+    const configured = parseDeviceConfig(
+      await readFile(DEVICE_CONFIG_PATH, "utf8"),
+    );
+    assertRequestedDevice(configured.deviceId, requested);
+    console.log(`Lokale Geräte-ID bleibt ${configured.deviceId}.`);
+    return configured;
+  }
+  const config = Object.freeze({ deviceId: requested, version: 1 });
+  await writeFile(DEVICE_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+  });
+  console.log(`Lokale Geräte-ID ${requested} wurde eingerichtet.`);
+  return config;
+};
+
+const loadDeviceConfig = async (requestedDeviceId) => {
+  if (!existsSync(DEVICE_CONFIG_PATH)) {
+    throw new Error(
+      `${DEVICE_CONFIG_PATH} fehlt. Einmalig "npm run dev:device -- PC-1|PC-2|LAPTOP" ausführen.`,
+    );
+  }
+  const config = parseDeviceConfig(await readFile(DEVICE_CONFIG_PATH, "utf8"));
+  if (requestedDeviceId) {
+    assertRequestedDevice(config.deviceId, requestedDeviceId);
+  }
+  return config;
+};
+
+const assertExpectedRemote = () => {
+  const remote = capture("git", ["remote", "get-url", "origin"]);
+  if (
+    !/^(?:https:\/\/github\.com\/|git@github\.com:)Sascha1991\/keycore-platform(?:\.git)?$/u.test(
+      remote,
+    )
+  ) {
+    throw new Error("origin verweist nicht auf Sascha1991/keycore-platform.");
+  }
+};
+
+const gitSnapshot = () => {
+  const status = capture("git", ["status", "--porcelain"]);
+  const upstreamResult = run(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    { allowFailure: true, capture: true },
+  );
+  if (upstreamResult.status !== 0) {
+    return Object.freeze({
+      ahead: 0,
+      behind: 0,
+      dirty: Boolean(status),
+      hasUpstream: false,
+      status,
+      upstream: "",
+    });
+  }
+  const upstream = upstreamResult.stdout.trim();
+  const counts = parseAheadBehind(
+    capture("git", [
+      "rev-list",
+      "--left-right",
+      "--count",
+      `${upstream}...HEAD`,
+    ]),
+  );
+  return Object.freeze({
+    ...counts,
+    dirty: Boolean(status),
+    hasUpstream: true,
+    status,
+    upstream,
+  });
+};
+
+const sha256File = (filePath) =>
+  new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(filePath);
+    stream.on("error", reject);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+
+const safeUnlink = async (filePath) => {
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+};
+
+const databaseCoordinates = (env) => {
+  const databaseUrl = new URL(env.KEYCORE_DATABASE_URL);
+  return Object.freeze({
+    database: decodeURIComponent(databaseUrl.pathname.replace(/^\//u, "")),
+    user: decodeURIComponent(databaseUrl.username),
+  });
+};
+
+const postgresContainerId = () => {
+  const containerId = capture("docker", composeArgs("ps", "-q", "postgres"));
+  if (!containerId)
+    throw new Error("Der lokale PostgreSQL-Container läuft nicht.");
+  return containerId;
+};
+
+const migrationIdentity = (env) => {
+  const { database, user } = databaseCoordinates(env);
+  const result = capture(
+    "docker",
+    composeArgs(
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      user,
+      "-d",
+      database,
+      "-At",
+      "-c",
+      "SELECT count(*)::text || '|' || COALESCE(max(version)::text, '') FROM keycore_migrations;",
+    ),
+  );
+  const [count, latest] = result.split("|");
+  return Object.freeze({
+    count: Number.parseInt(count ?? "0", 10),
+    latest: latest ?? "",
+  });
+};
+
+const transferDirectoryFrom = (requestedPath) => {
+  const directory = path.resolve(
+    requestedPath || path.join(os.homedir(), "KeyCore-Transfers"),
+  );
+  if (isPathInside(root, directory)) {
+    throw new Error(
+      "Der Transferordner muss außerhalb des Repositories liegen.",
+    );
+  }
+  return directory;
+};
+
+const transferStamp = () => new Date().toISOString().replace(/[:.]/gu, "-");
+
 const compose = (args, options = {}) =>
   run("docker", composeArgs(...args), options);
 
@@ -205,6 +376,188 @@ const inspectVolumeState = (env) => {
     );
   }
   return existing.length === 0 ? "fresh" : "existing";
+};
+
+const createDatabaseExport = async ({
+  directory,
+  deviceId,
+  label = "transfer",
+}) => {
+  const env = await loadLocalEnv();
+  const { database, user } = databaseCoordinates(env);
+  const targetDirectory = transferDirectoryFrom(directory);
+  await mkdir(targetDirectory, { recursive: true });
+  const fileName = `keycore-postgres-${label}-${transferStamp()}.dump`;
+  const dumpPath = path.join(targetDirectory, fileName);
+  const { checksumPath, manifestPath } = transferSidecarPaths(dumpPath);
+  for (const target of [dumpPath, checksumPath, manifestPath]) {
+    if (existsSync(target))
+      throw new Error(`Zieldatei existiert bereits: ${target}`);
+  }
+  try {
+    compose([
+      "exec",
+      "-T",
+      "postgres",
+      "pg_isready",
+      "-U",
+      user,
+      "-d",
+      database,
+    ]);
+    const identity = migrationIdentity(env);
+    const containerId = postgresContainerId();
+    const containerDump = `/tmp/${fileName}`;
+    try {
+      compose([
+        "exec",
+        "-T",
+        "postgres",
+        "pg_dump",
+        "-U",
+        user,
+        "-d",
+        database,
+        "--format=custom",
+        "--no-owner",
+        "--no-privileges",
+        `--file=${containerDump}`,
+      ]);
+      run("docker", ["cp", `${containerId}:${containerDump}`, dumpPath]);
+    } finally {
+      compose(["exec", "-T", "postgres", "rm", "-f", containerDump], {
+        allowFailure: true,
+      });
+    }
+
+    const dumpStat = await stat(dumpPath);
+    if (!dumpStat.isFile() || dumpStat.size === 0) {
+      throw new Error("PostgreSQL-Dump ist leer oder ungültig.");
+    }
+    const sha256 = await sha256File(dumpPath);
+    const manifest = createTransferManifest({
+      branch: capture("git", ["branch", "--show-current"]),
+      commit: capture("git", ["rev-parse", "HEAD"]),
+      createdAt: new Date().toISOString(),
+      deviceId,
+      dumpFile: fileName,
+      migrationCount: identity.count,
+      migrationLatest: identity.latest,
+      sha256,
+    });
+    await writeFile(checksumPath, `${sha256}  ${fileName}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    console.log(`PostgreSQL-Transferpaket erstellt: ${dumpPath}`);
+    console.log(
+      "SHA-256 und Manifest wurden erstellt; keine Secrets ausgegeben.",
+    );
+    return Object.freeze({ dumpPath, manifest });
+  } catch (error) {
+    await Promise.all(
+      [dumpPath, checksumPath, manifestPath].map((target) =>
+        safeUnlink(target),
+      ),
+    );
+    throw error;
+  }
+};
+
+const copyDumpToContainer = (dumpPath, containerPath) => {
+  const containerId = postgresContainerId();
+  run("docker", ["cp", dumpPath, `${containerId}:${containerPath}`]);
+};
+
+const restoreContainerDump = (env, containerPath) => {
+  const { database, user } = databaseCoordinates(env);
+  compose([
+    "exec",
+    "-T",
+    "postgres",
+    "dropdb",
+    "-U",
+    user,
+    "--force",
+    "--if-exists",
+    database,
+  ]);
+  compose([
+    "exec",
+    "-T",
+    "postgres",
+    "createdb",
+    "-U",
+    user,
+    "-O",
+    user,
+    database,
+  ]);
+  compose([
+    "exec",
+    "-T",
+    "postgres",
+    "pg_restore",
+    "-U",
+    user,
+    "-d",
+    database,
+    "--no-owner",
+    "--no-privileges",
+    "--exit-on-error",
+    containerPath,
+  ]);
+};
+
+const validateImportPackage = async (dumpArgument, confirmation) => {
+  assertImportConfirmation(confirmation);
+  if (!dumpArgument) throw new Error("Pfad zum PostgreSQL-Dump fehlt.");
+  const dumpPath = path.resolve(dumpArgument);
+  if (isPathInside(root, dumpPath)) {
+    throw new Error("Der PostgreSQL-Dump darf nicht im Repository liegen.");
+  }
+  const { checksumPath, manifestPath } = transferSidecarPaths(dumpPath);
+  for (const required of [dumpPath, checksumPath, manifestPath]) {
+    if (!existsSync(required))
+      throw new Error(`Transferdatei fehlt: ${required}`);
+  }
+  const [checksumContent, manifestContent, actualSha256] = await Promise.all([
+    readFile(checksumPath, "utf8"),
+    readFile(manifestPath, "utf8"),
+    sha256File(dumpPath),
+  ]);
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestContent);
+  } catch {
+    throw new Error("Transfermanifest enthält kein gültiges JSON.");
+  }
+  const dumpFile = path.basename(dumpPath);
+  const sidecarSha256 = parseChecksumFile(checksumContent, dumpFile);
+  const errors = validateTransferManifest({
+    actualSha256,
+    dumpFile,
+    manifest,
+    sidecarSha256,
+  });
+  if (errors.length > 0) {
+    throw new Error(`Transferpaket ist ungültig: ${errors.join(", ")}`);
+  }
+  const commitCheck = run(
+    "git",
+    ["merge-base", "--is-ancestor", manifest.commit, "HEAD"],
+    { allowFailure: true, capture: true },
+  );
+  if (commitCheck.status !== 0) {
+    throw new Error(
+      "Der Dump-Commit ist kein Vorfahr des aktuellen HEAD. Import abgebrochen.",
+    );
+  }
+  return Object.freeze({ dumpPath, manifest });
 };
 
 const waitForServices = async () => {
@@ -338,8 +691,201 @@ const check = async () => {
   compose(["config", "--quiet"]);
 };
 
+const startWork = async (requestedDeviceId) => {
+  const device = await loadDeviceConfig(requestedDeviceId);
+  assertExpectedRemote();
+  const beforeFetch = gitSnapshot();
+  const initialDecision = gitStartDecision(beforeFetch);
+  if (initialDecision === "BLOCK_DIRTY") {
+    throw new Error(
+      "Start-Work abgebrochen: lokale Änderungen müssen zuerst bewusst gesichert werden.",
+    );
+  }
+  if (initialDecision === "BLOCK_NO_UPSTREAM") {
+    throw new Error("Start-Work abgebrochen: kein Upstream konfiguriert.");
+  }
+
+  run("git", ["fetch", "origin", "--prune"]);
+  const afterFetch = gitSnapshot();
+  const decision = gitStartDecision(afterFetch);
+  if (decision === "BLOCK_DIVERGED") {
+    throw new Error(
+      "Start-Work abgebrochen: lokaler Branch und Upstream sind divergiert. Kein stiller Merge wird durchgeführt.",
+    );
+  }
+  if (decision === "FAST_FORWARD") {
+    run("git", ["merge", "--ff-only", afterFetch.upstream]);
+    return run(process.execPath, [
+      path.join(root, "scripts/dev.mjs"),
+      "work-start",
+      device.deviceId,
+    ]);
+  }
+
+  await setup();
+  const finalSnapshot = gitSnapshot();
+  console.log(
+    `ARBEITSBEREIT: ${device.deviceId}; ${capture("git", ["branch", "--show-current"])} @ ${capture("git", ["rev-parse", "HEAD"])}; lokal voraus ${finalSnapshot.ahead}.`,
+  );
+};
+
+const finishWork = async (requestedDeviceId) => {
+  const device = await loadDeviceConfig(requestedDeviceId);
+  assertExpectedRemote();
+  handoff();
+  assertPrerequisites();
+  await check();
+  run("git", ["fetch", "origin", "--prune"]);
+  const snapshot = gitSnapshot();
+  const decision = finishDecision(snapshot);
+  if (decision !== "SAFE_TO_HANDOFF") {
+    const reasons = {
+      BLOCK_AHEAD:
+        "lokale Commits sind noch nicht gepusht; Push bleibt eine bewusste Human-Aktion",
+      BLOCK_BEHIND: "der lokale Branch liegt hinter dem Upstream",
+      BLOCK_DIRTY:
+        "der Working Tree enthält ungesicherte Änderungen; Commit bleibt eine bewusste Human-Aktion",
+      BLOCK_NO_UPSTREAM: "kein Upstream ist konfiguriert",
+    };
+    throw new Error(
+      `Finish-Work geprüft, aber Geräteübergabe ist blockiert: ${reasons[decision]}. Der Stack bleibt gestartet.`,
+    );
+  }
+  run("docker", stopArgs());
+  console.log(
+    `ÜBERGABEBEREIT: ${device.deviceId}; Working Tree sauber, Upstream synchron, Stack kontrolliert gestoppt.`,
+  );
+};
+
+const databaseExport = async (requestedDirectory) => {
+  assertPrerequisites();
+  assertExpectedRemote();
+  const snapshot = gitSnapshot();
+  if (snapshot.dirty) {
+    throw new Error(
+      "DB-Export abgebrochen: der Working Tree muss für eindeutige Commit-Metadaten sauber sein.",
+    );
+  }
+  const device = await loadDeviceConfig();
+  await loadLocalEnv();
+  return createDatabaseExport({
+    deviceId: device.deviceId,
+    directory: requestedDirectory,
+  });
+};
+
+const databaseImport = async (dumpArgument, confirmation) => {
+  assertImportConfirmation(confirmation);
+  assertPrerequisites();
+  assertExpectedRemote();
+  const snapshot = gitSnapshot();
+  if (snapshot.dirty) {
+    throw new Error(
+      "DB-Import abgebrochen: der Working Tree muss vor einem Restore sauber sein.",
+    );
+  }
+  const device = await loadDeviceConfig();
+  const transfer = await validateImportPackage(dumpArgument, confirmation);
+  const env = await loadLocalEnv();
+  const { database, user } = databaseCoordinates(env);
+  compose(["exec", "-T", "postgres", "pg_isready", "-U", user, "-d", database]);
+
+  const importContainerPath = `/tmp/keycore-import-${process.pid}.dump`;
+  copyDumpToContainer(transfer.dumpPath, importContainerPath);
+  try {
+    compose([
+      "exec",
+      "-T",
+      "postgres",
+      "pg_restore",
+      "--list",
+      importContainerPath,
+    ]);
+  } catch (error) {
+    compose(["exec", "-T", "postgres", "rm", "-f", importContainerPath], {
+      allowFailure: true,
+    });
+    throw new Error(`Dump-Struktur ist ungültig: ${error.message}`);
+  }
+
+  const recoveryContainerPath = `/tmp/keycore-recovery-${process.pid}.dump`;
+  let safety;
+  try {
+    safety = await createDatabaseExport({
+      deviceId: device.deviceId,
+      directory: path.dirname(transfer.dumpPath),
+      label: "pre-import-recovery",
+    });
+    copyDumpToContainer(safety.dumpPath, recoveryContainerPath);
+  } catch (error) {
+    compose(
+      [
+        "exec",
+        "-T",
+        "postgres",
+        "rm",
+        "-f",
+        importContainerPath,
+        recoveryContainerPath,
+      ],
+      { allowFailure: true },
+    );
+    throw error;
+  }
+  compose(["stop", "keycore-storefront", "keycore-admin"]);
+  try {
+    restoreContainerDump(env, importContainerPath);
+    run("npm", ["run", "db:migrate"], { env });
+    run("npm", ["run", "db:status"], { env });
+    await startStack();
+    await printStatus(env);
+  } catch (error) {
+    console.error(
+      "Import fehlgeschlagen. Die lokale PostgreSQL-Datenbank wird aus dem Sicherheitsbackup wiederhergestellt.",
+    );
+    try {
+      restoreContainerDump(env, recoveryContainerPath);
+      await startStack();
+    } catch (recoveryError) {
+      throw new Error(
+        `Import und automatische Recovery fehlgeschlagen. Writer bleiben gestoppt. Sicherheitsbackup: ${safety.dumpPath}. Ursache: ${recoveryError.message}`,
+      );
+    }
+    throw new Error(
+      `Import fehlgeschlagen; der vorherige Datenbankzustand wurde wiederhergestellt. Ursache: ${error.message}`,
+    );
+  } finally {
+    compose(
+      [
+        "exec",
+        "-T",
+        "postgres",
+        "rm",
+        "-f",
+        importContainerPath,
+        recoveryContainerPath,
+      ],
+      { allowFailure: true },
+    );
+  }
+  console.log(
+    `PostgreSQL-Import abgeschlossen. Sicherheitsbackup bleibt erhalten: ${safety.dumpPath}`,
+  );
+};
+
 const main = async () => {
   assertRepositoryRoot();
+  if (command === "device") return configureDevice(commandArgs[0]);
+  if (command === "work-start") return startWork(commandArgs[0]);
+  if (command === "work-finish") return finishWork(commandArgs[0]);
+  if (command === "db-export") return databaseExport(commandArgs[0]);
+  if (command === "db-import") {
+    const confirmationIndex = commandArgs.indexOf("--confirm");
+    return databaseImport(
+      commandArgs[0],
+      confirmationIndex >= 0 ? commandArgs[confirmationIndex + 1] : undefined,
+    );
+  }
   if (command === "prerequisites") return assertPrerequisites();
   if (command === "setup") return setup();
   if (command === "start") {
@@ -368,7 +914,7 @@ const main = async () => {
   }
   if (command === "handoff") return handoff();
   console.log(
-    "Verwendung: npm run dev:{setup|start|status|logs|check|stop|handoff|prerequisites}",
+    "Verwendung: npm run dev:{device|work-start|work-finish|db-export|db-import|setup|start|status|logs|check|stop|handoff|prerequisites}",
   );
 };
 

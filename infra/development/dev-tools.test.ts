@@ -3,18 +3,31 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  IMPORT_CONFIRMATION,
   LOG_TAIL,
+  assertImportConfirmation,
+  assertRequestedDevice,
   composeArgs,
+  createTransferManifest,
   createLocalEnvValues,
+  finishDecision,
+  gitStartDecision,
+  isPathInside,
   logsArgs,
+  normalizeDeviceId,
   parseAheadBehind,
+  parseChecksumFile,
   parseComposePs,
+  parseDeviceConfig,
   parseEnv,
   renderLocalEnv,
   serviceReadiness,
   stopArgs,
   toolchainReport,
+  transferSecretDependencies,
+  transferSidecarPaths,
   validateLocalEnv,
+  validateTransferManifest,
 } from "../../scripts/dev-tools.mjs";
 
 const deterministicRandom = (size: number): Buffer =>
@@ -135,6 +148,137 @@ describe("multi-device development tooling", () => {
     expect(parseAheadBehind("3 5")).toEqual({ behind: 3, ahead: 5 });
   });
 
+  it("binds workflows to an explicit local device without hardware fingerprinting", () => {
+    expect(normalizeDeviceId("pc-1")).toBe("PC-1");
+    expect(parseDeviceConfig('{"version":1,"deviceId":"LAPTOP"}')).toEqual({
+      deviceId: "LAPTOP",
+      version: 1,
+    });
+    expect(assertRequestedDevice("PC-2", "PC-2")).toBe("PC-2");
+    expect(() => assertRequestedDevice("PC-2", "PC-1")).toThrow(
+      "Geräte-ID stimmt nicht überein",
+    );
+    expect(() => normalizeDeviceId("WORKSTATION-9")).toThrow(
+      "Ungültige Geräte-ID",
+    );
+  });
+
+  it("selects only lossless Start-Work synchronization paths", () => {
+    expect(
+      gitStartDecision({
+        ahead: 0,
+        behind: 1,
+        dirty: false,
+        hasUpstream: true,
+      }),
+    ).toBe("FAST_FORWARD");
+    expect(
+      gitStartDecision({ ahead: 0, behind: 0, dirty: true, hasUpstream: true }),
+    ).toBe("BLOCK_DIRTY");
+    expect(
+      gitStartDecision({
+        ahead: 1,
+        behind: 1,
+        dirty: false,
+        hasUpstream: true,
+      }),
+    ).toBe("BLOCK_DIVERGED");
+    expect(
+      gitStartDecision({
+        ahead: 2,
+        behind: 0,
+        dirty: false,
+        hasUpstream: true,
+      }),
+    ).toBe("READY");
+  });
+
+  it("allows Finish-Work handoff only when Git is clean and synchronized", () => {
+    expect(
+      finishDecision({ ahead: 0, behind: 0, dirty: false, hasUpstream: true }),
+    ).toBe("SAFE_TO_HANDOFF");
+    expect(
+      finishDecision({ ahead: 0, behind: 0, dirty: true, hasUpstream: true }),
+    ).toBe("BLOCK_DIRTY");
+    expect(
+      finishDecision({ ahead: 1, behind: 0, dirty: false, hasUpstream: true }),
+    ).toBe("BLOCK_AHEAD");
+    expect(
+      finishDecision({ ahead: 0, behind: 1, dirty: false, hasUpstream: true }),
+    ).toBe("BLOCK_BEHIND");
+  });
+
+  it("validates PostgreSQL transfer manifests, hashes and paths with spaces", () => {
+    const dumpPath =
+      "C:\\Users\\Example User\\KeyCore Transfers\\keycore-postgres-review.dump";
+    const sidecars = transferSidecarPaths(dumpPath);
+    const sha256 = "a".repeat(64);
+    const manifest = createTransferManifest({
+      branch: "feature/example",
+      commit: "b".repeat(40),
+      createdAt: "2026-09-16T12:00:00.000Z",
+      deviceId: "PC-1",
+      dumpFile: "keycore-postgres-review.dump",
+      migrationCount: 36,
+      migrationLatest: "036",
+      sha256,
+    });
+
+    expect(sidecars.checksumPath).toBe(`${dumpPath}.sha256`);
+    expect(sidecars.manifestPath).toBe(`${dumpPath}.manifest.json`);
+    expect(
+      parseChecksumFile(
+        `${sha256}  keycore-postgres-review.dump\n`,
+        "keycore-postgres-review.dump",
+      ),
+    ).toBe(sha256);
+    expect(() =>
+      parseChecksumFile("not-a-checksum", "keycore-postgres-review.dump"),
+    ).toThrow("SHA-256-Datei ist ungültig");
+    expect(
+      validateTransferManifest({
+        actualSha256: sha256,
+        dumpFile: "keycore-postgres-review.dump",
+        manifest,
+        sidecarSha256: sha256,
+      }),
+    ).toEqual([]);
+    expect(
+      validateTransferManifest({
+        actualSha256: "c".repeat(64),
+        dumpFile: "keycore-postgres-review.dump",
+        manifest,
+        sidecarSha256: sha256,
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        "MANIFEST_HASH_MISMATCH",
+        "SIDECAR_HASH_MISMATCH",
+      ]),
+    );
+    expect(isPathInside("C:\\repo", dumpPath)).toBe(false);
+    expect(isPathInside("C:\\repo", "C:\\repo\\review.dump")).toBe(true);
+  });
+
+  it("requires explicit destructive import confirmation", () => {
+    expect(() => assertImportConfirmation(undefined)).toThrow(
+      IMPORT_CONFIRMATION,
+    );
+    expect(() => assertImportConfirmation("yes")).toThrow(IMPORT_CONFIRMATION);
+    expect(() => assertImportConfirmation(IMPORT_CONFIRMATION)).not.toThrow();
+  });
+
+  it("documents only PostgreSQL-transfer-relevant secret dependencies", () => {
+    expect(Object.keys(transferSecretDependencies).sort()).toEqual([
+      "KEYCORE_FULFILLMENT_MASTER_KEY",
+      "KEYCORE_FULFILLMENT_MASTER_KEY_ID",
+      "KEYRANO_STAGING_GUEST_CLAIM_CODE",
+    ]);
+    expect(transferSecretDependencies).not.toHaveProperty(
+      "KEYRANO_STAGING_BROWSER_MASTER_KEY",
+    );
+  });
+
   it("keeps the handoff command read-only", () => {
     const cli = readFileSync("scripts/dev.mjs", "utf8");
     const handoffBlock = cli.slice(
@@ -147,12 +291,77 @@ describe("multi-device development tooling", () => {
     expect(handoffBlock).not.toMatch(/fetch|pull|push|reset|stash|commit/u);
   });
 
+  it("uses fast-forward-only Start-Work and never commits or pushes on Finish-Work", () => {
+    const cli = readFileSync("scripts/dev.mjs", "utf8");
+    const startBlock = cli.slice(
+      cli.indexOf("const startWork"),
+      cli.indexOf("const finishWork"),
+    );
+    const finishBlock = cli.slice(
+      cli.indexOf("const finishWork"),
+      cli.indexOf("const databaseExport"),
+    );
+
+    expect(startBlock).toContain('"merge", "--ff-only"');
+    expect(startBlock).not.toMatch(/\b(?:pull|reset|stash)\b/u);
+    expect(finishBlock).not.toMatch(
+      /run\("git", \["(?:commit|push|reset|stash)"/u,
+    );
+    expect(finishBlock).toContain("Der Stack bleibt gestartet");
+  });
+
+  it("uses safe PostgreSQL custom dump, restore and recovery primitives", () => {
+    const cli = readFileSync("scripts/dev.mjs", "utf8");
+
+    expect(cli).toContain('"--format=custom"');
+    expect(cli).toContain('"--no-owner"');
+    expect(cli).toContain('"--no-privileges"');
+    expect(cli).toContain('"--exit-on-error"');
+    expect(cli).toContain('label: "pre-import-recovery"');
+    expect(cli).toContain("automatische Recovery");
+    expect(cli).not.toContain("console.log(env)");
+  });
+
+  it("preserves the existing Admin credential bootstrap fix", () => {
+    const bootstrap = readFileSync(
+      "scripts/staging-admin-bootstrap-service.ts",
+      "utf8",
+    );
+    const envExample = readFileSync("infra/docker/staging.env.example", "utf8");
+
+    expect(bootstrap).toContain("ON CONFLICT (id) DO NOTHING");
+    expect(bootstrap).toContain("identity.email_normalized IS NULL");
+    expect(bootstrap).toContain("input.credential.rotateExisting === true");
+    expect(envExample).toContain(
+      "KEYRANO_STAGING_ADMIN_LOGIN_PASSWORD_ROTATE=false",
+    );
+  });
+
+  it("maps all six Codex device commands to the repository CLI", () => {
+    const agents = readFileSync("AGENTS.md", "utf8");
+    for (const [human, script] of [
+      ["Start-Work-PC-1", "npm run dev:work-start -- PC-1"],
+      ["Finish-Work-PC-1", "npm run dev:work-finish -- PC-1"],
+      ["Start-Work-PC-2", "npm run dev:work-start -- PC-2"],
+      ["Finish-Work-PC-2", "npm run dev:work-finish -- PC-2"],
+      ["Start-Work-Laptop", "npm run dev:work-start -- LAPTOP"],
+      ["Finish-Work-Laptop", "npm run dev:work-finish -- LAPTOP"],
+    ]) {
+      expect(agents).toContain(human);
+      expect(agents).toContain(script);
+    }
+    expect(agents).toContain("KeyCore");
+    expect(agents).toContain("KeyRaNo");
+  });
+
   it("protects known machine-local files through tracked ignore rules", () => {
     const ignore = readFileSync(".gitignore", "utf8");
 
     expect(ignore).toContain("infra/docker/staging.local.env");
+    expect(ignore).toContain(".keycore-device.json");
     expect(ignore).toContain("Server Login Staging Daten.txt");
     expect(ignore).toContain("keycore-postgres-*.dump");
+    expect(ignore).toContain("keycore-postgres-*.dump.manifest.json");
   });
 
   it("uses the existing compose stack for normal starts", () => {
@@ -193,27 +402,27 @@ describe("multi-device development tooling", () => {
     expect(prettier.endOfLine).toBe("auto");
   });
 
-  it("documents every required PC 1 and PC 2 workflow with real commands", () => {
+  it("documents the two ready devices and the PC 2 onboarding workflow", () => {
     const guide = readFileSync(
       "docs/development/MULTI-DEVICE-DEVELOPMENT.md",
       "utf8",
     );
 
     for (const heading of [
-      "## A. PC 2 - Ersteinrichtung",
+      "## A. PC 2 - New-Device-Onboarding",
       "## B. PC 1 - Normaler Arbeitsbeginn",
-      "## C. Wechsel PC 1 zu PC 2",
-      "## D. PC 2 - Normaler Arbeitsbeginn",
-      "## E. Wechsel PC 2 zu PC 1",
+      "## C. Wechsel PC 1 zum Laptop",
+      "## D. Laptop - Normaler Arbeitsbeginn",
+      "## E. Wechsel Laptop zu PC 1",
       "## F. Arbeitsende ohne Gerätewechsel",
       "## G. Tests und Prüfungen",
       "## H. Status, Logs und Diagnose",
       "## I. Git-Fehler und Sonderfälle",
       "## J. Docker- und Startprobleme",
       "## K. Datenbank- und Migrationsprobleme",
-      "## L. Optionale PostgreSQL-Kopie PC 1 zu PC 2",
+      "## L. Bewusster PostgreSQL-Review-Datentransfer",
       "## M. Was tun, wenn sich das Projekt geändert hat?",
-      "## N. Checklisten PC 1 und PC 2",
+      "## N. Checklisten PC 1, PC 2 und Laptop",
     ]) {
       expect(guide).toContain(heading);
     }
@@ -227,11 +436,16 @@ describe("multi-device development tooling", () => {
       "logs",
       "check",
       "stop",
+      "device",
+      "work-start",
+      "work-finish",
+      "db-export",
+      "db-import",
     ]) {
       expect(guide).toContain(`npm run dev:${script}`);
     }
     const transferSection = guide.slice(
-      guide.indexOf("## L. Optionale PostgreSQL-Kopie PC 1 zu PC 2"),
+      guide.indexOf("## L. Bewusster PostgreSQL-Review-Datentransfer"),
       guide.indexOf("## M. Was tun, wenn sich das Projekt geändert hat?"),
     );
     expect(transferSection).toContain(
@@ -243,5 +457,9 @@ describe("multi-device development tooling", () => {
     expect(transferSection).toContain(
       "`KEYRANO_STAGING_ADMIN_SESSION_HASH_SECRET` darf deshalb PC-2-lokal bleiben",
     );
+    expect(guide).toContain("`PC-1` ist der Haupt-PC");
+    expect(guide).toContain("`LAPTOP` ist vollständig eingerichtet");
+    expect(guide).toContain("`PC-2` ist der Büro-PC in der Matrix Bochum");
+    expect(guide).toContain("Der Laptop ist kein Onboarding-Ziel mehr");
   });
 });

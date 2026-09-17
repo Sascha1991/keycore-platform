@@ -4,13 +4,13 @@ Codex-ready repository specification for the modular German KeyCore platform.
 
 ## Primary Goal
 
-Build the production-grade KeyPlanet storefront that imports the complete supplier catalog, publishes only offers that are verifiably usable in Germany, sells under the shop's own brand, automatically purchases keys from approved connected suppliers, issues invoices, delivers keys securely, and supports future suppliers through a common adapter architecture.
+Build the production-grade KeyRaNo storefront that imports the complete supplier catalog, publishes only offers that are verifiably usable in Germany, sells under the shop's own brand, automatically purchases keys from approved connected suppliers, issues invoices, delivers keys securely, and supports future suppliers through a common adapter architecture.
 
 ## Status
 
 - Specification version: 1.0.2
 - Implementation status: Specification hardening complete; development tasks ready
-- Public brand: KeyPlanet
+- Public brand: KeyRaNo
 - Initial domain: key-planet.de
 - Internal platform: KeyCore
 - Repository: keycore-platform

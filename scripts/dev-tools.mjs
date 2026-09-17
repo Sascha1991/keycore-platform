@@ -1,11 +1,16 @@
 import { randomBytes } from "node:crypto";
+import path from "node:path";
 
 export const REQUIRED_NODE_VERSION = "22.22.0";
 export const REQUIRED_NPM_MAJOR = 11;
 export const LOCAL_ENV_PATH = "infra/docker/staging.local.env";
 export const ENV_TEMPLATE_PATH = "infra/docker/staging.env.example";
 export const COMPOSE_FILE = "infra/docker/compose.staging.yaml";
+export const DEVICE_CONFIG_PATH = ".keycore-device.json";
+export const IMPORT_CONFIRMATION = "DESTROY-LOCAL-POSTGRES";
 export const LOG_TAIL = 200;
+export const TRANSFER_FORMAT_VERSION = 1;
+export const VALID_DEVICE_IDS = Object.freeze(["PC-1", "PC-2", "LAPTOP"]);
 
 export const expectedServices = Object.freeze([
   "postgres",
@@ -267,3 +272,155 @@ export const parseAheadBehind = (value) => {
     behind: Number.parseInt(behindRaw ?? "0", 10),
   });
 };
+
+export const normalizeDeviceId = (value) => {
+  const normalized = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  if (!VALID_DEVICE_IDS.includes(normalized)) {
+    throw new Error(
+      `Ungültige Geräte-ID. Erlaubt: ${VALID_DEVICE_IDS.join(", ")}.`,
+    );
+  }
+  return normalized;
+};
+
+export const parseDeviceConfig = (content) => {
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error(`${DEVICE_CONFIG_PATH} enthält kein gültiges JSON.`);
+  }
+  if (parsed?.version !== 1) {
+    throw new Error(`${DEVICE_CONFIG_PATH} verwendet eine unbekannte Version.`);
+  }
+  return Object.freeze({
+    deviceId: normalizeDeviceId(parsed.deviceId),
+    version: 1,
+  });
+};
+
+export const assertRequestedDevice = (
+  configuredDeviceId,
+  requestedDeviceId,
+) => {
+  const configured = normalizeDeviceId(configuredDeviceId);
+  const requested = normalizeDeviceId(requestedDeviceId);
+  if (configured !== requested) {
+    throw new Error(
+      `Geräte-ID stimmt nicht überein: lokal ${configured}, angefordert ${requested}.`,
+    );
+  }
+  return configured;
+};
+
+export const gitStartDecision = ({ ahead, behind, dirty, hasUpstream }) => {
+  if (dirty) return "BLOCK_DIRTY";
+  if (!hasUpstream) return "BLOCK_NO_UPSTREAM";
+  if (ahead > 0 && behind > 0) return "BLOCK_DIVERGED";
+  if (behind > 0) return "FAST_FORWARD";
+  return "READY";
+};
+
+export const finishDecision = ({ ahead, behind, dirty, hasUpstream }) => {
+  if (dirty) return "BLOCK_DIRTY";
+  if (!hasUpstream) return "BLOCK_NO_UPSTREAM";
+  if (ahead > 0) return "BLOCK_AHEAD";
+  if (behind > 0) return "BLOCK_BEHIND";
+  return "SAFE_TO_HANDOFF";
+};
+
+export const isPathInside = (parentPath, candidatePath) => {
+  const pathApi =
+    /^[A-Za-z]:[\\/]/u.test(parentPath) &&
+    /^[A-Za-z]:[\\/]/u.test(candidatePath)
+      ? path.win32
+      : path;
+  const relative = pathApi.relative(
+    pathApi.resolve(parentPath),
+    pathApi.resolve(candidatePath),
+  );
+  return (
+    relative === "" ||
+    (!relative.startsWith("..") && !pathApi.isAbsolute(relative))
+  );
+};
+
+export const transferSidecarPaths = (dumpPath) =>
+  Object.freeze({
+    checksumPath: `${dumpPath}.sha256`,
+    manifestPath: `${dumpPath}.manifest.json`,
+  });
+
+export const parseChecksumFile = (content, expectedFileName) => {
+  const match = /^([a-f0-9]{64})\s+\*?(.+)\s*$/iu.exec(content.trim());
+  if (!match || match[2] !== expectedFileName) {
+    throw new Error(
+      "Die SHA-256-Datei ist ungültig oder gehört zu einem anderen Dump.",
+    );
+  }
+  return match[1].toLowerCase();
+};
+
+export const createTransferManifest = ({
+  branch,
+  commit,
+  createdAt,
+  deviceId,
+  dumpFile,
+  migrationCount,
+  migrationLatest,
+  sha256,
+}) =>
+  Object.freeze({
+    branch,
+    commit,
+    createdAt,
+    deviceId: normalizeDeviceId(deviceId),
+    dumpFile,
+    format: "postgres-custom",
+    formatVersion: TRANSFER_FORMAT_VERSION,
+    migrationCount,
+    migrationLatest,
+    repository: "Sascha1991/keycore-platform",
+    sha256,
+  });
+
+export const validateTransferManifest = ({
+  actualSha256,
+  dumpFile,
+  manifest,
+  sidecarSha256,
+}) => {
+  const errors = [];
+  if (manifest?.formatVersion !== TRANSFER_FORMAT_VERSION)
+    errors.push("MANIFEST_VERSION_UNSUPPORTED");
+  if (manifest?.repository !== "Sascha1991/keycore-platform")
+    errors.push("MANIFEST_REPOSITORY_MISMATCH");
+  if (manifest?.format !== "postgres-custom")
+    errors.push("MANIFEST_FORMAT_INVALID");
+  if (manifest?.dumpFile !== dumpFile) errors.push("MANIFEST_DUMP_MISMATCH");
+  if (!/^[a-f0-9]{40}$/u.test(manifest?.commit ?? ""))
+    errors.push("MANIFEST_COMMIT_INVALID");
+  if (manifest?.sha256 !== actualSha256) errors.push("MANIFEST_HASH_MISMATCH");
+  if (sidecarSha256 !== actualSha256) errors.push("SIDECAR_HASH_MISMATCH");
+  return Object.freeze(errors);
+};
+
+export const assertImportConfirmation = (value) => {
+  if (value !== IMPORT_CONFIRMATION) {
+    throw new Error(
+      `Import nicht bestätigt. Erforderlich: --confirm ${IMPORT_CONFIRMATION}`,
+    );
+  }
+};
+
+export const transferSecretDependencies = Object.freeze({
+  KEYCORE_FULFILLMENT_MASTER_KEY:
+    "Nur erforderlich, wenn persistiertes Fulfillment-Material entschlüsselt werden muss.",
+  KEYCORE_FULFILLMENT_MASTER_KEY_ID:
+    "Nur erforderlich, wenn persistiertes Fulfillment-Material entschlüsselt werden muss.",
+  KEYRANO_STAGING_GUEST_CLAIM_CODE:
+    "Nur erforderlich, wenn das persistierte Guest-Claim-Fixture weiter genutzt werden soll.",
+});

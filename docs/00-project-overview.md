@@ -2,7 +2,7 @@
 
 Specification version: 1.0.2
 
-KeyCore is the internal platform behind the KeyPlanet storefront at `key-planet.de`. The platform imports supplier catalogs, publishes only offers that are positively verified as usable in Germany, sells under the KeyPlanet brand, procures keys after confirmed payment, issues invoices, and delivers product keys through a secure customer account experience.
+KeyCore is the internal platform behind the KeyRaNo storefront. The platform imports supplier catalogs, publishes only offers that are positively verified as usable in Germany, sells under the KeyRaNo brand, procures keys after confirmed payment, issues invoices, and delivers product keys through a secure customer account experience.
 
 ## Scope
 

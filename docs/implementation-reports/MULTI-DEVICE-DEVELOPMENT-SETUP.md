@@ -3,10 +3,18 @@
 ## Ergebnis
 
 KeyCore besitzt eine plattformübergreifende, PowerShell-taugliche
-Entwicklungsoberfläche für unabhängige lokale Umgebungen auf PC 1 und PC 2.
+Entwicklungsoberfläche für unabhängige lokale Umgebungen auf PC 1, PC 2 und
+Laptop.
 Sie verwendet die bestehende Full-Stack-Compose-Datei, die vorhandenen
 Migrationen, Seeds und WordPress-Bootstrap-Dienste. Es wurde keine zweite
 Runtime-Architektur und keine Datenbankmigration eingeführt.
+
+Der aktuelle Human-bestätigte Gerätestand ist asymmetrisch: PC 1 ist Haupt-PC
+und primäres Entwicklungsgerät mit der wertvollen Review-Datenbank. Der Laptop
+ist vollständig eingerichtet; lokaler Stack, die von PC 1 übertragene
+PostgreSQL-Review-Datenbank, Admin-Login und Review-Daten wurden erfolgreich
+getestet. Nur PC 2, der Büro-PC in der Matrix Bochum, benötigt noch das
+vollständige New-Device-Onboarding.
 
 ## Branch-Basis
 
@@ -18,6 +26,25 @@ Der Multi-Device-Branch und sein eigener PR bleiben von PR #62 getrennt.
 
 ## Implementierung
 
+- Die sechs Codex-Kurzbefehle `Start-Work-*` und `Finish-Work-*` sind in
+  `AGENTS.md` auf die bestehenden `dev:*`-Mechanismen abgebildet. Codex benötigt
+  dafür keinen früheren Chatverlauf.
+- `.keycore-device.json` bindet jeden Clone lokal an `PC-1`, `PC-2` oder
+  `LAPTOP`. Die Datei ist ignoriert, enthält keinen Fingerprint und besitzt
+  keinerlei Authentisierungswirkung. Eine falsche angeforderte ID bricht ab.
+- `dev:work-start` schützt lokale Änderungen, prüft das erwartete GitHub-
+  Repository, aktualisiert Remote-Referenzen und erlaubt ausschließlich
+  Fast-Forward. Danach delegiert es Toolchain, Abhängigkeiten, Compose,
+  Migrationen und Status an `dev:setup`.
+- `dev:work-finish` führt die vollständigen lokalen Checks und Handoff-
+  Diagnose aus. Es commitet und pusht nie. Nur ein sauberer und synchroner
+  Branch wird als übergabebereit gemeldet und volume-erhaltend gestoppt.
+- `dev:db-export` erzeugt außerhalb des Repositories einen PostgreSQL-Custom-
+  Dump samt SHA-256 und Manifest. `dev:db-import` prüft Hash, Manifest,
+  Repository und Commit-Kompatibilität, verlangt die exakte destruktive
+  Bestätigung, erzeugt ein Sicherheitsbackup, stoppt Writer und verwendet
+  `pg_restore --no-owner --no-privileges --exit-on-error`. Bei Fehler wird das
+  Sicherheitsbackup automatisch restauriert.
 - `dev:setup`, `dev:start`, `dev:status`, `dev:logs`, `dev:check`, `dev:stop`,
   `dev:handoff` und `dev:prerequisites` bilden die Human-Schnittstelle.
 - Das Tooling verlangt Node `22.22.0`, npm Major 11, Git, Docker und Compose v2,
@@ -42,9 +69,9 @@ Der Multi-Device-Branch und sein eigener PR bleiben von PR #62 getrennt.
 ## Daten- und Sicherheitsgrenzen
 
 Die PC-1-Volumes, Datenbanken und lokalen Konfigurationen werden nicht
-zurückgesetzt oder übernommen. Standardmäßig besitzt jeder PC eigene lokale
+zurückgesetzt. Standardmäßig besitzt jedes Gerät eigene lokale
 Daten. Die optionale PostgreSQL-Übertragung ist im Guide als separate,
-checksum-geprüfte und ausdrücklich destruktive PC-2-Restore-Operation
+checksum-geprüfte und ausdrücklich destruktive Zielgeräte-Restore-Operation
 dokumentiert. MariaDB, Redis und Secrets werden dabei nicht automatisch
 übertragen.
 Für eine bewusst restaurierte Review-Datenbank dokumentiert der Guide die
@@ -143,7 +170,43 @@ Fragmente bleiben abgelehnt.
 
 ## Offene Human-Evidenz
 
-Automatisierte und isolierte lokale Validierung ersetzt nicht die reale
-PC-2-Ersteinrichtung. Der erste Human-Schritt auf PC 2 ist die Installation bzw.
+Der Laptop-Praxistest ist abgeschlossen: Entwicklungssystem, Stack,
+PostgreSQL-Review-Daten, Admin-Login und Review-Daten funktionieren. Offene
+Human-Evidenz betrifft nur die reale PC-2-Ersteinrichtung. Der erste
+Human-Schritt auf PC 2 ist die Installation bzw.
 Auswahl von Node `22.22.0`, npm 11, Git und Docker Desktop; danach folgt Tabelle
 A in `docs/development/MULTI-DEVICE-DEVELOPMENT.md`.
+
+Der nächste empfohlene manuelle Praxistest ist das vollständige
+New-Device-Onboarding auf PC 2. Danach wird eine harmlose
+Dokumentationsänderung bewusst über Git zwischen PC 1, Laptop und PC 2
+übergeben. Ein weiterer DB-Import-Test verwendet entbehrliche synthetische
+Zieldaten oder den dokumentierten, bewusst bestätigten PC-2-Onboarding-Transfer;
+die PC-1-Review-Datenbank wird niemals als destruktives Testziel verwendet.
+
+## Workflow-Erweiterungsvalidierung
+
+- Gerätebindung auf PC 1 wurde real angelegt; eine angeforderte PC-2-ID wurde
+  abgelehnt und änderte die lokale Konfigurationsdatei nicht.
+- Ein realer Start-Work-Aufruf mit Dirty Working Tree stoppte vor Fetch,
+  Synchronisierung, npm und Docker.
+- Ein DB-Import ohne exakte Bestätigung stoppte vor Toolchain-, Datei- und
+  Datenbankzugriff. Ein DB-Export mit Dirty Working Tree stoppte vor
+  PostgreSQL-Zugriff.
+- 28 fokussierte Multi-Device-/Admin-Compose-Tests bestanden. Sie decken
+  Happy-Path-Entscheidungen, falsche Geräte-ID, Dirty/Diverged Git,
+  Finish-Handoff, Pfade mit Leerzeichen, Manifest/Hash, fehlende Bestätigung,
+  Recovery-Primitiven, Secret-Abhängigkeiten und den bestehenden Admin-
+  Bootstrap-Fix ab.
+- `npm run check` bestand mit 68 Testdateien und 900 Tests; 30 Dateien und 151
+  dienstgebundene Tests wurden übersprungen. Security Assessment (36 Tests),
+  UAT-Struktur, Secret-Scan, npm Audit, Compose, Composer, PHP-Syntax und
+  WordPress-Adaptertests bestanden ebenfalls.
+- `npm run dev:check` validierte die gepinnte Toolchain, stoppte dann jedoch
+  erwartungsgemäß an der bereits vorhandenen PC-1-`staging.local.env`: lokale
+  Origins, Rotations-Flag, Platzhalter und Template-Drift entsprechen nicht der
+  aktuellen lokalen Vorlage. Die gerätespezifische Datei wurde nicht verändert;
+  die nachgelagerten Teilgates wurden separat erfolgreich ausgeführt.
+- Kein Dump und kein destruktiver Import wurde gegen die aktuelle Review-
+  Datenbank ausgeführt. Der vollständige Export-/Import-Praxistest bleibt für
+  einen entbehrlichen synthetischen Stack reserviert.

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Extended the repository-driven multi-device workflow to PC 1, PC 2 and
+  Laptop with local non-authenticating device IDs, lossless Fast-Forward-only
+  Start-Work, check-and-handoff Finish-Work, and guarded PostgreSQL review-data
+  export/import packages with SHA-256, commit metadata, safety backup and
+  automatic recovery. No secret, env file, volume or database is synchronized
+  automatically.
+
 - Added a Windows/PowerShell-friendly PC 1 / PC 2 development workflow over the
   existing full synthetic Compose stack, including strict toolchain checks,
   non-overwriting local env generation, safe first bootstrap, bounded status
@@ -617,12 +624,12 @@
 - Cleaned README metadata and updated repository-wide agent Definition of Done.
 - Added Specification Review #2 for v1.0.2.
 
-## 1.0.1 - KeyPlanet / KeyCore bootstrap
+## 1.0.1 - Storefront / KeyCore bootstrap
 
 - Renamed the internal platform to KeyCore.
-- Defined KeyPlanet as the public customer-facing brand.
+- Defined the original public customer-facing brand (since superseded by KeyRaNo).
 - Recorded `key-planet.de` as the initial domain.
-- Recorded naming and namespace rules for the KeyPlanet / KeyCore bootstrap.
+- Recorded the original storefront and KeyCore naming and namespace rules.
 - Added `START_HERE.md` and the Sprint 1 execution plan.
 - Marked the specification as ready for the initial Codex review and foundation tasks.
 

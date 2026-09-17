@@ -4,6 +4,12 @@
 
 Build and maintain the KeyCore Platform according to the specification in this repository. Work in small, reviewable tasks. Prefer correctness, security and auditability over speed.
 
+## Naming
+
+- `KeyCore` is the backend/platform name.
+- `KeyRaNo` is the public storefront/frontend name.
+- Do not use the retired former storefront name in current code, UI, tasks or documentation.
+
 ## Mandatory Reading Order
 
 Before changing code or specification behavior:
@@ -15,16 +21,18 @@ Before changing code or specification behavior:
 5. linked requirements and ADRs
 6. nearest nested `AGENTS.md`, if present
 
-For Windows machine setup, daily startup and safe PC 1 / PC 2 handoff, also
+For Windows machine setup, daily startup and safe PC 1 / Laptop / PC 2 handoff, also
 read `docs/development/MULTI-DEVICE-DEVELOPMENT.md`.
 
 ## Working Rules
 
+- Analyze the existing code and nearest instructions before editing. Reuse established patterns and the current architecture.
 - Implement only the assigned task and its necessary prerequisites.
 - Do not silently expand scope.
 - Do not invent supplier API fields. Use interfaces, fixtures or mocks when documentation is missing.
 - Keep supplier-specific mappings inside supplier adapters.
 - Never add secrets, tokens, production data or real product keys.
+- Never print, copy, commit or synchronize local env values, credentials, database dumps or Docker volumes.
 - Use synthetic keys in tests, such as `TEST-AAAAA-BBBBB-CCCCC`.
 - Do not log raw request or response bodies if they may contain keys or credentials.
 - Use structured reason codes for business decisions.
@@ -38,6 +46,29 @@ read `docs/development/MULTI-DEVICE-DEVELOPMENT.md`.
 - Update `CHANGELOG.md` and specification version when applicable.
 - Do not deploy to production.
 - Agents cannot approve their own human approval gates.
+- Preserve user changes. Never reset, overwrite, stash, clean or revert them without explicit authorization.
+- Do not commit or push unless the user explicitly requests it. Reuse an existing suitable branch and pull request instead of creating duplicates.
+
+## Multi-Device Workflow
+
+The Human shorthand commands map to the repository CLI as follows:
+
+| Human command        | Repository action                   |
+| -------------------- | ----------------------------------- |
+| `Start-Work-PC-1`    | `npm run dev:work-start -- PC-1`    |
+| `Finish-Work-PC-1`   | `npm run dev:work-finish -- PC-1`   |
+| `Start-Work-PC-2`    | `npm run dev:work-start -- PC-2`    |
+| `Finish-Work-PC-2`   | `npm run dev:work-finish -- PC-2`   |
+| `Start-Work-Laptop`  | `npm run dev:work-start -- LAPTOP`  |
+| `Finish-Work-Laptop` | `npm run dev:work-finish -- LAPTOP` |
+
+Run these from the repository root. Do not replace them with ad-hoc pull,
+stash, reset, Compose or database commands. The local
+`.keycore-device.json`, `infra/docker/staging.local.env`, Docker volumes,
+databases and `node_modules` are device-specific and never synchronized by
+Git. PostgreSQL review data moves only through the explicit
+`dev:db-export`/`dev:db-import` workflow in the development guide; secrets are
+never exported automatically.
 
 ## Preferred Implementation Style
 

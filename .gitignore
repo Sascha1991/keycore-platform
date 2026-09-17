@@ -3,9 +3,11 @@
 !.env.example
 !*.env.example
 infra/docker/staging.local.env
+.keycore-device.json
 Server Login Staging Daten.txt
 keycore-postgres-*.dump
 keycore-postgres-*.dump.sha256
+keycore-postgres-*.dump.manifest.json
 node_modules/
 vendor/
 coverage/

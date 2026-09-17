@@ -71,7 +71,7 @@ ADR-0009 defines the audit event schema and forbidden fields. The overview and t
 
 Status: RESOLVED
 
-README metadata is cleaned and now identifies specification version `1.0.2`, KeyPlanet, `key-planet.de`, KeyCore, and `keycore-platform` once.
+README metadata is cleaned and identifies specification version `1.0.2`, KeyRaNo, KeyCore, and `keycore-platform` once.
 
 ### Repository claims Sprint 1 readiness without visible task files
 
